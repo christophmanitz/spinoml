@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { useGraphStore, captureStructuralSnapshot } from '../canvas/GraphStore'
 import { parseFile, serializeCurrent } from '../persistence/file'
+import { generateFromSnapshot } from '../codegen/generator'
+import { isTauri, tauriFs } from './tauri-fs'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -26,26 +28,48 @@ export type Entry = Folder | File
 export const ROOT_ID = 'root'
 const STORAGE_KEY = 'mlforge.workspace.v1'
 
+type Mode = 'browser' | 'tauri'
+
 type State = {
+  mode: Mode
+  workspaceRoot: string | null
+
   entries: Record<string, Entry>
   activeFileId: string | null
   expanded: Set<string>
   dirty: boolean
 
-  createFile: (parentId: string, name?: string) => string
-  createFolder: (parentId: string, name?: string) => string
-  rename: (id: string, name: string) => void
-  remove: (id: string) => void
-  move: (id: string, newParentId: string) => void
+  createFile: (parentId: string, name?: string) => Promise<string>
+  createFolder: (parentId: string, name?: string) => Promise<string>
+  rename: (id: string, name: string) => Promise<void>
+  remove: (id: string) => Promise<void>
+  move: (id: string, newParentId: string) => Promise<void>
 
   toggleExpanded: (id: string) => void
   setExpanded: (id: string, value: boolean) => void
 
-  openFile: (id: string) => boolean        // returns true if loaded
-  saveActive: () => void                   // writes serializeCurrent() into active file
-  saveAsNew: (parentId: string, name: string) => string
+  openFile: (id: string) => Promise<boolean>
+  saveActive: () => Promise<void>
+  saveAsNew: (parentId: string, name: string) => Promise<string>
   closeActive: () => void
-  importFromText: (parentId: string, name: string, text: string) => string
+  importFromText: (parentId: string, name: string, text: string) => Promise<string>
+
+  openDirectory: () => Promise<boolean>
+  closeDirectory: () => Promise<void>
+  refreshFromDisk: () => Promise<void>
+}
+
+function pyTwinPath(mlforgeRel: string): string {
+  return mlforgeRel.replace(/\.mlforge$/i, '').replace(/[^\w\/]+/g, '_') + '.py'
+}
+
+function parentRelOf(relpath: string): string {
+  const i = relpath.lastIndexOf('/')
+  return i === -1 ? '' : relpath.slice(0, i)
+}
+
+function joinRel(parentRel: string, name: string): string {
+  return parentRel ? `${parentRel}/${name}` : name
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -124,12 +148,29 @@ function persist(state: State) {
 const initial = hydrate()
 
 export const useWorkspaceStore = create<State>((set, get) => ({
+  mode: 'browser',
+  workspaceRoot: null,
   entries: initial.entries,
   activeFileId: initial.activeFileId,
   expanded: initial.expanded,
   dirty: false,
 
-  createFile: (parentId, name) => {
+  createFile: async (parentId, name) => {
+    if (get().mode === 'tauri') {
+      const parent = get().entries[parentId]
+      if (!parent || parent.kind !== 'folder') return ''
+      const parentRel = parentId === ROOT_ID ? '' : parentId
+      const wantName = uniqueName(name ?? 'untitled.mlforge', siblingNames(get().entries, parentId))
+      const relpath = joinRel(parentRel, wantName)
+      const content = serializeCurrent()
+      await tauriFs.write(relpath, content)
+      try {
+        await tauriFs.write(pyTwinPath(relpath), generateFromSnapshot(parseFile(content)).code)
+      } catch { /* ignore .py write errors */ }
+      await get().refreshFromDisk()
+      set({ activeFileId: relpath, dirty: false })
+      return relpath
+    }
     const parent = get().entries[parentId]
     if (!parent || parent.kind !== 'folder') return ''
     const id = newId()
@@ -152,7 +193,18 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     return id
   },
 
-  createFolder: (parentId, name) => {
+  createFolder: async (parentId, name) => {
+    if (get().mode === 'tauri') {
+      const parent = get().entries[parentId]
+      if (!parent || parent.kind !== 'folder') return ''
+      const parentRel = parentId === ROOT_ID ? '' : parentId
+      const wantName = uniqueName(name ?? 'new folder', siblingNames(get().entries, parentId))
+      const relpath = joinRel(parentRel, wantName)
+      await tauriFs.mkdir(relpath)
+      await get().refreshFromDisk()
+      set({ expanded: new Set([...get().expanded, relpath]) })
+      return relpath
+    }
     const parent = get().entries[parentId]
     if (!parent || parent.kind !== 'folder') return ''
     const id = newId()
@@ -169,7 +221,25 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     return id
   },
 
-  rename: (id, name) => {
+  rename: async (id, name) => {
+    if (get().mode === 'tauri') {
+      if (id === ROOT_ID) return
+      const e = get().entries[id]
+      if (!e) return
+      const trimmed = name.trim()
+      if (!trimmed || trimmed === e.name) return
+      const parentRel = (!e.parentId || e.parentId === ROOT_ID) ? '' : e.parentId
+      const final = uniqueName(trimmed, siblingNames(get().entries, e.parentId ?? ROOT_ID))
+      const newRel = joinRel(parentRel, final)
+      await tauriFs.rename(id, newRel)
+      if (e.kind === 'file' && id.toLowerCase().endsWith('.mlforge')) {
+        try { await tauriFs.rename(pyTwinPath(id), pyTwinPath(newRel)) } catch { /* maybe absent */ }
+      }
+      const wasActive = get().activeFileId === id
+      await get().refreshFromDisk()
+      if (wasActive) set({ activeFileId: newRel })
+      return
+    }
     const e = get().entries[id]
     if (!e || id === ROOT_ID) return
     const trimmed = name.trim()
@@ -178,8 +248,19 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     set({ entries: { ...get().entries, [id]: { ...e, name: final } } })
   },
 
-  remove: (id) => {
+  remove: async (id) => {
     if (id === ROOT_ID) return
+    if (get().mode === 'tauri') {
+      const e = get().entries[id]
+      if (!e) return
+      await tauriFs.remove(id)
+      if (e.kind === 'file' && id.toLowerCase().endsWith('.mlforge')) {
+        try { await tauriFs.remove(pyTwinPath(id)) } catch { /* maybe absent */ }
+      }
+      await get().refreshFromDisk()
+      if (get().activeFileId === id) set({ activeFileId: null, dirty: false })
+      return
+    }
     const entries = { ...get().entries }
     const target = entries[id]
     if (!target) return
@@ -204,13 +285,32 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     set({ entries, activeFileId })
   },
 
-  move: (id, newParentId) => {
+  move: async (id, newParentId) => {
     if (id === ROOT_ID || id === newParentId) return
+    if (get().mode === 'tauri') {
+      const node = get().entries[id]
+      const dest = get().entries[newParentId]
+      if (!node || !dest || dest.kind !== 'folder') return
+      let cur: string | null = newParentId
+      while (cur) {
+        if (cur === id) return
+        cur = get().entries[cur]?.parentId ?? null
+      }
+      const destRel = newParentId === ROOT_ID ? '' : newParentId
+      const newRel = joinRel(destRel, node.name)
+      await tauriFs.rename(id, newRel)
+      if (node.kind === 'file' && id.toLowerCase().endsWith('.mlforge')) {
+        try { await tauriFs.rename(pyTwinPath(id), pyTwinPath(newRel)) } catch { /* maybe absent */ }
+      }
+      const wasActive = get().activeFileId === id
+      await get().refreshFromDisk()
+      if (wasActive) set({ activeFileId: newRel })
+      return
+    }
     const entries = { ...get().entries }
     const node = entries[id]
     const dest = entries[newParentId]
     if (!node || !dest || dest.kind !== 'folder') return
-    // no descending into self
     let cur: string | null = newParentId
     while (cur) {
       if (cur === id) return
@@ -241,7 +341,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     set({ expanded })
   },
 
-  openFile: (id) => {
+  openFile: async (id) => {
     const e = get().entries[id]
     if (!e || e.kind !== 'file') return false
     if (get().dirty) {
@@ -249,7 +349,12 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       if (!ok) return false
     }
     try {
-      const snap = parseFile(e.content)
+      let content = e.content
+      if (get().mode === 'tauri') {
+        content = await tauriFs.read(id)
+        set({ entries: { ...get().entries, [id]: { ...e, content } } })
+      }
+      const snap = parseFile(content)
       useGraphStore.getState().loadSnapshot(snap)
       set({ activeFileId: id, dirty: false })
       return true
@@ -259,34 +364,65 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     }
   },
 
-  saveActive: () => {
+  saveActive: async () => {
     const id = get().activeFileId
     if (!id) return
     const e = get().entries[id]
     if (!e || e.kind !== 'file') return
+    const content = serializeCurrent()
+    if (get().mode === 'tauri') {
+      await tauriFs.write(id, content)
+      try {
+        await tauriFs.write(pyTwinPath(id), generateFromSnapshot(parseFile(content)).code)
+      } catch { /* skip .py if codegen fails */ }
+      set({
+        entries: {
+          ...get().entries,
+          [id]: { ...e, content, savedAt: new Date().toISOString() },
+        },
+        dirty: false,
+      })
+      await get().refreshFromDisk()
+      return
+    }
     set({
       entries: {
         ...get().entries,
-        [id]: { ...e, content: serializeCurrent(), savedAt: new Date().toISOString() },
+        [id]: { ...e, content, savedAt: new Date().toISOString() },
       },
       dirty: false,
     })
   },
 
-  saveAsNew: (parentId, name) => {
+  saveAsNew: async (parentId, name) => {
     return get().createFile(parentId, name.endsWith('.mlforge') ? name : `${name}.mlforge`)
   },
 
   closeActive: () => set({ activeFileId: null, dirty: false }),
 
-  importFromText: (parentId, name, text) => {
+  importFromText: async (parentId, name, text) => {
     const parent = get().entries[parentId]
     if (!parent || parent.kind !== 'folder') return ''
-    // validate the text parses; throws if not
-    parseFile(text)
+    parseFile(text) // validate
+    if (get().mode === 'tauri') {
+      const parentRel = parentId === ROOT_ID ? '' : parentId
+      const wantName = uniqueName(
+        name.endsWith('.mlforge') ? name : `${name}.mlforge`,
+        siblingNames(get().entries, parentId),
+      )
+      const relpath = joinRel(parentRel, wantName)
+      await tauriFs.write(relpath, text)
+      try {
+        await tauriFs.write(pyTwinPath(relpath), generateFromSnapshot(parseFile(text)).code)
+      } catch { /* ignore */ }
+      await get().refreshFromDisk()
+      return relpath
+    }
     const id = newId()
-    const wantName = uniqueName(name.endsWith('.mlforge') ? name : `${name}.mlforge`,
-                                siblingNames(get().entries, parentId))
+    const wantName = uniqueName(
+      name.endsWith('.mlforge') ? name : `${name}.mlforge`,
+      siblingNames(get().entries, parentId),
+    )
     const file: File = {
       kind: 'file', id, name: wantName, parentId,
       content: text, savedAt: new Date().toISOString(),
@@ -301,10 +437,70 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     })
     return id
   },
+
+  openDirectory: async () => {
+    if (!isTauri()) return false
+    const picked = await tauriFs.pickDir()
+    if (!picked) return false
+    const rootName = picked.split('/').pop() || picked.split('\\').pop() || 'workspace'
+    set({
+      mode: 'tauri',
+      workspaceRoot: picked,
+      entries: {
+        [ROOT_ID]: { kind: 'folder', id: ROOT_ID, name: rootName, parentId: null, childIds: [] },
+      },
+      activeFileId: null,
+      dirty: false,
+      expanded: new Set([ROOT_ID]),
+    })
+    await get().refreshFromDisk()
+    return true
+  },
+
+  closeDirectory: async () => {
+    if (isTauri()) { try { await tauriFs.closeDir() } catch { /* ignore */ } }
+    const re = hydrate()
+    set({
+      mode: 'browser',
+      workspaceRoot: null,
+      entries: re.entries,
+      activeFileId: re.activeFileId,
+      expanded: re.expanded,
+      dirty: false,
+    })
+  },
+
+  refreshFromDisk: async () => {
+    if (get().mode !== 'tauri') return
+    const list = await tauriFs.list()
+    const rootName = get().workspaceRoot?.split(/[\\/]/).filter(Boolean).pop() ?? 'workspace'
+    const entries: Record<string, Entry> = {
+      [ROOT_ID]: { kind: 'folder', id: ROOT_ID, name: rootName, parentId: null, childIds: [] },
+    }
+    const sorted = [...list].sort(
+      (a, b) => a.relpath.split('/').length - b.relpath.split('/').length,
+    )
+    for (const e of sorted) {
+      const id = e.relpath
+      const parentRel = parentRelOf(id)
+      const parentId = parentRel === '' ? ROOT_ID : parentRel
+      const parent = entries[parentId]
+      if (!parent || parent.kind !== 'folder') continue
+      parent.childIds.push(id)
+      if (e.is_dir) {
+        entries[id] = { kind: 'folder', id, name: e.name, parentId, childIds: [] }
+      } else {
+        const existing = get().entries[id]
+        const content = existing?.kind === 'file' ? existing.content : ''
+        entries[id] = { kind: 'file', id, name: e.name, parentId, content, savedAt: '' }
+      }
+    }
+    set({ entries, expanded: new Set([ROOT_ID, ...get().expanded]) })
+  },
 }))
 
-// Persist on every store change.
-useWorkspaceStore.subscribe((s) => persist(s))
+// Persist to localStorage only when in browser mode (Tauri mode lives on disk).
+useWorkspaceStore.subscribe((s) => { if (s.mode === 'browser') persist(s) })
 
 // Track dirty: any structural change to the graph after the last save/load
 // marks the active file dirty. Compares fingerprints to the last persisted

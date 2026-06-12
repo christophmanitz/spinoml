@@ -12,6 +12,8 @@ export default function FileExplorer() {
   const root = useWorkspaceStore((s) => s.entries[ROOT_ID])
   const dirty = useWorkspaceStore((s) => s.dirty)
   const activeFileId = useWorkspaceStore((s) => s.activeFileId)
+  const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot)
+  const mode = useWorkspaceStore((s) => s.mode)
   const createFile = useWorkspaceStore((s) => s.createFile)
   const createFolder = useWorkspaceStore((s) => s.createFolder)
   const importFromText = useWorkspaceStore((s) => s.importFromText)
@@ -66,18 +68,21 @@ export default function FileExplorer() {
   return (
     <div className="flex h-full min-h-0 flex-col text-sm">
       <div className="flex shrink-0 items-center justify-between border-b border-[#1f2429] px-2 py-1">
-        <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-[#7a8088]">
-          <span>Models</span>
+        <div className="flex min-w-0 items-center gap-1.5 text-xs uppercase tracking-wide text-[#7a8088]">
+          <span>{mode === 'tauri' ? 'Workspace' : 'Models'}</span>
           {dirty && activeFileId && <span className="text-amber-400" title="unsaved changes">●</span>}
+          {mode === 'tauri' && workspaceRoot && (
+            <span className="truncate font-mono text-[10px] normal-case text-[#5b6168]" title={workspaceRoot}>
+              {workspaceRoot}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1 text-[#7a8088]">
           <IconButton title="New file" onClick={() => {
-            const id = createFile(ROOT_ID)
-            if (id) setRename(id)
+            createFile(ROOT_ID).then((id) => { if (id) setRename(id) })
           }}>📄+</IconButton>
           <IconButton title="New folder" onClick={() => {
-            const id = createFolder(ROOT_ID)
-            if (id) setRename(id)
+            createFolder(ROOT_ID).then((id) => { if (id) setRename(id) })
           }}>📁+</IconButton>
           <IconButton title="Import .mlforge" onClick={() => importFile(ROOT_ID)}>⇪</IconButton>
         </div>
@@ -338,8 +343,9 @@ function Row({
             )}
             {isFolder && (
               <IconButton title="New file" onClick={() => {
-                const childId = useWorkspaceStore.getState().createFile(id)
-                if (childId) setRename(childId)
+                useWorkspaceStore.getState().createFile(id).then((childId) => {
+                  if (childId) setRename(childId)
+                })
               }}>＋</IconButton>
             )}
             <IconButton title="Rename" onClick={() => setRename(id)}>✎</IconButton>
@@ -417,13 +423,15 @@ function ContextMenu({
       {isFolder && (
         <>
           <MenuItem onClick={() => {
-            const id = useWorkspaceStore.getState().createFile(menu.id)
-            if (id) setRename(id)
+            useWorkspaceStore.getState().createFile(menu.id).then((id) => {
+              if (id) setRename(id)
+            })
             close()
           }}>New file</MenuItem>
           <MenuItem onClick={() => {
-            const id = useWorkspaceStore.getState().createFolder(menu.id)
-            if (id) setRename(id)
+            useWorkspaceStore.getState().createFolder(menu.id).then((id) => {
+              if (id) setRename(id)
+            })
             close()
           }}>New folder</MenuItem>
           <MenuItem onClick={() => { importFile(menu.id); close() }}>Import .mlforge…</MenuItem>

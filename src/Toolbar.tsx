@@ -4,12 +4,16 @@ import { useGraphStore } from './canvas/GraphStore'
 import { downloadCurrent, pickAndLoad, clearAutosave } from './persistence/file'
 import { TEMPLATES } from './templates/templates'
 import { useWorkspaceStore, ROOT_ID } from './workspace/store'
+import { isTauri } from './workspace/tauri-fs'
 
 export default function Toolbar() {
   const activeFileName = useWorkspaceStore((s) =>
     s.activeFileId ? s.entries[s.activeFileId]?.name ?? null : null,
   )
   const dirty = useWorkspaceStore((s) => s.dirty)
+  const mode = useWorkspaceStore((s) => s.mode)
+  const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot)
+  const tauriAvailable = isTauri()
 
   const saveToWorkspace = () => {
     const ws = useWorkspaceStore.getState()
@@ -36,11 +40,25 @@ export default function Toolbar() {
           {activeFileName ? `Save${dirty ? ' (●)' : ''}` : 'Save…'}
         </Item>
         <div className="my-1 h-px bg-[#1f2429]" />
+        {tauriAvailable && (
+          <>
+            <Item
+              onSelect={() => { useWorkspaceStore.getState().openDirectory() }}
+              hint={mode === 'tauri' && workspaceRoot ? truncatePath(workspaceRoot) : 'pick a folder'}
+            >Open folder…</Item>
+            {mode === 'tauri' && (
+              <Item onSelect={() => { useWorkspaceStore.getState().closeDirectory() }}>
+                Close folder
+              </Item>
+            )}
+            <div className="my-1 h-px bg-[#1f2429]" />
+          </>
+        )}
         <Item onSelect={() => pickAndLoad((snap) => {
           useGraphStore.getState().loadSnapshot(snap)
           useWorkspaceStore.getState().closeActive()
         })}>
-          Open from disk…
+          Open file from disk…
         </Item>
         <Item onSelect={() => downloadCurrent(activeFileName ?? 'model.mlforge')}>
           Export to disk…
@@ -77,6 +95,11 @@ export default function Toolbar() {
       </Menu>
     </div>
   )
+}
+
+function truncatePath(p: string): string {
+  if (p.length <= 40) return p
+  return '…' + p.slice(-37)
 }
 
 function Menu({ label, children }: { label: string; children: React.ReactNode }) {
