@@ -13,6 +13,8 @@ const CATEGORY_COLORS: Record<string, string> = {
   IO: '#e6e8eb',
 }
 
+const ERROR_COLOR = '#f43f5e'
+
 const handleStyle = { background: '#3a4148', width: 8, height: 8, border: 'none' }
 
 export default function LayerNode({
@@ -20,7 +22,8 @@ export default function LayerNode({
   selected,
 }: NodeProps<Node<LayerNodeData>>) {
   const spec = LAYERS[data.layerType]
-  const color = spec ? CATEGORY_COLORS[spec.category] ?? '#9aa1a8' : '#ff5555'
+  const catColor = spec ? CATEGORY_COLORS[spec.category] ?? '#9aa1a8' : '#ff5555'
+  const color = data.hasError ? ERROR_COLOR : catColor
   const summary = spec ? spec.summary(data.params) : '⚠ unknown layer'
 
   const hasInput = data.layerType !== 'Input'
@@ -32,8 +35,10 @@ export default function LayerNode({
     <div
       className="min-w-[160px] rounded border bg-[#13171b] shadow-sm"
       style={{
-        borderColor: selected ? color : '#1f2429',
-        boxShadow: selected ? `0 0 0 1px ${color}40` : undefined,
+        borderColor: data.hasError ? ERROR_COLOR : selected ? catColor : '#1f2429',
+        boxShadow: data.hasError
+          ? `0 0 0 1px ${ERROR_COLOR}66`
+          : selected ? `0 0 0 1px ${catColor}40` : undefined,
       }}
     >
       {hasInput && <Handle type="target" position={Position.Top} style={handleStyle} />}
@@ -43,6 +48,7 @@ export default function LayerNode({
         style={{ background: `${color}18`, color }}
       >
         <span>{data.layerType}</span>
+        {data.hasError && <span className="text-[10px]" title="forward pass failed here">!</span>}
       </div>
       <div className="px-2 py-1.5 font-mono text-[10px] text-[#9aa1a8]">{summary}</div>
       {shapeText && (

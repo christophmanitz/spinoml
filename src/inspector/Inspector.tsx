@@ -1,11 +1,16 @@
+import { useEffect, useState } from 'react'
 import { useGraphStore } from '../canvas/GraphStore'
 import { LAYERS, type FieldSpec } from '../layers/registry'
+import { useInferenceStore } from '../inference/store'
 
 export default function Inspector() {
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId)
   const node = useGraphStore((s) => s.nodes.find((n) => n.id === selectedNodeId))
   const updateNodeParams = useGraphStore((s) => s.updateNodeParams)
   const deleteNode = useGraphStore((s) => s.deleteNode)
+  const failingNodeId = useInferenceStore((s) => s.failingNodeId)
+  const inferenceError = useInferenceStore((s) => s.error)
+  const inferenceStage = useInferenceStore((s) => s.errorStage)
 
   if (!node) {
     return (
@@ -18,6 +23,9 @@ export default function Inspector() {
 
   const spec = LAYERS[node.data.layerType]
   const params = node.data.params
+  const isFailing = failingNodeId === node.id
+  const inShape = node.data.inferredInputShape
+  const outShape = node.data.inferredOutputShape
 
   return (
     <div className="flex h-1/2 min-h-0 flex-col border-b border-[#1f2429] p-3 text-sm">
@@ -33,8 +41,28 @@ export default function Inspector() {
         )}
       </div>
 
-      <div className="mb-2 font-medium">{node.data.layerType}</div>
-      <div className="mb-2 text-[10px] text-[#7a8088]">id: {node.id}</div>
+      <div className="mb-1 flex items-baseline gap-2">
+        <span className="font-medium">{node.data.layerType}</span>
+        <span className="text-[10px] text-[#7a8088]">#{node.id}</span>
+      </div>
+
+      <div className="mb-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 font-mono text-[10px] text-[#9aa1a8]">
+        <span className="text-[#7a8088]">in</span>
+        <span>{inShape ? `[${inShape.join(', ')}]` : <em className="text-[#5b6168]">unknown</em>}</span>
+        <span className="text-[#7a8088]">out</span>
+        <span>{outShape ? `[${outShape.join(', ')}]` : <em className="text-[#5b6168]">unknown</em>}</span>
+      </div>
+
+      {isFailing && inferenceError && (
+        <div className="mb-2 rounded border border-rose-900/60 bg-rose-950/40 px-2 py-1.5 text-[10px] leading-snug text-rose-200">
+          <div className="mb-0.5 font-medium text-rose-300">
+            forward failed at this layer{inferenceStage ? ` (${inferenceStage})` : ''}
+          </div>
+          <div className="font-mono text-rose-200/80">{shortenError(inferenceError)}</div>
+          <FixHints layerType={node.data.layerType} params={params} inShape={inShape}
+                    onPatch={(patch) => updateNodeParams(node.id, patch)} />
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto pr-1">
         {spec?.fields.length === 0 && (
@@ -42,9 +70,10 @@ export default function Inspector() {
         )}
         {spec?.fields.map((field) => (
           <ParamField
-            key={field.name}
+            key={`${node.id}:${field.name}`}
             field={field}
             value={params[field.name] ?? field.default}
+            inShape={inShape}
             onChange={(v) => updateNodeParams(node.id, { [field.name]: v })}
           />
         ))}
@@ -53,27 +82,140 @@ export default function Inspector() {
   )
 }
 
+function shortenError(s: string): string {
+  return s.length > 240 ? s.slice(0, 240) + '…' : s
+}
+
+function FixHints({
+  layerType, params, inShape, onPatch,
+}: {
+  layerType: string
+  params: Record<string, unknown>
+  inShape: number[] | undefined
+  onPatch: (patch: Record<string, unknown>) => void
+}) {
+  if (!inShape) return null
+  const hints: { label: string; patch: Record<string, unknown>; rationale: string }[] = []
+
+  if (layerType === 'LayerNorm') {
+    const last = inShape[inShape.length - 1]
+    const current = params.normalized_shape as number[] | undefined
+    if (last && (!current || current[current.length - 1] !== last)) {
+      hints.push({
+        label: `set normalized_shape = [${last}]`,
+        patch: { normalized_shape: [last] },
+        rationale: 'LayerNorm normalizes over the trailing dim of the input',
+      })
+    }
+  }
+  if (layerType === 'Conv2d' || layerType === 'Conv1d') {
+    const c = inShape[1]
+    const current = params.in_channels as number | undefined
+    if (typeof c === 'number' && current !== c) {
+      hints.push({
+        label: `set in_channels = ${c}`,
+        patch: { in_channels: c },
+        rationale: 'Conv expects in_channels to match the channel dim of the input',
+      })
+    }
+  }
+  if (layerType === 'BatchNorm2d') {
+    const c = inShape[1]
+    const current = params.num_features as number | undefined
+    if (typeof c === 'number' && current !== c) {
+      hints.push({
+        label: `set num_features = ${c}`,
+        patch: { num_features: c },
+        rationale: 'BatchNorm2d num_features = channel dim',
+      })
+    }
+  }
+  if (layerType === 'Linear') {
+    const last = inShape[inShape.length - 1]
+    const current = params.in_features as number | undefined
+    if (typeof last === 'number' && current !== last) {
+      hints.push({
+        label: `set in_features = ${last}`,
+        patch: { in_features: last },
+        rationale: 'Linear in_features = last input dim',
+      })
+    }
+  }
+  if (layerType === 'GroupNorm') {
+    const c = inShape[1]
+    const current = params.num_channels as number | undefined
+    if (typeof c === 'number' && current !== c) {
+      hints.push({
+        label: `set num_channels = ${c}`,
+        patch: { num_channels: c },
+        rationale: 'GroupNorm num_channels = channel dim',
+      })
+    }
+  }
+
+  if (!hints.length) return null
+  return (
+    <div className="mt-1.5 flex flex-col gap-1">
+      {hints.map((h, i) => (
+        <button
+          key={i}
+          className="self-start rounded bg-rose-900/60 px-1.5 py-0.5 text-left font-mono text-[10px] text-rose-100 hover:bg-rose-800"
+          onClick={() => onPatch(h.patch)}
+          title={h.rationale}
+        >
+          fix: {h.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function ParamField({
-  field,
-  value,
-  onChange,
+  field, value, inShape, onChange,
 }: {
   field: FieldSpec
   value: unknown
+  inShape: number[] | undefined
   onChange: (v: unknown) => void
 }) {
   return (
     <label className="mb-2 flex flex-col gap-1">
-      <span className="text-[10px] uppercase tracking-wide text-[#7a8088]">{field.name}</span>
+      <span className="flex items-baseline justify-between text-[10px] uppercase tracking-wide text-[#7a8088]">
+        <span>{field.name}</span>
+        <FieldHint field={field} value={value} inShape={inShape} />
+      </span>
       <FieldInput field={field} value={value} onChange={onChange} />
     </label>
   )
 }
 
+function FieldHint({
+  field, value, inShape,
+}: { field: FieldSpec; value: unknown; inShape: number[] | undefined }) {
+  if (!inShape) return null
+  const last = inShape[inShape.length - 1]
+  const c = inShape[1]
+  if (field.name === 'normalized_shape' && typeof last === 'number') {
+    const cur = (value as number[] | undefined)?.[((value as number[] | undefined)?.length ?? 0) - 1]
+    if (cur !== last) return <span className="text-[10px] text-amber-400">expects [{last}]</span>
+  }
+  if (field.name === 'in_channels' && typeof c === 'number') {
+    if (value !== c) return <span className="text-[10px] text-amber-400">input has {c}</span>
+  }
+  if (field.name === 'num_features' && typeof c === 'number') {
+    if (value !== c) return <span className="text-[10px] text-amber-400">input has {c}</span>
+  }
+  if (field.name === 'num_channels' && typeof c === 'number') {
+    if (value !== c) return <span className="text-[10px] text-amber-400">input has {c}</span>
+  }
+  if (field.name === 'in_features' && typeof last === 'number') {
+    if (value !== last) return <span className="text-[10px] text-amber-400">input has {last}</span>
+  }
+  return null
+}
+
 function FieldInput({
-  field,
-  value,
-  onChange,
+  field, value, onChange,
 }: {
   field: FieldSpec
   value: unknown
@@ -84,21 +226,9 @@ function FieldInput({
 
   switch (field.type) {
     case 'int':
+      return <IntInput field={field} value={value as number} onChange={onChange} baseClass={baseClass} />
     case 'float':
-      return (
-        <input
-          type="number"
-          className={baseClass}
-          value={value as number}
-          min={field.min}
-          max={field.max}
-          step={field.step ?? (field.type === 'int' ? 1 : 'any')}
-          onChange={(e) => {
-            const v = field.type === 'int' ? parseInt(e.target.value, 10) : parseFloat(e.target.value)
-            if (!Number.isNaN(v)) onChange(v)
-          }}
-        />
-      )
+      return <FloatInput field={field} value={value as number} onChange={onChange} baseClass={baseClass} />
     case 'bool':
       return (
         <input
@@ -122,46 +252,155 @@ function FieldInput({
           ))}
         </select>
       )
-    case 'tuple-int': {
-      const tuple = (Array.isArray(value) ? value : [field.default[0], field.default[1]]) as number[]
-      return (
-        <div className="flex gap-1">
-          {Array.from({ length: field.arity }).map((_, i) => (
-            <input
-              key={i}
-              type="number"
-              className={`${baseClass} w-full`}
-              value={tuple[i] ?? 0}
-              step={1}
-              onChange={(e) => {
-                const v = parseInt(e.target.value, 10)
-                if (Number.isNaN(v)) return
-                const next = [...tuple]
-                next[i] = v
-                onChange(next)
-              }}
-            />
-          ))}
-        </div>
-      )
-    }
-    case 'shape': {
-      const arr = (Array.isArray(value) ? value : field.default) as number[]
-      return (
-        <input
-          type="text"
-          className={baseClass}
-          defaultValue={arr.join(', ')}
-          onBlur={(e) => {
-            const parts = e.target.value
-              .split(/[,\s]+/)
-              .map((s) => s.trim())
-              .filter(Boolean)
-              .map((s) => parseInt(s, 10))
-            if (parts.every((n) => Number.isFinite(n))) onChange(parts)
-          }}
-        />
-      )
-    }
+    case 'tuple-int':
+      return <TupleIntInput field={field} value={value} onChange={onChange} baseClass={baseClass} />
+    case 'shape':
+      return <ShapeInput value={value} onChange={onChange} baseClass={baseClass} />
   }
+}
+
+function IntInput({
+  field, value, onChange, baseClass,
+}: {
+  field: Extract<FieldSpec, { type: 'int' }>
+  value: number
+  onChange: (v: unknown) => void
+  baseClass: string
+}) {
+  const [draft, setDraft] = useState(String(value))
+  useEffect(() => { setDraft(String(value)) }, [value])
+  return (
+    <input
+      type="number"
+      className={baseClass}
+      value={draft}
+      min={field.min}
+      max={field.max}
+      step={field.step ?? 1}
+      onChange={(e) => {
+        setDraft(e.target.value)
+        const v = parseInt(e.target.value, 10)
+        if (!Number.isNaN(v)) onChange(v)
+      }}
+      onBlur={() => setDraft(String(value))}
+    />
+  )
+}
+
+function FloatInput({
+  field, value, onChange, baseClass,
+}: {
+  field: Extract<FieldSpec, { type: 'float' }>
+  value: number
+  onChange: (v: unknown) => void
+  baseClass: string
+}) {
+  const [draft, setDraft] = useState(String(value))
+  useEffect(() => { setDraft(String(value)) }, [value])
+  return (
+    <input
+      type="number"
+      className={baseClass}
+      value={draft}
+      min={field.min}
+      max={field.max}
+      step={field.step ?? 'any'}
+      onChange={(e) => {
+        setDraft(e.target.value)
+        const v = parseFloat(e.target.value)
+        if (!Number.isNaN(v)) onChange(v)
+      }}
+      onBlur={() => setDraft(String(value))}
+    />
+  )
+}
+
+function TupleIntInput({
+  field, value, onChange, baseClass,
+}: {
+  field: Extract<FieldSpec, { type: 'tuple-int' }>
+  value: unknown
+  onChange: (v: unknown) => void
+  baseClass: string
+}) {
+  const arr = (Array.isArray(value) ? value : field.default) as number[]
+  const [drafts, setDrafts] = useState(() => arr.map((n) => String(n)))
+  useEffect(() => { setDrafts(arr.map((n) => String(n))) }, [arr.join(',')])
+  return (
+    <div className="flex gap-1">
+      {Array.from({ length: field.arity }).map((_, i) => (
+        <input
+          key={i}
+          type="number"
+          className={`${baseClass} w-full`}
+          value={drafts[i] ?? ''}
+          step={1}
+          onChange={(e) => {
+            const nextDrafts = [...drafts]
+            nextDrafts[i] = e.target.value
+            setDrafts(nextDrafts)
+            const v = parseInt(e.target.value, 10)
+            if (!Number.isNaN(v)) {
+              const next = [...arr]
+              next[i] = v
+              onChange(next)
+            }
+          }}
+          onBlur={() => setDrafts(arr.map((n) => String(n)))}
+        />
+      ))}
+    </div>
+  )
+}
+
+function ShapeInput({
+  value, onChange, baseClass,
+}: { value: unknown; onChange: (v: unknown) => void; baseClass: string }) {
+  const arr = (Array.isArray(value) ? value : []) as number[]
+  const canonical = arr.join(', ')
+  const [draft, setDraft] = useState(canonical)
+  useEffect(() => { setDraft(canonical) }, [canonical])
+
+  const parsed = parseShape(draft)
+  const valid = parsed !== null && parsed.length > 0
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <input
+        type="text"
+        className={`${baseClass} ${valid ? '' : 'border-amber-700/60'}`}
+        value={draft}
+        placeholder="e.g. 1, 3, 224, 224"
+        onChange={(e) => {
+          setDraft(e.target.value)
+          const p = parseShape(e.target.value)
+          if (p && p.length > 0) onChange(p)
+        }}
+        onBlur={() => {
+          const p = parseShape(draft)
+          if (p && p.length > 0) {
+            onChange(p)
+            setDraft(p.join(', '))
+          } else {
+            setDraft(canonical)
+          }
+        }}
+      />
+      {!valid && draft.trim() !== '' && (
+        <span className="text-[10px] text-amber-400">comma-separated positive ints</span>
+      )}
+    </div>
+  )
+}
+
+function parseShape(s: string): number[] | null {
+  const parts = s.split(/[,\s]+/).map((p) => p.trim()).filter(Boolean)
+  if (parts.length === 0) return null
+  const out: number[] = []
+  for (const p of parts) {
+    const n = parseInt(p, 10)
+    if (!Number.isFinite(n) || n <= 0 || String(n) !== p) return null
+    out.push(n)
+  }
+  return out
 }

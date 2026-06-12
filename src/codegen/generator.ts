@@ -7,6 +7,8 @@ export type CodegenResult = {
   issues: string[]
   attrMap: Record<string, string>
   inputShape: number[]
+  /** Topological order of node IDs that carry a pytorchModule, in forward-pass order. */
+  order: string[]
 }
 
 export function generatePyTorchCode(nodes: LayerNode[], edges: Edge[]): string {
@@ -31,7 +33,7 @@ export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {
   const inputNode = nodes.find((n) => n.data.layerType === 'Input')
   if (!inputNode) {
     issues.push('No Input node — add one to begin.')
-    return { code: emitStub(issues), issues, attrMap: {}, inputShape: [1, 3, 224, 224] }
+    return { code: emitStub(issues), issues, attrMap: {}, inputShape: [1, 3, 224, 224], order: [] }
   }
 
   const order: string[] = []
@@ -70,7 +72,7 @@ export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {
     }
   }
 
-  if (cycleFound) return { code: emitStub(issues), issues, attrMap: {}, inputShape: [1, 3, 224, 224] }
+  if (cycleFound) return { code: emitStub(issues), issues, attrMap: {}, inputShape: [1, 3, 224, 224], order: [] }
 
   const attrName = new Map<string, string>()
   const counter: Record<string, number> = {}
@@ -106,7 +108,8 @@ export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {
   const code = emitModule(initLines, forwardLines, inputShape, issues)
   const attrMap: Record<string, string> = {}
   for (const [id, attr] of attrName) attrMap[id] = attr
-  return { code, issues, attrMap, inputShape }
+  const moduleOrder = order.filter((id) => attrMap[id] !== undefined)
+  return { code, issues, attrMap, inputShape, order: moduleOrder }
 }
 
 function emitStub(issues: string[]): string {

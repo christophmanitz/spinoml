@@ -15,7 +15,9 @@ import { defaultParamsFor } from '../layers/registry'
 export type LayerNodeData = {
   layerType: string
   params: Record<string, unknown>
+  inferredInputShape?: number[]
   inferredOutputShape?: number[]
+  hasError?: boolean
 } & Record<string, unknown>
 
 export type LayerNode = Node<LayerNodeData, 'layer'>

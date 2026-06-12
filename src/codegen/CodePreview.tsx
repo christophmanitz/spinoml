@@ -7,9 +7,12 @@ import { useInferenceStore } from '../inference/store'
 export default function CodePreview() {
   const nodes = useGraphStore((s) => s.nodes)
   const edges = useGraphStore((s) => s.edges)
+  const setSelectedNodeId = useGraphStore((s) => s.setSelectedNodeId)
   const inferenceError = useInferenceStore((s) => s.error)
   const inferenceStage = useInferenceStore((s) => s.errorStage)
   const inferenceStatus = useInferenceStore((s) => s.status)
+  const failingNodeId = useInferenceStore((s) => s.failingNodeId)
+  const failingLayerType = useInferenceStore((s) => s.failingNodeLayerType)
 
   const { code, issues } = useMemo(() => generate(nodes, edges), [nodes, edges])
 
@@ -34,6 +37,15 @@ export default function CodePreview() {
       </div>
       {showRuntimeError && (
         <div className="shrink-0 border-b border-[#1f2429] bg-rose-950/30 px-3 py-1.5 font-mono text-[10px] leading-snug text-rose-300">
+          {failingNodeId && (
+            <button
+              className="mr-2 rounded bg-rose-900/60 px-1.5 py-0.5 text-[10px] text-rose-200 hover:bg-rose-800"
+              onClick={() => setSelectedNodeId(failingNodeId)}
+              title="select the failing node"
+            >
+              {failingLayerType ?? 'node'} #{failingNodeId} →
+            </button>
+          )}
           {inferenceError}
         </div>
       )}
