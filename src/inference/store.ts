@@ -20,6 +20,7 @@ type InferenceState = {
 let timer: ReturnType<typeof setTimeout> | null = null
 let inFlight: AbortController | null = null
 let runCounter = 0
+let applyingShapes = false
 
 export const useInferenceStore = create<InferenceState>((set) => ({
   status: 'idle',
@@ -99,41 +100,71 @@ export const useInferenceStore = create<InferenceState>((set) => ({
   },
 }))
 
+function shapesEqual(a: number[] | undefined, b: number[] | undefined): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
 function applyShapesToNodes(attrMap: Record<string, string>, shapes: Record<string, number[]>) {
   const graph = useGraphStore.getState()
+  let dirty = false
   const nodes = graph.nodes.map((n) => {
     if (n.data.layerType === 'Input') {
-      const shape = (n.data.params.shape as number[] | undefined) ?? n.data.inferredOutputShape
-      return shape
-        ? { ...n, data: { ...n.data, inferredOutputShape: shape } }
-        : n
+      const wanted = (n.data.params.shape as number[] | undefined) ?? n.data.inferredOutputShape
+      if (!wanted) return n
+      if (shapesEqual(n.data.inferredOutputShape, wanted)) return n
+      dirty = true
+      return { ...n, data: { ...n.data, inferredOutputShape: wanted } }
     }
     const attr = attrMap[n.id]
     const shape = attr ? shapes[attr] : undefined
-    if (shape) return { ...n, data: { ...n.data, inferredOutputShape: shape } }
+    if (shape) {
+      if (shapesEqual(n.data.inferredOutputShape, shape)) return n
+      dirty = true
+      return { ...n, data: { ...n.data, inferredOutputShape: shape } }
+    }
     if (n.data.inferredOutputShape) {
+      dirty = true
       const next = { ...n, data: { ...n.data } }
       delete (next.data as { inferredOutputShape?: number[] }).inferredOutputShape
       return next
     }
     return n
   })
-  useGraphStore.setState({ nodes })
+  if (!dirty) return
+  applyingShapes = true
+  try {
+    useGraphStore.setState({ nodes })
+  } finally {
+    applyingShapes = false
+  }
 }
 
 function clearShapesOnNodes() {
   const graph = useGraphStore.getState()
+  let dirty = false
   const nodes = graph.nodes.map((n) => {
     if (!n.data.inferredOutputShape) return n
     if (n.data.layerType === 'Input') return n
+    dirty = true
     const next = { ...n, data: { ...n.data } }
     delete (next.data as { inferredOutputShape?: number[] }).inferredOutputShape
     return next
   })
-  useGraphStore.setState({ nodes })
+  if (!dirty) return
+  applyingShapes = true
+  try {
+    useGraphStore.setState({ nodes })
+  } finally {
+    applyingShapes = false
+  }
 }
 
 useGraphStore.subscribe((state, prev) => {
+  if (applyingShapes) return
   if (state.nodes !== prev.nodes || state.edges !== prev.edges) {
     useInferenceStore.getState().kick()
   }
