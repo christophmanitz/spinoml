@@ -24,6 +24,7 @@ shape and surfaces errors inline.
 - [x] **Phase 3** — Python sidecar with shape inference
 - [x] **Phase 4** — Claude Agent SDK sidecar + chat UI with live graph mutation
 - [x] **Phase 5** — Save/load `.mlforge` files, undo/redo, templates
+- [x] **Phase 5.5** — Workspace file explorer (virtual FS in localStorage)
 - [ ] **Phase 6** — Tauri packaging + sidecar lifecycle management
 
 ## Repo layout

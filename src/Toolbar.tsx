@@ -3,21 +3,48 @@ import { useHistoryStore } from './history/store'
 import { useGraphStore } from './canvas/GraphStore'
 import { downloadCurrent, pickAndLoad, clearAutosave } from './persistence/file'
 import { TEMPLATES } from './templates/templates'
+import { useWorkspaceStore, ROOT_ID } from './workspace/store'
 
 export default function Toolbar() {
+  const activeFileName = useWorkspaceStore((s) =>
+    s.activeFileId ? s.entries[s.activeFileId]?.name ?? null : null,
+  )
+  const dirty = useWorkspaceStore((s) => s.dirty)
+
+  const saveToWorkspace = () => {
+    const ws = useWorkspaceStore.getState()
+    if (ws.activeFileId) {
+      ws.saveActive()
+      return
+    }
+    const name = prompt('Save as (in models/):', 'untitled.mlforge')
+    if (!name) return
+    ws.saveAsNew(ROOT_ID, name)
+  }
+
   return (
     <div className="flex items-center gap-1 text-xs">
       <Menu label="File">
         <Item onSelect={() => {
           if (confirm('Reset graph? Current model will be lost (Cmd+Z to undo).')) {
             useGraphStore.getState().resetGraph()
+            useWorkspaceStore.getState().closeActive()
             clearAutosave()
           }
         }}>New</Item>
-        <Item onSelect={() => pickAndLoad((snap) => useGraphStore.getState().loadSnapshot(snap))}>
-          Open…
+        <Item onSelect={saveToWorkspace} hint={activeFileName ? `→ ${activeFileName}` : 'new file'}>
+          {activeFileName ? `Save${dirty ? ' (●)' : ''}` : 'Save…'}
         </Item>
-        <Item onSelect={() => downloadCurrent()}>Save as model.mlforge</Item>
+        <div className="my-1 h-px bg-[#1f2429]" />
+        <Item onSelect={() => pickAndLoad((snap) => {
+          useGraphStore.getState().loadSnapshot(snap)
+          useWorkspaceStore.getState().closeActive()
+        })}>
+          Open from disk…
+        </Item>
+        <Item onSelect={() => downloadCurrent(activeFileName ?? 'model.mlforge')}>
+          Export to disk…
+        </Item>
       </Menu>
 
       <Menu label="Edit">
@@ -42,6 +69,7 @@ export default function Toolbar() {
                   !confirm(`Replace current graph with "${t.name}"? (Cmd+Z to undo)`)) return
               useGraphStore.getState().loadSnapshot(t.build())
               useGraphStore.getState().autoLayout()
+              useWorkspaceStore.getState().closeActive()
             }}
             hint={t.description}
           >{t.name}</Item>

@@ -1,5 +1,6 @@
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels'
 import Palette from './palette/Palette'
+import FileExplorer from './workspace/FileExplorer'
 import Canvas from './canvas/Canvas'
 import Inspector from './inspector/Inspector'
 import ChatPanel from './chat/ChatPanel'
@@ -61,6 +62,7 @@ export default function App() {
   const cols = useSaved('mlforge.cols')
   const center = useSaved('mlforge.center')
   const right = useSaved('mlforge.right')
+  const left = useSaved('mlforge.left')
 
   return (
     <div className="flex h-screen w-screen flex-col bg-[#0b0d10] text-[#e6e8eb]">
@@ -81,7 +83,17 @@ export default function App() {
         defaultLayout={cols.defaultLayout}
         onLayoutChanged={cols.onLayoutChanged}
       >
-        <Panel defaultSize="15%" minSize="120px"><Palette /></Panel>
+        <Panel defaultSize="15%" minSize="140px">
+          <Group
+            orientation="vertical"
+            defaultLayout={left.defaultLayout}
+            onLayoutChanged={left.onLayoutChanged}
+          >
+            <Panel defaultSize="55%" minSize="100px"><Palette /></Panel>
+            <Separator className={VBAR} />
+            <Panel defaultSize="45%" minSize="80px"><FileExplorer /></Panel>
+          </Group>
+        </Panel>
         <Separator className={HBAR} />
 
         <Panel defaultSize="58%" minSize="240px">
