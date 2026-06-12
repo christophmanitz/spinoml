@@ -18,9 +18,16 @@ struct Sidecars {
     llm: Mutex<Option<Child>>,
 }
 
-fn project_root() -> PathBuf {
-    // CARGO_MANIFEST_DIR is the src-tauri/ directory at build time. Project
-    // root is one level up — that's where sidecar-torch and sidecar-llm live.
+fn sidecar_root(app: &tauri::App) -> PathBuf {
+    // In a release bundle the sidecars live under the resource directory
+    // (mapped from ../sidecar-* by tauri.conf.json bundle.resources). During
+    // dev there is no resource dir, so fall back to the project root which
+    // is one level above CARGO_MANIFEST_DIR.
+    if !cfg!(debug_assertions) {
+        if let Ok(dir) = app.path().resource_dir() {
+            return dir;
+        }
+    }
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest
         .parent()
@@ -277,7 +284,7 @@ pub fn run() {
                 )?;
             }
 
-            let root = project_root();
+            let root = sidecar_root(app);
             let sc: State<Sidecars> = app.state();
             if let Ok(mut t) = sc.torch.lock() {
                 *t = spawn_managed(

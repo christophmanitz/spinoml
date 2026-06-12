@@ -27,7 +27,7 @@ shape and surfaces errors inline.
 - [x] **Phase 5.5** — Workspace file explorer (virtual FS in localStorage)
 - [x] **Phase 6** — Tauri desktop shell with real filesystem workspace
 - [x] **Phase 6.5** — Sidecar lifecycle (auto-spawn torch+llm from Rust)
-- [ ] **Phase 7** — Distribution build (`.deb`/`.AppImage`) + bundled python+torch
+- [x] **Phase 7** — Distribution build (`.deb` / `.AppImage`)
 
 ## Repo layout
 
@@ -62,6 +62,39 @@ In Tauri mode the header badges say `shapes (auto)` / `LLM (auto)` —
 the sidecars are children of the app process and get killed cleanly on
 window close. In browser mode you start them manually in extra
 terminals; badges show `shapes` / `LLM` without the `(auto)` suffix.
+
+## Distribution build
+
+```bash
+conda activate mlforge-dev
+npm run tauri build      # writes .deb + .AppImage to
+                         # src-tauri/target/release/bundle/
+```
+
+The bundle embeds `sidecar-torch/` and `sidecar-llm/` (including
+`sidecar-llm/node_modules`). The Rust shell resolves the sidecar
+location from the resource directory at runtime instead of the source
+tree.
+
+### Runtime requirements (installed machine)
+
+After `sudo dpkg -i mlforge_*.deb`, the app needs the following
+binaries discoverable on the desktop session's `PATH`:
+
+- `python3` (or `python`) with `torch` installed (`pip install torch`
+  for CPU, or use a system / conda Python that already has it)
+- `node` (≥ 20)
+- `claude` (the Claude Code CLI, authenticated via `claude setup-token`
+  against your Max subscription)
+
+If any of these is missing, the corresponding sidecar fails to spawn
+and the badge stays on `offline`; the rest of the UI keeps working
+(you can still build, save, and export `.py` files — the codegen is
+client-side).
+
+The `.deb` depends on `libwebkit2gtk-4.1-0`, `libgtk-3-0`, and
+`libayatana-appindicator3-1`, which `dpkg`/`apt` will pull in
+automatically on Ubuntu 24.04+ and Debian 13+.
 
 The LLM sidecar spawns `claude` under the hood — make sure
 `claude setup-token` was run once so it can hit your Max subscription.
