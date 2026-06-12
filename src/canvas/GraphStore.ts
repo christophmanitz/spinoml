@@ -22,8 +22,19 @@ export type LayerNodeData = {
 
 export type LayerNode = Node<LayerNodeData, 'layer'>
 
+export type GraphSnapshot = {
+  nodes: { id: string; layerType: string; params: Record<string, unknown>; position?: XYPosition }[]
+  edges: { source: string; target: string }[]
+}
+
 let nextId = 1
 const newNodeId = () => `n${nextId++}`
+function bumpNextIdPast(ids: string[]) {
+  for (const id of ids) {
+    const m = id.match(/^n(\d+)$/)
+    if (m) nextId = Math.max(nextId, parseInt(m[1], 10) + 1)
+  }
+}
 
 type State = {
   nodes: LayerNode[]
@@ -40,6 +51,8 @@ type State = {
   deleteNode: (id: string) => void
   connectNodes: (source: string, target: string) => void
   autoLayout: () => void
+  loadSnapshot: (snapshot: GraphSnapshot) => void
+  resetGraph: () => void
 }
 
 export const useGraphStore = create<State>((set, get) => ({
@@ -113,7 +126,66 @@ export const useGraphStore = create<State>((set, get) => ({
     })
     set({ nodes: next })
   },
+
+  loadSnapshot: (snapshot) => {
+    bumpNextIdPast(snapshot.nodes.map((n) => n.id))
+    const fallback = { x: 0, y: 0 }
+    const nodes: LayerNode[] = snapshot.nodes.map((n) => ({
+      id: n.id,
+      type: 'layer' as const,
+      position: n.position ?? fallback,
+      data: {
+        layerType: n.layerType,
+        params: coerceParams(n.layerType, { ...defaultParamsFor(n.layerType), ...n.params }),
+      },
+    }))
+    const edges: Edge[] = snapshot.edges.map((e, i) => ({
+      id: `e${i + 1}`,
+      source: e.source,
+      target: e.target,
+      animated: true,
+    }))
+    set({ nodes, edges, selectedNodeId: null })
+    const needsLayout = snapshot.nodes.some((n) => !n.position)
+    if (needsLayout) get().autoLayout()
+  },
+
+  resetGraph: () => {
+    nextId = 1
+    set({
+      nodes: [{
+        id: 'input', type: 'layer',
+        position: { x: 250, y: 50 },
+        data: { layerType: 'Input', params: defaultParamsFor('Input') },
+      }],
+      edges: [],
+      selectedNodeId: null,
+    })
+  },
 }))
+
+export function captureSnapshot(state: { nodes: LayerNode[]; edges: Edge[] }): GraphSnapshot {
+  return {
+    nodes: state.nodes.map((n) => ({
+      id: n.id,
+      layerType: n.data.layerType,
+      params: n.data.params,
+      position: { x: n.position.x, y: n.position.y },
+    })),
+    edges: state.edges.map((e) => ({ source: e.source, target: e.target })),
+  }
+}
+
+export function captureStructuralSnapshot(state: { nodes: LayerNode[]; edges: Edge[] }) {
+  return {
+    nodes: state.nodes.map((n) => ({
+      id: n.id,
+      layerType: n.data.layerType,
+      params: n.data.params,
+    })),
+    edges: state.edges.map((e) => ({ source: e.source, target: e.target })),
+  }
+}
 
 const COL_W = 240
 const ROW_H = 110

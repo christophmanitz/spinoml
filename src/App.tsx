@@ -6,6 +6,7 @@ import ChatPanel from './chat/ChatPanel'
 import CodePreview from './codegen/CodePreview'
 import { useInferenceStore } from './inference/store'
 import { useChatStore } from './chat/store'
+import Toolbar from './Toolbar'
 
 function InferenceBadge() {
   const status = useInferenceStore((s) => s.status)
@@ -63,10 +64,10 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen flex-col bg-[#0b0d10] text-[#e6e8eb]">
-      <header className="flex h-10 shrink-0 items-center justify-between border-b border-[#1f2429] px-4">
-        <div className="flex items-center gap-3">
+      <header className="flex h-10 shrink-0 items-center justify-between border-b border-[#1f2429] pl-4 pr-3">
+        <div className="flex items-center gap-4">
           <span className="font-semibold tracking-tight">MLForge</span>
-          <span className="text-xs text-[#7a8088]">PyTorch architecture builder · phase 4.5</span>
+          <Toolbar />
         </div>
         <div className="flex items-center gap-2 text-xs text-[#7a8088]">
           <InferenceBadge />
