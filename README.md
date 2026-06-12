@@ -27,7 +27,7 @@ shape and surfaces errors inline.
 - [x] **Phase 5.5** — Workspace file explorer (virtual FS in localStorage)
 - [x] **Phase 6** — Tauri desktop shell with real filesystem workspace
 - [x] **Phase 6.5** — Sidecar lifecycle (auto-spawn torch+llm from Rust)
-- [x] **Phase 7** — Distribution build (`.deb` / `.AppImage`)
+- [x] **Phase 7** — Distribution build (`.deb`; AppImage TODO when linuxdeploy/libfuse2 is available)
 
 ## Repo layout
 
@@ -67,9 +67,15 @@ terminals; badges show `shapes` / `LLM` without the `(auto)` suffix.
 
 ```bash
 conda activate mlforge-dev
-npm run tauri build      # writes .deb + .AppImage to
-                         # src-tauri/target/release/bundle/
+npm run tauri build      # writes .deb to
+                         # src-tauri/target/release/bundle/deb/
+sudo dpkg -i src-tauri/target/release/bundle/deb/mlforge_*_amd64.deb
+mlforge                  # launch from terminal, or click the desktop entry
 ```
+
+The `.deb` is ~80 MB. AppImage support is gated on `libfuse2` (and a
+working `linuxdeploy` download); enable both `deb` and `appimage` in
+`bundle.targets` once that's set up on the build host.
 
 The bundle embeds `sidecar-torch/` and `sidecar-llm/` (including
 `sidecar-llm/node_modules`). The Rust shell resolves the sidecar

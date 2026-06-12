@@ -27,7 +27,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage"],
+    "targets": ["deb"],
     "category": "DeveloperTool",
     "shortDescription": "Drag-and-drop PyTorch architecture builder",
     "longDescription": "MLForge lets you build nn.Module architectures by dragging layers onto a canvas, see live shape inference from PyTorch, and have Claude edit the graph through tools.",
