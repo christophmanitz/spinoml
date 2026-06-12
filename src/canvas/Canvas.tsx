@@ -56,7 +56,7 @@ function CanvasInner() {
   )
 
   return (
-    <div ref={wrapperRef} className="flex-1 min-h-0" onDragOver={onDragOver} onDrop={onDrop}>
+    <div ref={wrapperRef} className="h-full w-full" onDragOver={onDragOver} onDrop={onDrop}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
