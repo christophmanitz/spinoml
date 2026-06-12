@@ -2,7 +2,7 @@ import { LAYER_GROUPS } from '../layers/registry'
 
 export default function Palette() {
   return (
-    <aside className="w-[200px] shrink-0 overflow-y-auto border-r border-[#1f2429] p-2 text-sm">
+    <aside className="h-full overflow-y-auto p-2 text-sm">
       <div className="mb-2 text-xs uppercase tracking-wide text-[#7a8088]">Layers</div>
       <div className="mb-3 text-[10px] text-[#7a8088]">drag onto canvas</div>
       {LAYER_GROUPS.map((group) => (

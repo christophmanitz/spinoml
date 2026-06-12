@@ -14,7 +14,7 @@ export default function Inspector() {
 
   if (!node) {
     return (
-      <div className="flex h-1/2 min-h-0 flex-col border-b border-[#1f2429] p-3 text-sm">
+      <div className="flex h-full min-h-0 flex-col p-3 text-sm">
         <div className="mb-2 text-xs uppercase tracking-wide text-[#7a8088]">Inspector</div>
         <div className="text-xs text-[#7a8088]">Select a node to edit its parameters.</div>
       </div>
@@ -28,7 +28,7 @@ export default function Inspector() {
   const outShape = node.data.inferredOutputShape
 
   return (
-    <div className="flex h-1/2 min-h-0 flex-col border-b border-[#1f2429] p-3 text-sm">
+    <div className="flex h-full min-h-0 flex-col p-3 text-sm">
       <div className="mb-2 flex items-center justify-between">
         <div className="text-xs uppercase tracking-wide text-[#7a8088]">Inspector</div>
         {node.id !== 'input' && (

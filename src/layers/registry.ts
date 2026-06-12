@@ -199,6 +199,82 @@ export function defaultParamsFor(layerType: string): Record<string, unknown> {
   return params
 }
 
+/** Coerce a raw param map (e.g. from the LLM) to types matching the field schema.
+ *  - tuple-int with arity N: number → [n, n, …], array of wrong length is padded/truncated
+ *  - shape: number → [n], array kept (validated as positive ints)
+ *  - int/float: strings parsed
+ *  - select: only kept if in options
+ *  Unknown keys pass through unchanged so future params don't get dropped silently.
+ */
+export function coerceParams(
+  layerType: string,
+  raw: Record<string, unknown>,
+): Record<string, unknown> {
+  const spec = LAYERS[layerType]
+  if (!spec) return raw
+  const out: Record<string, unknown> = { ...raw }
+  for (const field of spec.fields) {
+    if (!(field.name in raw)) continue
+    out[field.name] = coerceField(field, raw[field.name])
+  }
+  return out
+}
+
+function coerceField(field: FieldSpec, value: unknown): unknown {
+  switch (field.type) {
+    case 'int': {
+      const n = typeof value === 'string' ? parseInt(value, 10) : Number(value)
+      return Number.isFinite(n) ? Math.trunc(n) : field.default
+    }
+    case 'float': {
+      const n = typeof value === 'string' ? parseFloat(value) : Number(value)
+      return Number.isFinite(n) ? n : field.default
+    }
+    case 'bool':
+      if (typeof value === 'boolean') return value
+      if (value === 'true') return true
+      if (value === 'false') return false
+      return Boolean(value)
+    case 'select': {
+      const s = String(value)
+      return field.options.includes(s) ? s : field.default
+    }
+    case 'tuple-int': {
+      const arr = toIntArray(value)
+      if (arr.length === 0) return field.default
+      if (arr.length === field.arity) return arr
+      if (arr.length === 1) return Array(field.arity).fill(arr[0])
+      if (arr.length > field.arity) return arr.slice(0, field.arity)
+      const padded = [...arr]
+      while (padded.length < field.arity) padded.push(arr[arr.length - 1])
+      return padded
+    }
+    case 'shape': {
+      const arr = toIntArray(value)
+      return arr.length ? arr : field.default
+    }
+  }
+}
+
+function toIntArray(value: unknown): number[] {
+  if (typeof value === 'number' && Number.isFinite(value)) return [Math.trunc(value)]
+  if (typeof value === 'string') {
+    const parts = value.split(/[,\s\[\]]+/).filter(Boolean)
+    return parts
+      .map((p) => parseInt(p, 10))
+      .filter((n) => Number.isFinite(n))
+  }
+  if (Array.isArray(value)) {
+    const out: number[] = []
+    for (const v of value) {
+      const n = typeof v === 'string' ? parseInt(v, 10) : Number(v)
+      if (Number.isFinite(n)) out.push(Math.trunc(n))
+    }
+    return out
+  }
+  return []
+}
+
 export const LAYER_GROUPS: { name: string; layers: string[] }[] = (() => {
   const byCategory: Record<string, string[]> = {}
   for (const spec of Object.values(LAYERS)) {

@@ -30,7 +30,7 @@ export default function CodePreview() {
       : 'text-emerald-400'
 
   return (
-    <div className="flex h-[260px] shrink-0 flex-col border-t border-[#1f2429]">
+    <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-7 shrink-0 items-center justify-between border-b border-[#1f2429] px-3 text-xs uppercase tracking-wide text-[#7a8088]">
         <span>Generated PyTorch</span>
         <span className={`text-[10px] normal-case ${statusColor}`}>{statusLabel}</span>

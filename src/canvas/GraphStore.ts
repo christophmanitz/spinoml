@@ -10,7 +10,7 @@ import {
   applyEdgeChanges,
   addEdge,
 } from '@xyflow/react'
-import { defaultParamsFor } from '../layers/registry'
+import { defaultParamsFor, coerceParams } from '../layers/registry'
 
 export type LayerNodeData = {
   layerType: string
@@ -60,14 +60,12 @@ export const useGraphStore = create<State>((set, get) => ({
 
   addLayer: (layerType, position, opts) => {
     const id = opts?.id && !get().nodes.some((n) => n.id === opts.id) ? opts.id : newNodeId()
+    const merged = { ...defaultParamsFor(layerType), ...(opts?.params ?? {}) }
     const node: LayerNode = {
       id,
       type: 'layer',
       position,
-      data: {
-        layerType,
-        params: { ...defaultParamsFor(layerType), ...(opts?.params ?? {}) },
-      },
+      data: { layerType, params: coerceParams(layerType, merged) },
     }
     set({ nodes: [...get().nodes, node], selectedNodeId: id })
     return id
@@ -75,9 +73,11 @@ export const useGraphStore = create<State>((set, get) => ({
 
   updateNodeParams: (id, params) => {
     set({
-      nodes: get().nodes.map((n) =>
-        n.id === id ? { ...n, data: { ...n.data, params: { ...n.data.params, ...params } } } : n,
-      ),
+      nodes: get().nodes.map((n) => {
+        if (n.id !== id) return n
+        const merged = { ...n.data.params, ...params }
+        return { ...n, data: { ...n.data, params: coerceParams(n.data.layerType, merged) } }
+      }),
     })
   },
 

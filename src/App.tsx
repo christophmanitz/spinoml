@@ -1,3 +1,4 @@
+import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels'
 import Palette from './palette/Palette'
 import Canvas from './canvas/Canvas'
 import Inspector from './inspector/Inspector'
@@ -44,13 +45,28 @@ function LLMBadge() {
   return <span className={`rounded px-2 py-0.5 ${color}`}>{label}</span>
 }
 
+const storage = typeof window !== 'undefined' ? window.localStorage : undefined
+const HBAR =
+  'w-px bg-[#1f2429] hover:w-[3px] hover:bg-[#3a4148] data-[separator-active]:w-[3px] data-[separator-active]:bg-[#6ab7ff] transition-colors cursor-col-resize'
+const VBAR =
+  'h-px bg-[#1f2429] hover:h-[3px] hover:bg-[#3a4148] data-[separator-active]:h-[3px] data-[separator-active]:bg-[#6ab7ff] transition-colors cursor-row-resize'
+
+function useSaved(id: string) {
+  const ctx = useDefaultLayout({ id, storage })
+  return { defaultLayout: ctx.defaultLayout, onLayoutChanged: ctx.onLayoutChanged }
+}
+
 export default function App() {
+  const cols = useSaved('mlforge.cols')
+  const center = useSaved('mlforge.center')
+  const right = useSaved('mlforge.right')
+
   return (
     <div className="flex h-screen w-screen flex-col bg-[#0b0d10] text-[#e6e8eb]">
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-[#1f2429] px-4">
         <div className="flex items-center gap-3">
           <span className="font-semibold tracking-tight">MLForge</span>
-          <span className="text-xs text-[#7a8088]">PyTorch architecture builder · phase 3</span>
+          <span className="text-xs text-[#7a8088]">PyTorch architecture builder · phase 4.5</span>
         </div>
         <div className="flex items-center gap-2 text-xs text-[#7a8088]">
           <InferenceBadge />
@@ -58,17 +74,40 @@ export default function App() {
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1">
-        <Palette />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <Canvas />
-          <CodePreview />
-        </div>
-        <div className="flex w-[380px] shrink-0 flex-col border-l border-[#1f2429]">
-          <Inspector />
-          <ChatPanel />
-        </div>
-      </div>
+      <Group
+        orientation="horizontal"
+        className="min-h-0 flex-1"
+        defaultLayout={cols.defaultLayout}
+        onLayoutChanged={cols.onLayoutChanged}
+      >
+        <Panel defaultSize="15%" minSize="120px"><Palette /></Panel>
+        <Separator className={HBAR} />
+
+        <Panel defaultSize="58%" minSize="240px">
+          <Group
+            orientation="vertical"
+            defaultLayout={center.defaultLayout}
+            onLayoutChanged={center.onLayoutChanged}
+          >
+            <Panel defaultSize="70%" minSize="120px"><Canvas /></Panel>
+            <Separator className={VBAR} />
+            <Panel defaultSize="30%" minSize="80px"><CodePreview /></Panel>
+          </Group>
+        </Panel>
+        <Separator className={HBAR} />
+
+        <Panel defaultSize="27%" minSize="240px">
+          <Group
+            orientation="vertical"
+            defaultLayout={right.defaultLayout}
+            onLayoutChanged={right.onLayoutChanged}
+          >
+            <Panel defaultSize="50%" minSize="100px"><Inspector /></Panel>
+            <Separator className={VBAR} />
+            <Panel defaultSize="50%" minSize="100px"><ChatPanel /></Panel>
+          </Group>
+        </Panel>
+      </Group>
     </div>
   )
 }

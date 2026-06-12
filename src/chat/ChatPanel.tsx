@@ -29,7 +29,7 @@ export default function ChatPanel() {
     : 'ready'
 
   return (
-    <div className="flex h-1/2 min-h-0 flex-col p-3 text-sm">
+    <div className="flex h-full min-h-0 flex-col p-3 text-sm">
       <div className="mb-2 flex items-center justify-between">
         <div className="text-xs uppercase tracking-wide text-[#7a8088]">Chat</div>
         <div className="flex items-center gap-2 text-[10px] text-[#7a8088]">
