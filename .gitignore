@@ -1,0 +1,41 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Build artifacts
+node_modules
+dist
+dist-ssr
+*.local
+src-tauri/target
+sidecar-llm/dist
+sidecar-llm/node_modules
+
+# Python sidecar
+sidecar-torch/__pycache__
+sidecar-torch/*.pyc
+sidecar-torch/.venv
+
+# Project files
+*.mlforge
+
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
