@@ -5,6 +5,8 @@ import { LAYERS, type FieldSpec } from '../layers/registry'
 export type CodegenResult = {
   code: string
   issues: string[]
+  attrMap: Record<string, string>
+  inputShape: number[]
 }
 
 export function generatePyTorchCode(nodes: LayerNode[], edges: Edge[]): string {
@@ -29,7 +31,7 @@ export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {
   const inputNode = nodes.find((n) => n.data.layerType === 'Input')
   if (!inputNode) {
     issues.push('No Input node — add one to begin.')
-    return { code: emitStub(issues), issues }
+    return { code: emitStub(issues), issues, attrMap: {}, inputShape: [1, 3, 224, 224] }
   }
 
   const order: string[] = []
@@ -68,7 +70,7 @@ export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {
     }
   }
 
-  if (cycleFound) return { code: emitStub(issues), issues }
+  if (cycleFound) return { code: emitStub(issues), issues, attrMap: {}, inputShape: [1, 3, 224, 224] }
 
   const attrName = new Map<string, string>()
   const counter: Record<string, number> = {}
@@ -102,7 +104,9 @@ export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {
 
   const inputShape = (inputNode.data.params.shape as number[]) ?? [1, 3, 224, 224]
   const code = emitModule(initLines, forwardLines, inputShape, issues)
-  return { code, issues }
+  const attrMap: Record<string, string> = {}
+  for (const [id, attr] of attrName) attrMap[id] = attr
+  return { code, issues, attrMap, inputShape }
 }
 
 function emitStub(issues: string[]): string {

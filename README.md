@@ -14,14 +14,14 @@ shape and surfaces errors inline.
   Zustand for graph state, Tailwind v4, Monaco for code preview
 - **LLM bridge**: Node.js sidecar running `@anthropic-ai/claude-agent-sdk`
   (uses Claude Code's OAuth → consumes Max subscription, not pay-per-use)
-- **Shape inference**: Python sidecar running PyTorch, JSON over stdio
+- **Shape inference**: Python sidecar running PyTorch, HTTP on 127.0.0.1:7421
 
 ## Phase status
 
 - [x] **Phase 0** — Scaffold: window, panels, dependencies wired
-- [ ] **Phase 1** — Layer palette, canvas with typed nodes, inspector forms
-- [ ] **Phase 2** — Graph → PyTorch code generator
-- [ ] **Phase 3** — Python sidecar with shape inference
+- [x] **Phase 1** — Layer palette, canvas with typed nodes, inspector forms
+- [x] **Phase 2** — Graph → PyTorch code generator
+- [x] **Phase 3** — Python sidecar with shape inference
 - [ ] **Phase 4** — Claude Agent SDK sidecar + chat UI
 - [ ] **Phase 5** — MCP tools so the LLM can mutate the graph live
 - [ ] **Phase 6** — Save/load, undo/redo, templates
@@ -47,9 +47,19 @@ Everything runs inside the `mlforge-dev` conda env (node 20, rust 1.96, python 3
 ```bash
 conda activate mlforge-dev
 npm install
-npm run tauri dev      # opens the window
+npm run tauri dev          # opens the window
 # or vite-only (no rust build needed):
-npm run dev            # browser at http://localhost:5173
+npm run dev                # browser at http://localhost:5173
+
+# in another terminal: shape-inference sidecar
+npm run sidecar:torch      # listens on 127.0.0.1:7421
+```
+
+Verification harnesses:
+
+```bash
+npm run verify:codegen     # generates 4 graphs → writes .py → runs python on each
+npm run verify:sidecar     # autostarts sidecar, posts generated code, checks shapes & errors
 ```
 
 ### Tauri Linux system deps (one-time)

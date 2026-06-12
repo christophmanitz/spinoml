@@ -9,7 +9,9 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "tauri": "tauri",
-    "verify:codegen": "tsx scripts/verify-codegen.ts"
+    "verify:codegen": "tsx scripts/verify-codegen.ts",
+    "verify:sidecar": "tsx scripts/verify-sidecar.ts",
+    "sidecar:torch": "python sidecar-torch/main.py"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
