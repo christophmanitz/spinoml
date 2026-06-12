@@ -25,7 +25,8 @@ shape and surfaces errors inline.
 - [x] **Phase 4** — Claude Agent SDK sidecar + chat UI with live graph mutation
 - [x] **Phase 5** — Save/load `.mlforge` files, undo/redo, templates
 - [x] **Phase 5.5** — Workspace file explorer (virtual FS in localStorage)
-- [ ] **Phase 6** — Tauri packaging + sidecar lifecycle management
+- [x] **Phase 6** — Tauri desktop shell with real filesystem workspace
+- [ ] **Phase 6.5** — Sidecar lifecycle (auto-spawn torch+llm from Rust) + packaging
 
 ## Repo layout
 

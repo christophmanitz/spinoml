@@ -8,4 +8,16 @@ html, body, #root {
   background: #0b0d10;
   color: #e6e8eb;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Force webkit2gtk to give the React Flow viewport its own GPU layer.
+   Without this, subpixel CSS transforms during pan/zoom blur the nodes. */
+.react-flow__viewport,
+.react-flow__renderer,
+.react-flow__node {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  will-change: transform;
 }

@@ -15,15 +15,21 @@ export default function Toolbar() {
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot)
   const tauriAvailable = isTauri()
 
-  const saveToWorkspace = () => {
+  const saveToWorkspace = async () => {
     const ws = useWorkspaceStore.getState()
     if (ws.activeFileId) {
-      ws.saveActive()
+      try { await ws.saveActive() }
+      catch (e) { await reportError('Save failed', e) }
       return
     }
-    const name = prompt('Save as (in models/):', 'untitled.mlforge')
-    if (!name) return
-    ws.saveAsNew(ROOT_ID, name)
+    // No active file: in Tauri webview window.prompt is unreliable, so just
+    // auto-create with a default name. User can inline-rename in the tree.
+    try {
+      const id = await ws.saveAsNew(ROOT_ID, 'untitled.mlforge')
+      if (!id) await reportError('Save failed', 'workspace did not return a file id')
+    } catch (e) {
+      await reportError('Save failed', e)
+    }
   }
 
   return (
@@ -100,6 +106,17 @@ export default function Toolbar() {
 function truncatePath(p: string): string {
   if (p.length <= 40) return p
   return '…' + p.slice(-37)
+}
+
+async function reportError(title: string, e: unknown): Promise<void> {
+  const msg = e instanceof Error ? e.message : String(e)
+  try {
+    const { message } = await import('@tauri-apps/plugin-dialog')
+    await message(msg, { title, kind: 'error' })
+  } catch {
+    alert(`${title}\n${msg}`)
+  }
+  console.error(title, e)
 }
 
 function Menu({ label, children }: { label: string; children: React.ReactNode }) {
