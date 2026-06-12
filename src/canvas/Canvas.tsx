@@ -5,6 +5,7 @@ import {
   Background,
   Controls,
   MiniMap,
+  Panel,
   useReactFlow,
   type NodeTypes,
   type OnSelectionChangeParams,
@@ -24,8 +25,9 @@ function CanvasInner() {
   const onConnect = useGraphStore((s) => s.onConnect)
   const addLayer = useGraphStore((s) => s.addLayer)
   const setSelectedNodeId = useGraphStore((s) => s.setSelectedNodeId)
+  const autoLayout = useGraphStore((s) => s.autoLayout)
 
-  const { screenToFlowPosition } = useReactFlow()
+  const { screenToFlowPosition, fitView } = useReactFlow()
   const wrapperRef = useRef<HTMLDivElement>(null)
 
   const nodeTypes = useMemo<NodeTypes>(() => ({ layer: LayerNode }), [])
@@ -73,6 +75,18 @@ function CanvasInner() {
         <Background gap={16} size={1} />
         <Controls />
         <MiniMap pannable zoomable nodeColor="#3a4148" maskColor="#0b0d1099" />
+        <Panel position="top-right" className="!m-2">
+          <button
+            className="rounded border border-[#1f2429] bg-[#13171b] px-2 py-1 text-[11px] text-[#9aa1a8] hover:border-[#3a4148] hover:bg-[#1a1f24] hover:text-[#e6e8eb]"
+            onClick={() => {
+              autoLayout()
+              setTimeout(() => fitView({ duration: 200, padding: 0.15 }), 0)
+            }}
+            title="Re-arrange nodes into wrapping columns"
+          >
+            ⊞ Auto layout
+          </button>
+        </Panel>
       </ReactFlow>
     </div>
   )

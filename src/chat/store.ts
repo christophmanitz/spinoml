@@ -67,11 +67,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const error = snapshotError()
 
     inflight = new AbortController()
+    let mutatedGraph = false
 
     try {
       await streamChat(
         { user: trimmed, messages: history, graph, error: error ?? undefined },
-        (ev) => applyEvent(assistantId, ev, set, get),
+        (ev) => {
+          if (ev.type === 'action') mutatedGraph = true
+          applyEvent(assistantId, ev, set, get)
+        },
         inflight.signal,
       )
     } catch (e) {
@@ -82,6 +86,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       inflight = null
       patchAssistant(assistantId, set, get, (a) => a.status === 'streaming' ? { ...a, status: 'done' } : a)
       set({ status: 'idle' })
+      if (mutatedGraph) useGraphStore.getState().autoLayout()
     }
   },
 }))

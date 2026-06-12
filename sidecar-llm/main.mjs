@@ -287,7 +287,7 @@ async function handleChat(req, res) {
           'mcp__graph__delete_node',
         ],
         permissionMode: 'bypassPermissions',
-        maxTurns: 12,
+        maxTurns: 60,
       },
     })) {
       handleSdkMessage(m, emit)
