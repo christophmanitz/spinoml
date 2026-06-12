@@ -26,7 +26,8 @@ shape and surfaces errors inline.
 - [x] **Phase 5** — Save/load `.mlforge` files, undo/redo, templates
 - [x] **Phase 5.5** — Workspace file explorer (virtual FS in localStorage)
 - [x] **Phase 6** — Tauri desktop shell with real filesystem workspace
-- [ ] **Phase 6.5** — Sidecar lifecycle (auto-spawn torch+llm from Rust) + packaging
+- [x] **Phase 6.5** — Sidecar lifecycle (auto-spawn torch+llm from Rust)
+- [ ] **Phase 7** — Distribution build (`.deb`/`.AppImage`) + bundled python+torch
 
 ## Repo layout
 
@@ -49,14 +50,18 @@ Everything runs inside the `mlforge-dev` conda env (node 20, rust 1.96, python 3
 ```bash
 conda activate mlforge-dev
 npm install
-npm run tauri dev          # opens the window
-# or vite-only (no rust build needed):
-npm run dev                # browser at http://localhost:5173
+npm run tauri dev          # native window; Rust shell auto-spawns both sidecars
 
-# in two extra terminals (both inside the conda env):
+# or vite-only (browser dev, no Rust, manual sidecars):
+npm run dev                # browser at http://localhost:5173
 npm run sidecar:torch      # shape inference on 127.0.0.1:7421
 npm run sidecar:llm        # Claude bridge      on 127.0.0.1:7422
 ```
+
+In Tauri mode the header badges say `shapes (auto)` / `LLM (auto)` —
+the sidecars are children of the app process and get killed cleanly on
+window close. In browser mode you start them manually in extra
+terminals; badges show `shapes` / `LLM` without the `(auto)` suffix.
 
 The LLM sidecar spawns `claude` under the hood — make sure
 `claude setup-token` was run once so it can hit your Max subscription.

@@ -7,19 +7,22 @@ import ChatPanel from './chat/ChatPanel'
 import CodePreview from './codegen/CodePreview'
 import { useInferenceStore } from './inference/store'
 import { useChatStore } from './chat/store'
+import { useManagedSidecars } from './sidecars/managed'
 import Toolbar from './Toolbar'
 
 function InferenceBadge() {
   const status = useInferenceStore((s) => s.status)
   const nParams = useInferenceStore((s) => s.nParams)
   const error = useInferenceStore((s) => s.error)
+  const managed = useManagedSidecars((s) => s.torch)
 
+  const prefix = managed ? 'shapes (auto)' : 'shapes'
   const label =
-    status === 'idle' ? 'shapes: idle'
-    : status === 'inferring' ? 'shapes: inferring…'
-    : status === 'ok' ? `shapes: ok · ${nParams != null ? nParams.toLocaleString() + ' params' : ''}`
-    : status === 'offline' ? 'shapes: sidecar offline'
-    : `shapes: ${error?.split(':')[0] ?? 'error'}`
+    status === 'idle' ? `${prefix}: idle`
+    : status === 'inferring' ? `${prefix}: inferring…`
+    : status === 'ok' ? `${prefix}: ok · ${nParams != null ? nParams.toLocaleString() + ' params' : ''}`
+    : status === 'offline' ? `${prefix}: sidecar offline`
+    : `${prefix}: ${error?.split(':')[0] ?? 'error'}`
 
   const color =
     status === 'ok' ? 'bg-emerald-900/40 text-emerald-300'
@@ -34,11 +37,13 @@ function InferenceBadge() {
 function LLMBadge() {
   const online = useChatStore((s) => s.online)
   const status = useChatStore((s) => s.status)
+  const managed = useManagedSidecars((s) => s.llm)
+  const prefix = managed ? 'LLM (auto)' : 'LLM'
   const label =
-    online === null ? 'LLM: …'
-    : online === false ? 'LLM: offline'
-    : status === 'streaming' ? 'LLM: thinking'
-    : 'LLM: ready'
+    online === null ? `${prefix}: …`
+    : online === false ? `${prefix}: offline`
+    : status === 'streaming' ? `${prefix}: thinking`
+    : `${prefix}: ready`
   const color =
     online === false ? 'bg-[#1f2429] text-[#7a8088]'
     : status === 'streaming' ? 'bg-violet-900/40 text-violet-300'

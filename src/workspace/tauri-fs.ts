@@ -28,4 +28,6 @@ export const tauriFs = {
   mkdir: (relpath: string) => invoke<void>('mkdir_workspace', { relpath }),
   rename: (fromRel: string, toRel: string) =>
     invoke<void>('rename_workspace_path', { fromRel, toRel }),
+  sidecarManagedStatus: () =>
+    invoke<{ torch: boolean; llm: boolean }>('sidecar_managed_status'),
 }

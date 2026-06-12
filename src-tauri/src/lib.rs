@@ -1,14 +1,89 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::{Manager, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 
 #[derive(Default)]
 struct WorkspaceState {
     root: Mutex<Option<PathBuf>>,
+}
+
+#[derive(Default)]
+struct Sidecars {
+    torch: Mutex<Option<Child>>,
+    llm: Mutex<Option<Child>>,
+}
+
+fn project_root() -> PathBuf {
+    // CARGO_MANIFEST_DIR is the src-tauri/ directory at build time. Project
+    // root is one level up — that's where sidecar-torch and sidecar-llm live.
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or(manifest)
+}
+
+fn spawn_managed(label: &str, prog: &str, arg: PathBuf, cwd: &Path) -> Option<Child> {
+    if !arg.exists() {
+        eprintln!("[mlforge] {label}: sidecar script not found at {}", arg.display());
+        return None;
+    }
+    match Command::new(prog)
+        .arg(&arg)
+        .current_dir(cwd)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+    {
+        Ok(child) => {
+            eprintln!("[mlforge] {label}: spawned pid={} ({prog} {})", child.id(), arg.display());
+            Some(child)
+        }
+        Err(e) => {
+            eprintln!(
+                "[mlforge] {label}: failed to spawn ({prog} {}): {e} \
+                 — make sure your shell PATH has the conda env activated",
+                arg.display()
+            );
+            None
+        }
+    }
+}
+
+fn shutdown_sidecars(sc: &Sidecars) {
+    if let Ok(mut t) = sc.torch.lock() {
+        if let Some(mut c) = t.take() {
+            eprintln!("[mlforge] killing torch sidecar pid={}", c.id());
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+    if let Ok(mut t) = sc.llm.lock() {
+        if let Some(mut c) = t.take() {
+            eprintln!("[mlforge] killing llm sidecar pid={}", c.id());
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct SidecarStatus {
+    torch: bool,
+    llm: bool,
+}
+
+#[tauri::command]
+fn sidecar_managed_status(sc: State<Sidecars>) -> SidecarStatus {
+    SidecarStatus {
+        torch: sc.torch.lock().map(|g| g.is_some()).unwrap_or(false),
+        llm: sc.llm.lock().map(|g| g.is_some()).unwrap_or(false),
+    }
 }
 
 #[derive(Serialize)]
@@ -192,6 +267,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(WorkspaceState::default())
+        .manage(Sidecars::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -200,7 +276,32 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            let root = project_root();
+            let sc: State<Sidecars> = app.state();
+            if let Ok(mut t) = sc.torch.lock() {
+                *t = spawn_managed(
+                    "sidecar-torch",
+                    "python",
+                    root.join("sidecar-torch").join("main.py"),
+                    &root,
+                );
+            }
+            if let Ok(mut l) = sc.llm.lock() {
+                *l = spawn_managed(
+                    "sidecar-llm",
+                    "node",
+                    root.join("sidecar-llm").join("main.mjs"),
+                    &root,
+                );
+            }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { .. } = event {
+                let sc: State<Sidecars> = window.state();
+                shutdown_sidecars(&sc);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             pick_workspace_dir,
@@ -212,6 +313,7 @@ pub fn run() {
             delete_workspace_path,
             mkdir_workspace,
             rename_workspace_path,
+            sidecar_managed_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
