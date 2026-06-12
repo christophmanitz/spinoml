@@ -34,10 +34,11 @@ type State = {
   onEdgesChange: OnEdgesChange
   onConnect: OnConnect
 
-  addLayer: (layerType: string, position: XYPosition) => void
+  addLayer: (layerType: string, position: XYPosition, opts?: { id?: string; params?: Record<string, unknown> }) => string
   updateNodeParams: (id: string, params: Record<string, unknown>) => void
   setSelectedNodeId: (id: string | null) => void
   deleteNode: (id: string) => void
+  connectNodes: (source: string, target: string) => void
 }
 
 export const useGraphStore = create<State>((set, get) => ({
@@ -57,15 +58,19 @@ export const useGraphStore = create<State>((set, get) => ({
   onConnect: (connection) =>
     set({ edges: addEdge({ ...connection, animated: true }, get().edges) }),
 
-  addLayer: (layerType, position) => {
-    const id = newNodeId()
+  addLayer: (layerType, position, opts) => {
+    const id = opts?.id && !get().nodes.some((n) => n.id === opts.id) ? opts.id : newNodeId()
     const node: LayerNode = {
       id,
       type: 'layer',
       position,
-      data: { layerType, params: defaultParamsFor(layerType) },
+      data: {
+        layerType,
+        params: { ...defaultParamsFor(layerType), ...(opts?.params ?? {}) },
+      },
     }
     set({ nodes: [...get().nodes, node], selectedNodeId: id })
+    return id
   },
 
   updateNodeParams: (id, params) => {
@@ -86,4 +91,23 @@ export const useGraphStore = create<State>((set, get) => ({
       selectedNodeId: get().selectedNodeId === id ? null : get().selectedNodeId,
     })
   },
+
+  connectNodes: (source, target) => {
+    const edges = get().edges
+    if (edges.some((e) => e.source === source && e.target === target)) return
+    set({
+      edges: addEdge({ source, target, animated: true, id: `e${edges.length + 1}` }, edges),
+    })
+  },
 }))
+
+export function autoPositionAfter(nodes: LayerNode[], afterId?: string): XYPosition {
+  if (afterId) {
+    const ref = nodes.find((n) => n.id === afterId)
+    if (ref) return { x: ref.position.x, y: ref.position.y + 110 }
+  }
+  if (nodes.length === 0) return { x: 250, y: 50 }
+  const maxY = Math.max(...nodes.map((n) => n.position.y))
+  const last = nodes.find((n) => n.position.y === maxY)
+  return { x: last?.position.x ?? 250, y: maxY + 110 }
+}
