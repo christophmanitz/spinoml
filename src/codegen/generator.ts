@@ -1,6 +1,6 @@
 import type { Edge } from '@xyflow/react'
-import type { LayerNode } from '../canvas/GraphStore'
-import { LAYERS, type FieldSpec } from '../layers/registry'
+import type { LayerNode, GraphSnapshot } from '../canvas/GraphStore'
+import { LAYERS, defaultParamsFor, coerceParams, type FieldSpec } from '../layers/registry'
 
 export type CodegenResult = {
   code: string
@@ -13,6 +13,24 @@ export type CodegenResult = {
 
 export function generatePyTorchCode(nodes: LayerNode[], edges: Edge[]): string {
   return generate(nodes, edges).code
+}
+
+/** Run the codegen against a serialized snapshot (e.g. a workspace file).
+ *  Used to render the .py twin without having to load the file into the live store. */
+export function generateFromSnapshot(snapshot: GraphSnapshot): CodegenResult {
+  const nodes: LayerNode[] = snapshot.nodes.map((n) => ({
+    id: n.id,
+    type: 'layer',
+    position: n.position ?? { x: 0, y: 0 },
+    data: {
+      layerType: n.layerType,
+      params: coerceParams(n.layerType, { ...defaultParamsFor(n.layerType), ...n.params }),
+    },
+  }))
+  const edges: Edge[] = snapshot.edges.map((e, i) => ({
+    id: `e${i + 1}`, source: e.source, target: e.target,
+  }))
+  return generate(nodes, edges)
 }
 
 export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {

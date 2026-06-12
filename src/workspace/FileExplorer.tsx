@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useWorkspaceStore, ROOT_ID, type Entry } from './store'
+import PyCodeModal, { type PyPreview } from './PyCodeModal'
 
 const DRAG_MIME = 'application/mlforge-workspace-entry'
+
+function pyNameFor(name: string): string {
+  return name.replace(/\.mlforge$/i, '').replace(/\W+/g, '_') + '.py'
+}
 
 export default function FileExplorer() {
   const root = useWorkspaceStore((s) => s.entries[ROOT_ID])
@@ -13,6 +18,7 @@ export default function FileExplorer() {
   const [rename, setRename] = useState<string | null>(null)
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [dragOver, setDragOver] = useState<string | null>(null)
+  const [pyPreview, setPyPreview] = useState<PyPreview | null>(null)
 
   useEffect(() => {
     if (!menu) return
@@ -108,6 +114,7 @@ export default function FileExplorer() {
             dragOver={dragOver}
             setDragOver={setDragOver}
             onContext={(id, x, y) => setMenu({ id, x, y })}
+            openPy={setPyPreview}
           />
         )}
       </div>
@@ -115,7 +122,10 @@ export default function FileExplorer() {
       {menu && <ContextMenu menu={menu}
         setRename={setRename}
         importFile={importFile}
+        openPy={setPyPreview}
         close={() => setMenu(null)} />}
+
+      {pyPreview && <PyCodeModal preview={pyPreview} onClose={() => setPyPreview(null)} />}
     </div>
   )
 }
@@ -132,7 +142,7 @@ function IconButton({ children, onClick, title }:
 }
 
 function Tree({
-  parentId, depth, rename, setRename, dragOver, setDragOver, onContext,
+  parentId, depth, rename, setRename, dragOver, setDragOver, onContext, openPy,
 }: {
   parentId: string
   depth: number
@@ -141,6 +151,7 @@ function Tree({
   dragOver: string | null
   setDragOver: (id: string | null) => void
   onContext: (id: string, x: number, y: number) => void
+  openPy: (p: PyPreview) => void
 }) {
   const parent = useWorkspaceStore((s) => s.entries[parentId])
   const expanded = useWorkspaceStore((s) => s.expanded)
@@ -151,28 +162,61 @@ function Tree({
   return (
     <>
       {childIds.map((id) => {
-        return (
-          <Row
-            key={id}
-            id={id}
-            depth={depth}
-            renaming={rename === id}
-            setRename={setRename}
-            dragOver={dragOver}
-            setDragOver={setDragOver}
-            onContext={onContext}
-            childTree={expanded.has(id) ? (
-              <Tree
-                parentId={id} depth={depth + 1}
-                rename={rename} setRename={setRename}
-                dragOver={dragOver} setDragOver={setDragOver}
-                onContext={onContext}
-              />
-            ) : null}
+        const e = useWorkspaceStore.getState().entries[id]
+        const isFolder = e?.kind === 'folder'
+        const isFile = e?.kind === 'file'
+        const isExpanded = expanded.has(id)
+        const subTree = isFolder && isExpanded ? (
+          <Tree
+            parentId={id} depth={depth + 1}
+            rename={rename} setRename={setRename}
+            dragOver={dragOver} setDragOver={setDragOver}
+            onContext={onContext} openPy={openPy}
           />
+        ) : null
+        return (
+          <div key={id}>
+            <Row
+              id={id}
+              depth={depth}
+              renaming={rename === id}
+              setRename={setRename}
+              dragOver={dragOver}
+              setDragOver={setDragOver}
+              onContext={onContext}
+              openPy={openPy}
+              childTree={subTree}
+            />
+            {isFile && isExpanded && (
+              <PyChildRow
+                fileId={id}
+                fileName={(e as Extract<Entry, { kind: 'file' }>).name}
+                depth={depth + 1}
+                openPy={openPy}
+              />
+            )}
+          </div>
         )
       })}
     </>
+  )
+}
+
+function PyChildRow({
+  fileId, fileName, depth, openPy,
+}: { fileId: string; fileName: string; depth: number; openPy: (p: PyPreview) => void }) {
+  const pyName = pyNameFor(fileName)
+  return (
+    <div
+      className="flex items-center gap-0.5 py-[3px] text-xs text-[#9aa1a8] hover:bg-[#13171b] hover:text-[#e6e8eb]"
+      style={{ paddingLeft: 8 + depth * 12 }}
+      onClick={() => openPy({ fileId, pyName })}
+      title="View generated PyTorch code"
+    >
+      <span className="inline-block w-3" />
+      <span className="mr-1">🐍</span>
+      <span className="truncate">{pyName}</span>
+    </div>
   )
 }
 
@@ -185,7 +229,7 @@ function sortKey(aId: string, bId: string): number {
 }
 
 function Row({
-  id, depth, renaming, setRename, dragOver, setDragOver, onContext, childTree,
+  id, depth, renaming, setRename, dragOver, setDragOver, onContext, openPy, childTree,
 }: {
   id: string
   depth: number
@@ -194,6 +238,7 @@ function Row({
   dragOver: string | null
   setDragOver: (id: string | null) => void
   onContext: (id: string, x: number, y: number) => void
+  openPy: (p: PyPreview) => void
   childTree: React.ReactNode
 }) {
   const entry = useWorkspaceStore((s) => s.entries[id]) as Entry | undefined
@@ -204,11 +249,12 @@ function Row({
   if (!entry) return null
 
   const isFolder = entry.kind === 'folder'
+  const isFile = entry.kind === 'file'
   const indent = 8 + depth * 12
 
   const onClick = () => {
     if (isFolder) toggle(id)
-    else open(id)
+    else if (isFile) open(id)
   }
 
   const onContextMenu = (e: React.MouseEvent) => {
@@ -269,9 +315,9 @@ function Row({
         <div className="flex min-w-0 items-center gap-0.5 py-[3px] text-xs">
           <span
             className="inline-block w-3 text-center text-[#5b6168]"
-            onClick={(e) => { if (isFolder) { e.stopPropagation(); toggle(id) } }}
+            onClick={(e) => { e.stopPropagation(); toggle(id) }}
           >
-            {isFolder ? (expanded ? '▾' : '▸') : ' '}
+            {(isFolder || isFile) ? (expanded ? '▾' : '▸') : ' '}
           </span>
           <span className="mr-1">{isFolder ? (expanded ? '📂' : '📁') : '📄'}</span>
           {renaming ? (
@@ -285,6 +331,11 @@ function Row({
         </div>
         {!renaming && (
           <div className="hidden gap-0.5 text-[#5b6168] group-hover:flex">
+            {isFile && (
+              <IconButton title="View generated PyTorch" onClick={() => {
+                openPy({ fileId: id, pyName: pyNameFor((entry as Extract<Entry, { kind: 'file' }>).name) })
+              }}>🐍</IconButton>
+            )}
             {isFolder && (
               <IconButton title="New file" onClick={() => {
                 const childId = useWorkspaceStore.getState().createFile(id)
@@ -333,11 +384,12 @@ function RenameInput({ initial, commit, cancel }: {
 }
 
 function ContextMenu({
-  menu, setRename, importFile, close,
+  menu, setRename, importFile, openPy, close,
 }: {
   menu: { id: string; x: number; y: number }
   setRename: (id: string | null) => void
   importFile: (parentId: string) => void
+  openPy: (p: PyPreview) => void
   close: () => void
 }) {
   const entry = useWorkspaceStore((s) => s.entries[menu.id])
@@ -351,9 +403,16 @@ function ContextMenu({
       onMouseDown={(e) => e.stopPropagation()}
     >
       {entry.kind === 'file' && (
-        <MenuItem onClick={() => { useWorkspaceStore.getState().openFile(menu.id); close() }}>
-          Open
-        </MenuItem>
+        <>
+          <MenuItem onClick={() => { useWorkspaceStore.getState().openFile(menu.id); close() }}>
+            Open in canvas
+          </MenuItem>
+          <MenuItem onClick={() => {
+            openPy({ fileId: menu.id, pyName: pyNameFor(entry.name) })
+            close()
+          }}>View generated PyTorch…</MenuItem>
+          <div className="my-1 h-px bg-[#1f2429]" />
+        </>
       )}
       {isFolder && (
         <>
