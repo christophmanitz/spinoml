@@ -198,7 +198,7 @@ function Tree({
               openPy={openPy}
               childTree={subTree}
             />
-            {isFile && isExpanded && (
+            {isFile && isExpanded && (e as Extract<Entry, { kind: 'file' }>).name.toLowerCase().endsWith('.mlforge') && (
               <PyChildRow
                 fileId={id}
                 fileName={(e as Extract<Entry, { kind: 'file' }>).name}
@@ -350,7 +350,7 @@ function Row({
         </div>
         {!renaming && (
           <div className="hidden gap-0.5 text-[#5b6168] group-hover:flex">
-            {isFile && (
+            {isFile && (entry as Extract<Entry, { kind: 'file' }>).name.toLowerCase().endsWith('.mlforge') && (
               <IconButton title="View generated PyTorch" onClick={() => {
                 openPy({ fileId: id, pyName: pyNameFor((entry as Extract<Entry, { kind: 'file' }>).name) })
               }}>🐍</IconButton>
