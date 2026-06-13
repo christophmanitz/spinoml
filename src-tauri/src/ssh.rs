@@ -39,14 +39,18 @@ pub struct RemoteWorkspace {
 
 fn validate_alias(alias: &str) -> Result<(), String> {
     if alias.is_empty() || alias.len() > 128 {
-        return Err("ssh alias must be 1..128 chars".into());
+        return Err("ssh target must be 1..128 chars".into());
     }
     for ch in alias.chars() {
-        // SSH host aliases use [A-Za-z0-9._-] in practice (~/.ssh/config Host
-        // entries can have wildcards but a single concrete alias never needs
-        // them). Reject anything that could be a shell metacharacter.
-        if !(ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-') {
-            return Err(format!("ssh alias contains illegal char: {ch:?}"));
+        // SSH target = either a `Host` alias from ~/.ssh/config (e.g.
+        // "leipzig-hpc") or a bare user@host pair when no config entry
+        // exists ("zw93onug@login01.sc.uni-leipzig.de"). Allowed chars
+        // cover both, and reject every shell metacharacter.
+        if !(ch.is_ascii_alphanumeric()
+            || ch == '.' || ch == '_' || ch == '-'
+            || ch == '@' || ch == ':')
+        {
+            return Err(format!("ssh target contains illegal char: {ch:?}"));
         }
     }
     Ok(())

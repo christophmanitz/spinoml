@@ -6,7 +6,7 @@ import '@xterm/xterm/css/xterm.css'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
-import { useConnectionsStore, getCurrentConnection } from '../connections/store'
+import { useConnectionsStore, getCurrentConnection, sshTarget } from '../connections/store'
 import { useWorkspaceStore } from '../workspace/store'
 import { isTauri } from '../workspace/tauri-fs'
 
@@ -33,7 +33,7 @@ export default function Terminal() {
     const conn = getCurrentConnection()
     const cwd = useWorkspaceStore.getState().workspaceRoot ?? undefined
     const args: SpawnArgs = conn.kind === 'remote-ssh'
-      ? { kind: 'remote-ssh', alias: conn.alias, remote_root: conn.root, local_cwd: cwd }
+      ? { kind: 'remote-ssh', alias: sshTarget(conn), remote_root: conn.root, local_cwd: cwd }
       : { kind: 'local', local_cwd: cwd }
 
     const term = new XTerm({
@@ -59,7 +59,7 @@ export default function Terminal() {
     try { fit.fit() } catch { /* ignore zero-size */ }
 
     const initialBanner = conn.kind === 'remote-ssh'
-      ? `\x1b[2mconnecting to ${conn.alias}:${conn.root} via ssh…\x1b[0m\r\n`
+      ? `\x1b[2mconnecting to ${sshTarget(conn)}:${conn.root} via ssh…\x1b[0m\r\n`
       : `\x1b[2mlocal shell · ${cwd ?? 'no workspace'}\x1b[0m\r\n`
     term.write(initialBanner)
 

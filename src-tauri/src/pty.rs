@@ -155,8 +155,11 @@ fn build_command(args: &PtySpawnArgs) -> Result<CommandBuilder, String> {
                 .as_ref()
                 .ok_or_else(|| "remote-ssh requires alias".to_string())?;
             for ch in alias.chars() {
-                if !(ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-') {
-                    return Err(format!("ssh alias contains illegal char: {ch:?}"));
+                if !(ch.is_ascii_alphanumeric()
+                    || ch == '.' || ch == '_' || ch == '-'
+                    || ch == '@' || ch == ':')
+                {
+                    return Err(format!("ssh target contains illegal char: {ch:?}"));
                 }
             }
             let mut cmd = CommandBuilder::new("ssh");

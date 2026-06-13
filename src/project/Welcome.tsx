@@ -141,8 +141,8 @@ export default function Welcome() {
     return (
       <RemoteConnectionForm
         onTest={testConnection}
-        onSave={(label, alias, root) => {
-          const c = addRemote(label, alias, root)
+        onSave={(label, alias, root, user) => {
+          const c = addRemote(label, alias, root, user)
           return c
         }}
         onOpen={async (c) => {
@@ -177,7 +177,7 @@ export default function Welcome() {
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm text-[#e6e8eb]">{c.label}</div>
                     <div className="truncate text-[10px] text-[#7a8088]">
-                      {c.alias}:<span className="text-[#9aa1a8]">{c.root}</span>
+                      {c.user ? `${c.user}@${c.alias}` : c.alias}:<span className="text-[#9aa1a8]">{c.root}</span>
                     </div>
                   </div>
                   <Button
@@ -263,21 +263,26 @@ function RemoteConnectionForm({
   onOpen,
   onCancel,
 }: {
-  onTest: (alias: string) => Promise<SshTestResult>
-  onSave: (label: string, alias: string, root: string) => RemoteSshConnection
+  onTest: (target: string) => Promise<SshTestResult>
+  onSave: (label: string, alias: string, root: string, user?: string) => RemoteSshConnection
   onOpen: (c: RemoteSshConnection) => Promise<void>
   onCancel: () => void
 }) {
   const [label, setLabel] = useState('')
   const [alias, setAlias] = useState('')
+  const [user, setUser] = useState('')
   const [root, setRoot] = useState('~/mlforge')
   const [testing, setTesting] = useState(false)
   const [busy, setBusy] = useState(false)
   const [testResult, setTestResult] = useState<SshTestResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const validAlias = /^[a-zA-Z0-9._-]+$/.test(alias)
+  const aliasRe = /^[a-zA-Z0-9._-]+$/  // bare alias: no @, no :
+  const userRe = /^[a-zA-Z0-9._-]+$/   // POSIX username chars
+  const validAlias = aliasRe.test(alias)
+  const validUser = user === '' || userRe.test(user)
   const validRoot = root.startsWith('/') || root.startsWith('~/') || root === '~'
+  const composed = user.trim() ? `${user.trim()}@${alias.trim()}` : alias.trim()
 
   return (
     <FullScreen>
@@ -293,8 +298,8 @@ function RemoteConnectionForm({
             />
           </Field>
           <Field
-            label="SSH-Alias"
-            hint="Eintrag aus deiner ~/.ssh/config — kein Host:Port hier."
+            label="SSH-Alias / Host"
+            hint="Eintrag aus ~/.ssh/config (z.B. leipzig-hpc) ODER nackter Hostname (login01.sc.uni-leipzig.de)."
           >
             <input
               value={alias}
@@ -305,6 +310,22 @@ function RemoteConnectionForm({
               placeholder="leipzig-hpc"
               className={`w-full rounded border bg-[#0e1115] px-2 py-1 text-sm text-[#e6e8eb] focus:outline-none ${
                 alias && !validAlias ? 'border-rose-500' : 'border-[#2a3038] focus:border-[#6ab7ff]'
+              }`}
+            />
+          </Field>
+          <Field
+            label="User (optional)"
+            hint="Leer lassen wenn ~/.ssh/config schon den User definiert. Sonst hier eintragen."
+          >
+            <input
+              value={user}
+              onChange={(e) => {
+                setUser(e.target.value)
+                setTestResult(null)
+              }}
+              placeholder="zw93onug"
+              className={`w-full rounded border bg-[#0e1115] px-2 py-1 text-sm text-[#e6e8eb] focus:outline-none ${
+                user && !validUser ? 'border-rose-500' : 'border-[#2a3038] focus:border-[#6ab7ff]'
               }`}
             />
           </Field>
@@ -322,6 +343,11 @@ function RemoteConnectionForm({
             />
           </Field>
 
+          {validAlias && (
+            <div className="rounded bg-[#1a1e22] px-2 py-1 text-[10px] text-[#7a8088]">
+              SSH-Ziel: <code className="text-[#9aa1a8]">{composed}</code>
+            </div>
+          )}
           {testResult && (
             <div className="rounded border border-emerald-700/40 bg-emerald-900/15 px-2 py-1.5 text-xs text-emerald-300">
               <div className="font-medium">Verbindung OK</div>
@@ -337,13 +363,13 @@ function RemoteConnectionForm({
 
           <div className="flex flex-wrap gap-2">
             <Button
-              disabled={!validAlias || testing}
+              disabled={!validAlias || !validUser || testing}
               onClick={async () => {
                 setTesting(true)
                 setError(null)
                 setTestResult(null)
                 try {
-                  const r = await onTest(alias.trim())
+                  const r = await onTest(composed)
                   setTestResult(r)
                 } catch (e) {
                   setError(e instanceof Error ? e.message : String(e))
@@ -356,12 +382,12 @@ function RemoteConnectionForm({
             </Button>
             <Button
               primary
-              disabled={!validAlias || !validRoot || busy || !label.trim()}
+              disabled={!validAlias || !validUser || !validRoot || busy || !label.trim()}
               onClick={async () => {
                 setBusy(true)
                 setError(null)
                 try {
-                  const c = onSave(label.trim(), alias.trim(), root.trim())
+                  const c = onSave(label.trim(), alias.trim(), root.trim(), user.trim() || undefined)
                   await onOpen(c)
                 } catch (e) {
                   setError(e instanceof Error ? e.message : String(e))

@@ -23,6 +23,12 @@ export type RemoteSshConnection = {
   kind: 'remote-ssh'
   label: string
   alias: string
+  /**
+   * Optional override. If set, every ssh_* call goes against `${user}@${alias}`
+   * — useful when `alias` is a bare hostname rather than a `Host` entry in
+   * ~/.ssh/config. Leave empty to defer to whatever the SSH config says.
+   */
+  user?: string
   root: string
 }
 
@@ -83,11 +89,20 @@ type State = {
   currentId: string
 
   setCurrent: (id: string) => void
-  addRemote: (label: string, alias: string, root: string) => RemoteSshConnection
-  updateRemote: (id: string, patch: Partial<Pick<RemoteSshConnection, 'label' | 'alias' | 'root'>>) => void
+  addRemote: (label: string, alias: string, root: string, user?: string) => RemoteSshConnection
+  updateRemote: (id: string, patch: Partial<Pick<RemoteSshConnection, 'label' | 'alias' | 'user' | 'root'>>) => void
   removeRemote: (id: string) => void
 
-  testConnection: (alias: string) => Promise<SshTestResult>
+  testConnection: (target: string) => Promise<SshTestResult>
+}
+
+/**
+ * Compose the actual ssh target string passed to Rust. Returns `user@alias`
+ * when a user override is set, or just `alias` otherwise — relying on
+ * ~/.ssh/config to resolve the User in that case.
+ */
+export function sshTarget(c: RemoteSshConnection): string {
+  return c.user ? `${c.user}@${c.alias}` : c.alias
 }
 
 const initial = loadPersisted()
@@ -101,12 +116,13 @@ export const useConnectionsStore = create<State>((set, get) => ({
     persist({ saved: get().saved, currentId: id })
   },
 
-  addRemote: (label, alias, root) => {
+  addRemote: (label, alias, root, user) => {
     const conn: RemoteSshConnection = {
       id: randomId(),
       kind: 'remote-ssh',
       label: label || alias,
       alias,
+      user: user?.trim() || undefined,
       root,
     }
     const saved = [...get().saved, conn]
@@ -129,11 +145,11 @@ export const useConnectionsStore = create<State>((set, get) => ({
     persist({ saved, currentId })
   },
 
-  testConnection: async (alias) => {
+  testConnection: async (target) => {
     if (!isTauri()) {
       throw new Error('SSH-Verbindungen brauchen Tauri (kein Browser-Modus).')
     }
-    return tauriSsh.testConnection(alias)
+    return tauriSsh.testConnection(target)
   },
 }))
 
