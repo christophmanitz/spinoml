@@ -16,6 +16,14 @@ export function isTauri(): boolean {
     && typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== 'undefined'
 }
 
+export type DatasetEntry = {
+  name: string
+  relpath: string
+  abspath: string
+  is_dir: boolean
+  size_bytes: number
+}
+
 export const tauriFs = {
   pickDir: () => invoke<string | null>('pick_workspace_dir'),
   currentDir: () => invoke<string | null>('current_workspace_dir'),
@@ -30,4 +38,7 @@ export const tauriFs = {
     invoke<void>('rename_workspace_path', { fromRel, toRel }),
   sidecarManagedStatus: () =>
     invoke<{ torch: boolean; llm: boolean }>('sidecar_managed_status'),
+  listDatasets: () => invoke<DatasetEntry[]>('list_datasets'),
+  datasetAbspath: (relpath: string) =>
+    invoke<string>('dataset_abspath', { relpath }),
 }

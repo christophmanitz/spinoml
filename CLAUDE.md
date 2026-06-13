@@ -26,8 +26,14 @@ src/
   workspace/      store.ts (two modes: 'browser' = localStorage virtual FS,
                   'tauri' = real disk via Rust commands).
                   FileExplorer.tsx (the VSCode-like tree).
+                  LeftSidebar.tsx (Files/Datasets tab switcher).
                   tauri-fs.ts (typed invoke wrappers).
                   PyCodeModal.tsx (generated .py preview).
+  datasets/       client.ts (HTTP to torch sidecar /dataset/*)
+                  store.ts (per-relpath inspect/stats/smoke cache)
+                  DatasetExplorer.tsx (list under workspace/datasets/)
+                  DatasetDetail.tsx (Overview/Stats/SmokeTest tabs)
+                  types.ts (shared kinds for all 6 dataset formats).
   templates/      Built-in architecture starters.
   history/        Undo/redo subscribing to GraphStore structural changes.
   persistence/    .mlforge file format, autosave to localStorage.
@@ -44,8 +50,14 @@ src-tauri/
   tauri.conf.json bundle config, window config, dev URL.
   capabilities/default.json   Plugin permissions.
 
-sidecar-torch/main.py   tiny HTTP/JSON server on 127.0.0.1:7421, runs
-                        PyTorch forward hooks for shape inference.
+sidecar-torch/main.py             HTTP/JSON server on 127.0.0.1:7421.
+                                  Endpoints: /infer, /dataset/inspect,
+                                  /dataset/stats, /dataset/smoke.
+sidecar-torch/dataset_handlers.py per-kind inspect/stats/sample_tensor for
+                                  tabular, image_folder, tensor, protein,
+                                  molecule, huggingface. Lazy-imports heavy
+                                  deps so missing pandas/PIL/rdkit/biopython
+                                  gracefully degrades to a missing_dep error.
 sidecar-llm/main.mjs    HTTP/SSE server on 127.0.0.1:7422, runs Claude
                         Agent SDK + in-process MCP server with the
                         graph-mutation tools.
@@ -136,6 +148,23 @@ Adding e.g. a `list-of-int` field touches:
 5. Bump `maxTurns` if your tool takes many calls per request.
 6. Update CLAUDE-the-model's awareness via `buildSystemPrompt`: mention
    the new tool, its idiomatic use, and dim-correctness rules.
+
+### Add a new dataset kind
+
+1. `sidecar-torch/dataset_handlers.py`:
+   - extend `detect_kind()` with new ext/heuristic
+   - add `_inspect_<kind>(abspath)` returning `{kind, ok, ...}`
+   - add `_stats_<kind>(abspath)` (may just return `{ok: True}` if same as inspect)
+   - add `_sample_<kind>(abspath, target_shape)` returning `{ok, tensor, natural_shape, note}`
+     so smoke_test can feed real data through the model
+   - wire all three into the dispatch (`inspect()`, `stats()`, `sample_tensor()`)
+2. `src/datasets/types.ts` — add an `<Kind>Inspect` / `<Kind>Stats` type and union it.
+3. `src/datasets/icons.ts` — `iconFor()` + `colorFor()` cases + `guessKindFromName()`.
+4. `src/datasets/DatasetDetail.tsx` — a `<Kind>Overview` component (Use-as-input
+   button with a sensible default shape), a `<Kind>StatsView` if stats differ
+   from inspect, and switch cases in `OverviewBody`/`StatsBody`.
+5. Optional Python deps: lazy-import inside the handler; on `ImportError` return
+   `_missing_dep(kind, "pip-name")` — the UI shows a hint with the pip command.
 
 ### Add a Rust filesystem command
 

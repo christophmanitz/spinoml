@@ -180,6 +180,10 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<FsEntry>) -> Result<(), String> {
         if name.starts_with('.') {
             continue;
         }
+        // datasets/ is surfaced by list_datasets in a dedicated panel.
+        if dir == root && name == "datasets" {
+            continue;
+        }
         let rel = p
             .strip_prefix(root)
             .map_err(|e| e.to_string())?
@@ -240,6 +244,71 @@ fn mkdir_workspace(state: State<WorkspaceState>, relpath: String) -> Result<(), 
     let root = current_root(&state)?;
     let full = resolve(&root, &relpath)?;
     fs::create_dir_all(&full).map_err(|e| format!("mkdir {}: {e}", full.display()))
+}
+
+#[derive(Serialize)]
+struct DatasetEntry {
+    name: String,
+    relpath: String,
+    abspath: String,
+    is_dir: bool,
+    size_bytes: u64,
+}
+
+#[tauri::command]
+fn list_datasets(state: State<WorkspaceState>) -> Result<Vec<DatasetEntry>, String> {
+    let root = current_root(&state)?;
+    let dsdir = root.join("datasets");
+    if !dsdir.exists() {
+        fs::create_dir_all(&dsdir).map_err(|e| format!("mkdir datasets/: {e}"))?;
+    }
+    let mut out: Vec<DatasetEntry> = Vec::new();
+    let read = fs::read_dir(&dsdir).map_err(|e| format!("read_dir {}: {e}", dsdir.display()))?;
+    for entry in read.flatten() {
+        let p = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        let meta = entry.metadata().map_err(|e| e.to_string())?;
+        let size = if meta.is_file() { meta.len() } else { dir_size(&p).unwrap_or(0) };
+        let rel = format!("datasets/{}", name);
+        out.push(DatasetEntry {
+            name,
+            relpath: rel,
+            abspath: p.to_string_lossy().to_string(),
+            is_dir: meta.is_dir(),
+            size_bytes: size,
+        });
+    }
+    out.sort_by(|a, b| {
+        a.is_dir
+            .cmp(&b.is_dir)
+            .reverse()
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    Ok(out)
+}
+
+fn dir_size(p: &Path) -> Option<u64> {
+    let mut total: u64 = 0;
+    let read = fs::read_dir(p).ok()?;
+    for entry in read.flatten() {
+        let meta = entry.metadata().ok()?;
+        if meta.is_file() {
+            total += meta.len();
+        } else if meta.is_dir() {
+            total += dir_size(&entry.path()).unwrap_or(0);
+        }
+    }
+    Some(total)
+}
+
+#[tauri::command]
+fn dataset_abspath(state: State<WorkspaceState>, relpath: String) -> Result<String, String> {
+    let root = current_root(&state)?;
+    let full = resolve(&root, &relpath)?;
+    Ok(full.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -321,6 +390,8 @@ pub fn run() {
             mkdir_workspace,
             rename_workspace_path,
             sidecar_managed_status,
+            list_datasets,
+            dataset_abspath,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

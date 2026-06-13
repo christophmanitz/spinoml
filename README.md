@@ -28,6 +28,7 @@ shape and surfaces errors inline.
 - [x] **Phase 6** — Tauri desktop shell with real filesystem workspace
 - [x] **Phase 6.5** — Sidecar lifecycle (auto-spawn torch+llm from Rust)
 - [x] **Phase 7** — Distribution build (`.deb`; AppImage TODO when linuxdeploy/libfuse2 is available)
+- [x] **Phase 8** — Dataset overview + smoke test (tabular/image/tensor/pdb/SMILES/HF)
 
 ## Repo layout
 
@@ -38,9 +39,11 @@ src/                    React frontend
   inspector/            Per-node parameter editor
   chat/                 Claude chat panel
   codegen/              Graph → PyTorch nn.Module source
+  datasets/             Dataset overview + smoke test (phase 8)
+  workspace/            File explorer + Tauri FS bridge
 src-tauri/              Rust shell, sidecar lifecycle
 sidecar-llm/            Node.js, runs Claude Agent SDK (phase 4+)
-sidecar-torch/          Python, shape inference (phase 3+)
+sidecar-torch/          Python, shape inference + dataset handlers (phase 3+)
 ```
 
 ## Develop
@@ -104,6 +107,27 @@ automatically on Ubuntu 24.04+ and Debian 13+.
 
 The LLM sidecar spawns `claude` under the hood — make sure
 `claude setup-token` was run once so it can hit your Max subscription.
+
+### Datasets
+
+Drop dataset files into `<workspace>/datasets/` and they show up in the
+**Datasets** tab in the left sidebar. Supported kinds:
+
+- `*.csv` / `*.tsv` / `*.parquet` — tabular (head, dtypes, per-column stats, correlations)
+- folder with class subdirs — ImageFolder (class counts, thumbnails, sizes)
+- `*.pt` / `*.pth` / `*.npy` / `*.npz` — tensors (shape/dtype/stats/histogram)
+- `*.pdb` — protein structures (chains/residues/atoms, uses biopython if available)
+- `*.smi` / `*.smiles` — SMILES files (MW/atom-count distributions if rdkit is available)
+- `*.hf` text file containing `hf:dataset_name` — HuggingFace dataset reference
+
+Optional Python deps (graceful fallback if missing): `pandas`, `Pillow`,
+`rdkit`, `biopython`, `datasets`. The Datasets tab shows a hint with the
+exact `pip install` command when a dep is missing.
+
+Each detail view has a **Smoke test** tab that pulls one sample from the
+dataset, feeds it through the current graph's generated model, and reports
+the output shape + timings — useful to validate a model end-to-end against
+real data without writing training code.
 
 Verification harnesses:
 
