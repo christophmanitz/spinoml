@@ -146,8 +146,8 @@ export type StatsResult =
 
 export type SmokeOk = {
   ok: true
-  input_shape: number[]
-  output_shape: number[] | null
+  input_shape: number[] | number[][]
+  output_shape: number[] | number[][] | null
   n_params: number
   sample_note?: string
   timings_ms: { sample: number; forward: number }
@@ -158,7 +158,7 @@ export type SmokeErr = {
   stage: 'sample' | 'compile' | 'construct' | 'forward'
   error: string
   trace?: string
-  input_shape?: number[]
+  input_shape?: number[] | number[][]
   n_params?: number
   details?: unknown
 }

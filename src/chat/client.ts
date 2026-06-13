@@ -11,6 +11,7 @@ export type ChatRequest = {
   messages: { role: 'user' | 'assistant'; content: string }[]
   graph: {
     input_shape: number[]
+    inputs?: { id: string; name: string; shape: number[] }[]
     nodes: { id: string; layerType: string; params: Record<string, unknown> }[]
     edges: { source: string; target: string }[]
   }

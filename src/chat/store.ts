@@ -149,9 +149,16 @@ function patchAssistant(
 
 function snapshotGraph() {
   const { nodes, edges } = useGraphStore.getState()
-  const inputNode = nodes.find((n) => n.data.layerType === 'Input')
+  const inputNodes = nodes.filter((n) => n.data.layerType === 'Input')
+  const firstShape = (inputNodes[0]?.data.params.shape as number[] | undefined) ?? [1, 3, 224, 224]
+  const inputs = inputNodes.map((n) => ({
+    id: n.id,
+    name: String(n.data.params.name ?? 'x'),
+    shape: (n.data.params.shape as number[] | undefined) ?? firstShape,
+  }))
   return {
-    input_shape: (inputNode?.data.params.shape as number[] | undefined) ?? [1, 3, 224, 224],
+    input_shape: firstShape,
+    inputs,
     nodes: nodes.map((n) => ({
       id: n.id,
       layerType: n.data.layerType,

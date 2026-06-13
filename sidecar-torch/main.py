@@ -29,7 +29,7 @@ import dataset_handlers as ds_mod
 PORT = 7421
 
 
-def infer(code: str, input_shape: list[int]) -> dict:
+def infer(code: str, input_shapes: list[list[int]]) -> dict:
     shapes: dict[str, list[int]] = {}
     ns: dict = {"__name__": "<mlforge-model>"}
     try:
@@ -79,19 +79,19 @@ def infer(code: str, input_shape: list[int]) -> dict:
         n_params = 0
 
     try:
-        x = torch.zeros(input_shape)
+        xs = [torch.zeros(s) for s in input_shapes]
     except Exception as e:
         return {
             "ok": False,
             "stage": "input",
-            "error": f"could not build zero tensor of shape {input_shape}: {e}",
+            "error": f"could not build zero tensor of shape {input_shapes}: {e}",
             "shapes": shapes,
             "n_params": n_params,
         }
 
     try:
         with torch.no_grad():
-            out = model(x)
+            out = model(*xs)
     except Exception as e:
         return {
             "ok": False,
@@ -105,22 +105,39 @@ def infer(code: str, input_shape: list[int]) -> dict:
     if isinstance(out, torch.Tensor):
         shapes["__output__"] = list(out.shape)
     elif isinstance(out, tuple) and out and isinstance(out[0], torch.Tensor):
-        shapes["__output__"] = list(out[0].shape)
+        shapes["__output__"] = [list(o.shape) if isinstance(o, torch.Tensor) else None for o in out]
+    elif isinstance(out, dict):
+        shapes["__output__"] = {k: list(v.shape) if isinstance(v, torch.Tensor) else None for k, v in out.items()}
 
     return {"ok": True, "shapes": shapes, "n_params": n_params}
 
 
-def smoke_test(code: str, abspath: str, input_shape: list[int] | None) -> dict:
-    """Build a sample tensor from the dataset, then run it through the model.
+def smoke_test(code: str, abspath: str, input_shapes: list[list[int]] | None) -> dict:
+    """Build sample tensors from the dataset (one per input), then run them through the model.
 
-    input_shape (if provided) shapes the sample (e.g. resize images, take N
-    rows × M features). If omitted, we use the dataset's natural shape.
+    input_shapes (if provided) shapes each input — for multi-input models the
+    same dataset sample is broadcast to every input. Single-input is just
+    input_shapes=[shape] under the hood.
     """
     t0 = time.perf_counter()
-    sample = ds_mod.sample_tensor(abspath, input_shape)
+    target = input_shapes[0] if input_shapes else None
+    sample = ds_mod.sample_tensor(abspath, target)
     if not sample.get("ok"):
         return {"ok": False, "stage": "sample", "error": sample.get("error"), "details": sample}
-    x: torch.Tensor = sample["tensor"]
+    base_x: torch.Tensor = sample["tensor"]
+    xs: list[torch.Tensor] = []
+    if not input_shapes or len(input_shapes) == 1:
+        xs = [base_x]
+    else:
+        # Broadcast: re-sample for each requested shape if different, else reuse.
+        for sh in input_shapes:
+            if list(base_x.shape) == sh:
+                xs.append(base_x)
+            else:
+                sub = ds_mod.sample_tensor(abspath, sh)
+                if not sub.get("ok"):
+                    return {"ok": False, "stage": "sample", "error": sub.get("error"), "details": sub}
+                xs.append(sub["tensor"])
     t_sample = time.perf_counter() - t0
 
     ns: dict = {"__name__": "<mlforge-model>"}
@@ -154,27 +171,33 @@ def smoke_test(code: str, abspath: str, input_shape: list[int] | None) -> dict:
     t1 = time.perf_counter()
     try:
         with torch.no_grad():
-            out = model(x)
+            out = model(*xs)
     except Exception as e:
         return {
             "ok": False, "stage": "forward",
             "error": f"{type(e).__name__}: {e}",
             "trace": traceback.format_exc(limit=6),
-            "input_shape": list(x.shape),
+            "input_shape": [list(t.shape) for t in xs],
             "n_params": n_params,
         }
     t_forward = time.perf_counter() - t1
 
     if isinstance(out, torch.Tensor):
-        out_shape = list(out.shape)
-    elif isinstance(out, tuple) and out and isinstance(out[0], torch.Tensor):
-        out_shape = list(out[0].shape)
+        out_shape: list[int] | list[list[int]] | None = list(out.shape)
+    elif isinstance(out, tuple) and out and all(isinstance(o, torch.Tensor) for o in out):
+        out_shape = [list(o.shape) for o in out]
+    elif isinstance(out, dict):
+        out_shape = [list(v.shape) for v in out.values() if isinstance(v, torch.Tensor)]
     else:
         out_shape = None
 
+    input_shape_report: list[int] | list[list[int]] = (
+        list(xs[0].shape) if len(xs) == 1 else [list(t.shape) for t in xs]
+    )
+
     return {
         "ok": True,
-        "input_shape": list(x.shape),
+        "input_shape": input_shape_report,
         "output_shape": out_shape,
         "n_params": n_params,
         "sample_note": sample.get("note"),
@@ -233,14 +256,20 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/dataset/smoke":
                 code = payload.get("code")
                 abspath = payload.get("abspath")
-                input_shape = payload.get("input_shape")
+                shapes_in = payload.get("input_shapes")
+                if shapes_in is None:
+                    single = payload.get("input_shape")
+                    if isinstance(single, list):
+                        shapes_in = [single]
                 if not isinstance(code, str) or not isinstance(abspath, str):
-                    self._json(400, {"ok": False, "error": "expected {code: str, abspath: str, input_shape?: int[]}"})
+                    self._json(400, {"ok": False, "error": "expected {code: str, abspath: str, input_shapes?: int[][]}"})
                     return
-                shape: list[int] | None = None
-                if isinstance(input_shape, list):
-                    shape = [int(v) for v in input_shape]
-                self._json(200, smoke_test(code, abspath, shape))
+                shapes: list[list[int]] | None = None
+                if isinstance(shapes_in, list):
+                    shapes = [[int(v) for v in s] for s in shapes_in if isinstance(s, list)]
+                    if not shapes:
+                        shapes = None
+                self._json(200, smoke_test(code, abspath, shapes))
                 return
         except Exception as e:
             self._json(500, {
@@ -256,12 +285,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_infer(self, payload: dict) -> None:
         code = payload.get("code")
-        input_shape = payload.get("input_shape")
-        if not isinstance(code, str) or not isinstance(input_shape, list):
-            self._json(400, {"ok": False, "error": "expected {code: str, input_shape: int[]}"})
+        # Accept either input_shapes (multi-input list[list[int]]) or legacy input_shape (list[int]).
+        shapes_in = payload.get("input_shapes")
+        if shapes_in is None:
+            single = payload.get("input_shape")
+            if isinstance(single, list):
+                shapes_in = [single]
+        if not isinstance(code, str) or not isinstance(shapes_in, list) or not all(isinstance(s, list) for s in shapes_in):
+            self._json(400, {"ok": False, "error": "expected {code: str, input_shapes: int[][]} or {input_shape: int[]}"})
             return
         try:
-            result = infer(code, [int(v) for v in input_shape])
+            normalized = [[int(v) for v in s] for s in shapes_in]
+            result = infer(code, normalized)
         except Exception as e:
             result = {
                 "ok": False, "stage": "sidecar",

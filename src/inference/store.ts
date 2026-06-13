@@ -45,7 +45,8 @@ export const useInferenceStore = create<InferenceState>((set) => ({
       const runId = ++runCounter
 
       const { nodes, edges } = useGraphStore.getState()
-      const { code, issues, attrMap, inputShape, order } = generate(nodes, edges)
+      const { code, issues, attrMap, inputs, order } = generate(nodes, edges)
+      const inputShapes = inputs.map((i) => i.shape)
 
       const hasInput = nodes.some((n) => n.data.layerType === 'Input')
       if (!hasInput || issues.some((i) => i.startsWith('Cycle'))) {
@@ -66,7 +67,7 @@ export const useInferenceStore = create<InferenceState>((set) => ({
 
       let result: InferResult | { ok: false; error: string; offline: true; shapes: Record<string, number[]> }
       try {
-        result = await inferShapes(code, inputShape, ctrl.signal)
+        result = await inferShapes(code, inputShapes, ctrl.signal)
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return
         throw e
@@ -152,11 +153,15 @@ function applyShapesToNodes(
   const predOf = new Map<string, string>()
   for (const e of edges) if (!predOf.has(e.target)) predOf.set(e.target, e.source)
 
-  const inputNode = graph.nodes.find((n) => n.data.layerType === 'Input')
-  const inputShape = (inputNode?.data.params.shape as number[] | undefined) ?? undefined
+  const inputShapeFor = (id: string): number[] | undefined => {
+    const n = graph.nodes.find((m) => m.id === id)
+    if (!n || n.data.layerType !== 'Input') return undefined
+    return (n.data.params.shape as number[] | undefined) ?? undefined
+  }
 
   function outputOf(nodeId: string): number[] | undefined {
-    if (nodeId === inputNode?.id) return inputShape
+    const inShape = inputShapeFor(nodeId)
+    if (inShape) return inShape
     const attr = attrMap[nodeId]
     return attr ? shapes[attr] : undefined
   }
@@ -166,11 +171,11 @@ function applyShapesToNodes(
     const data = { ...n.data }
     let changed = false
 
-    const inShape = n.data.layerType === 'Input' ? inputShape : (() => {
+    const inShape = n.data.layerType === 'Input' ? inputShapeFor(n.id) : (() => {
       const pid = predOf.get(n.id)
       return pid ? outputOf(pid) : undefined
     })()
-    const outShape = n.data.layerType === 'Input' ? inputShape : outputOf(n.id)
+    const outShape = n.data.layerType === 'Input' ? inputShapeFor(n.id) : outputOf(n.id)
     const isFailing = failingId === n.id
 
     if (!shapesEqual(data.inferredInputShape, inShape)) {

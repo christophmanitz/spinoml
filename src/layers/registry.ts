@@ -6,10 +6,18 @@ export type FieldSpec =
   | { name: string; type: 'tuple-int'; arity: 2 | 3; default: number[] }
   | { name: string; type: 'shape'; default: number[] }
 
+export type LayerKind = 'module' | 'input' | 'output' | 'merge'
+
 export type LayerSpec = {
   type: string
   category: string
+  /** PyTorch nn.Module path (e.g. "nn.Conv2d"). Empty for non-module kinds. */
   pytorchModule: string
+  /** What kind of node this is. Controls codegen. Defaults to 'module' if absent. */
+  kind?: LayerKind
+  /** For kind='merge': how to emit the forward expression given input variable names.
+   *  e.g. (xs) => `torch.cat([${xs.join(', ')}], dim=${dim})`. */
+  forwardExpr?: (inputVars: string[], params: Record<string, unknown>) => string
   fields: FieldSpec[]
   summary: (params: Record<string, unknown>) => string
 }
@@ -34,14 +42,19 @@ const get = <T>(p: Record<string, unknown>, k: string, fallback: T): T =>
 
 export const LAYERS: Record<string, LayerSpec> = {
   Input: {
-    type: 'Input', category: 'IO', pytorchModule: '',
-    fields: [f.shape('shape', [1, 3, 224, 224])],
-    summary: (p) => `shape ${JSON.stringify(get(p, 'shape', [1, 3, 224, 224]))}`,
+    type: 'Input', category: 'IO', pytorchModule: '', kind: 'input',
+    fields: [
+      { name: 'name', type: 'select', options: ['x', 'x1', 'x2', 'x3', 'q', 'k', 'v', 'cond'], default: 'x' } as FieldSpec,
+      f.shape('shape', [1, 3, 224, 224]),
+    ],
+    summary: (p) => `${get(p, 'name', 'x')} ∈ ${JSON.stringify(get(p, 'shape', [1, 3, 224, 224]))}`,
   },
   Output: {
-    type: 'Output', category: 'IO', pytorchModule: '',
-    fields: [],
-    summary: () => 'model output',
+    type: 'Output', category: 'IO', pytorchModule: '', kind: 'output',
+    fields: [
+      { name: 'name', type: 'select', options: ['out', 'logits', 'embedding', 'mu', 'sigma', 'aux'], default: 'out' } as FieldSpec,
+    ],
+    summary: (p) => `→ ${get(p, 'name', 'out')}`,
   },
 
   Conv2d: {
@@ -187,6 +200,34 @@ export const LAYERS: Record<string, LayerSpec> = {
     ],
     summary: (p) => `enc d=${get(p, 'd_model', 512)} h=${get(p, 'nhead', 8)}`,
   },
+
+  // ─── Merge (functional, no nn.Module) ──────────────────────────────────
+  Concat: {
+    type: 'Concat', category: 'Merge', pytorchModule: '', kind: 'merge',
+    fields: [f.int('dim', 1)],
+    forwardExpr: (xs, p) => `torch.cat([${xs.join(', ')}], dim=${get(p, 'dim', 1)})`,
+    summary: (p) => `cat dim=${get(p, 'dim', 1)}`,
+  },
+  Add: {
+    type: 'Add', category: 'Merge', pytorchModule: '', kind: 'merge',
+    fields: [],
+    forwardExpr: (xs) => xs.length <= 1 ? (xs[0] ?? '0')
+      : xs.reduce((acc, v) => `${acc} + ${v}`),
+    summary: () => 'a + b',
+  },
+  Multiply: {
+    type: 'Multiply', category: 'Merge', pytorchModule: '', kind: 'merge',
+    fields: [],
+    forwardExpr: (xs) => xs.length <= 1 ? (xs[0] ?? '1')
+      : xs.reduce((acc, v) => `${acc} * ${v}`),
+    summary: () => 'a · b',
+  },
+  Stack: {
+    type: 'Stack', category: 'Merge', pytorchModule: '', kind: 'merge',
+    fields: [f.int('dim', 0)],
+    forwardExpr: (xs, p) => `torch.stack([${xs.join(', ')}], dim=${get(p, 'dim', 0)})`,
+    summary: (p) => `stack dim=${get(p, 'dim', 0)}`,
+  },
 }
 
 export function defaultParamsFor(layerType: string): Record<string, unknown> {
@@ -278,10 +319,9 @@ function toIntArray(value: unknown): number[] {
 export const LAYER_GROUPS: { name: string; layers: string[] }[] = (() => {
   const byCategory: Record<string, string[]> = {}
   for (const spec of Object.values(LAYERS)) {
-    if (spec.category === 'IO') continue
     if (!byCategory[spec.category]) byCategory[spec.category] = []
     byCategory[spec.category].push(spec.type)
   }
-  const order = ['Conv', 'Linear', 'Norm', 'Activation', 'Pool', 'Regularize', 'Attention']
+  const order = ['IO', 'Conv', 'Linear', 'Norm', 'Activation', 'Pool', 'Regularize', 'Attention', 'Merge']
   return order.filter((c) => byCategory[c]).map((c) => ({ name: c, layers: byCategory[c] }))
 })()

@@ -18,8 +18,8 @@ export type SmokeHistoryEntry = {
   ok: boolean
   dataset: string
   model: string | null
-  input_shape?: number[]
-  output_shape?: number[] | null
+  input_shape?: number[] | number[][]
+  output_shape?: number[] | number[][] | null
   n_params?: number
   error?: string
   stage?: string
@@ -115,10 +115,11 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
     const entry = entryByRel(get().entries, relpath)
     if (!entry) return
     const { nodes, edges } = useGraphStore.getState()
-    const { code, inputShape: defaultShape } = generate(nodes, edges)
-    const shape = inputShape ?? defaultShape ?? undefined
+    const { code, inputs } = generate(nodes, edges)
+    // Caller may pass an override shape; otherwise use every input's declared shape.
+    const shapes = inputShape ? [inputShape] : inputs.map((i) => i.shape)
     set({ smoke: { ...get().smoke, [relpath]: { loading: true, data: null, error: null } } })
-    const result = await smokeDataset(code, entry.abspath, shape)
+    const result = await smokeDataset(code, entry.abspath, shapes)
     if ('offline' in result && result.offline) {
       set({ smoke: { ...get().smoke, [relpath]: { loading: false, data: null, error: result.error } } })
       return

@@ -27,8 +27,8 @@ export async function statsDataset(abspath: string) {
   return post<StatsResult>('/dataset/stats', { abspath })
 }
 
-export async function smokeDataset(code: string, abspath: string, inputShape?: number[]) {
+export async function smokeDataset(code: string, abspath: string, inputShapes?: number[][]) {
   return post<SmokeResult>('/dataset/smoke', {
-    code, abspath, input_shape: inputShape ?? null,
+    code, abspath, input_shapes: inputShapes ?? null,
   })
 }

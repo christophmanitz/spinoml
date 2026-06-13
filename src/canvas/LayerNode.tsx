@@ -1,17 +1,7 @@
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
 import { LAYERS } from '../layers/registry'
+import { iconForCategory, colorForCategory } from '../layers/categories'
 import type { LayerNodeData } from './GraphStore'
-
-const CATEGORY_COLORS: Record<string, string> = {
-  Conv: '#6ab7ff',
-  Linear: '#ffb84d',
-  Norm: '#b39dff',
-  Activation: '#4dd0a8',
-  Pool: '#ff8a65',
-  Regularize: '#9aa1a8',
-  Attention: '#ff6b9d',
-  IO: '#e6e8eb',
-}
 
 const ERROR_COLOR = '#f43f5e'
 
@@ -22,9 +12,10 @@ export default function LayerNode({
   selected,
 }: NodeProps<Node<LayerNodeData>>) {
   const spec = LAYERS[data.layerType]
-  const catColor = spec ? CATEGORY_COLORS[spec.category] ?? '#9aa1a8' : '#ff5555'
+  const catColor = spec ? colorForCategory(spec.category) : '#ff5555'
   const color = data.hasError ? ERROR_COLOR : catColor
   const summary = spec ? spec.summary(data.params) : '⚠ unknown layer'
+  const icon = spec ? iconForCategory(spec.category) : '?'
 
   const hasInput = data.layerType !== 'Input'
   const hasOutput = data.layerType !== 'Output'
@@ -47,7 +38,17 @@ export default function LayerNode({
         className="flex items-center justify-between rounded-t px-2 py-1 text-[11px] font-medium"
         style={{ background: `${color}18`, color }}
       >
-        <span>{data.layerType}</span>
+        <div className="flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="inline-flex h-4 w-4 items-center justify-center rounded text-[11px] leading-none"
+            style={{ background: `${color}33`, color }}
+            title={spec?.category ?? 'unknown'}
+          >
+            {icon}
+          </span>
+          <span>{data.layerType}</span>
+        </div>
         {data.hasError && <span className="text-[10px]" title="forward pass failed here">!</span>}
       </div>
       <div className="px-2 py-1.5 font-mono text-[10px] text-[#9aa1a8]">{summary}</div>

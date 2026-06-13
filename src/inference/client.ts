@@ -19,14 +19,14 @@ const SIDECAR_URL = 'http://127.0.0.1:7421'
 
 export async function inferShapes(
   code: string,
-  inputShape: number[],
+  inputShapes: number[][],
   signal?: AbortSignal,
 ): Promise<InferResult | { ok: false; error: string; offline: true; shapes: Record<string, number[]> }> {
   try {
     const res = await fetch(`${SIDECAR_URL}/infer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, input_shape: inputShape }),
+      body: JSON.stringify({ code, input_shapes: inputShapes }),
       signal,
     })
     if (!res.ok) {

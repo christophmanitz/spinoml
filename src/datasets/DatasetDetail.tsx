@@ -77,6 +77,12 @@ function ErrorBox({ msg }: { msg: string }) {
   return <div className="rounded bg-rose-900/20 px-2 py-1.5 text-rose-300">{msg}</div>
 }
 
+function formatShape(shape: number[] | number[][]): string {
+  if (shape.length === 0) return '()'
+  if (typeof shape[0] === 'number') return `[${(shape as number[]).join(', ')}]`
+  return (shape as number[][]).map((s) => `[${s.join(', ')}]`).join(' · ')
+}
+
 function InspectError({ data }: { data: InspectResult }) {
   if (data.ok) return null
   return (
@@ -538,8 +544,8 @@ function SmokeBody({
         <div className="rounded border border-emerald-900/40 bg-emerald-900/10 p-2">
           <div className="text-emerald-300">✓ forward pass succeeded</div>
           <div className="mt-1 space-y-0.5 text-[10px] text-[#9aa1a8]">
-            <div>input: <code className="text-[#e6e8eb]">[{data.input_shape.join(', ')}]</code></div>
-            <div>output: <code className="text-[#e6e8eb]">{data.output_shape ? `[${data.output_shape.join(', ')}]` : '(non-tensor)'}</code></div>
+            <div>input: <code className="text-[#e6e8eb]">{formatShape(data.input_shape)}</code></div>
+            <div>output: <code className="text-[#e6e8eb]">{data.output_shape ? formatShape(data.output_shape) : '(non-tensor)'}</code></div>
             <div>params: {data.n_params.toLocaleString()}</div>
             <div>timings: sample {data.timings_ms.sample.toFixed(1)}ms · forward {data.timings_ms.forward.toFixed(1)}ms</div>
             {data.sample_note && <div className="text-[#7a8088]">{data.sample_note}</div>}
@@ -551,7 +557,7 @@ function SmokeBody({
           <div className="text-rose-300">✗ {data.stage}: {data.error}</div>
           {data.input_shape && (
             <div className="mt-1 text-[10px] text-[#7a8088]">
-              input shape: <code>[{data.input_shape.join(', ')}]</code>
+              input shape: <code>{formatShape(data.input_shape)}</code>
             </div>
           )}
           {data.trace && (
@@ -575,7 +581,7 @@ function SmokeHistory({ entries }: { entries: SmokeHistoryEntry[] }) {
             <span className="text-[#5a6068]">{e.at.slice(5, 16).replace('T', ' ')}</span>
             <span className="flex-1 truncate text-[#9aa1a8]">
               {e.model ?? '(no model)'}
-              {e.ok && e.output_shape ? ` → [${e.output_shape.join(',')}]` : ''}
+              {e.ok && e.output_shape ? ` → ${formatShape(e.output_shape)}` : ''}
               {!e.ok && e.error ? `: ${e.error.slice(0, 60)}` : ''}
             </span>
           </div>
