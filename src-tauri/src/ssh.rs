@@ -101,7 +101,7 @@ fn validate_plain_filename(name: &str, label: &str) -> Result<(), String> {
 
 // ─── shell quoting + path joining ─────────────────────────────────────────
 
-fn shell_quote(s: &str) -> String {
+pub(crate) fn shell_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('\'');
     for ch in s.chars() {
@@ -118,7 +118,7 @@ fn shell_quote(s: &str) -> String {
 /// Like `shell_quote` but turns a leading `~/` or bare `~` into `"$HOME"`
 /// so the remote shell expands it. Single-quoted segments never expand `~`,
 /// so we have to break out of single quotes for that prefix specifically.
-fn shell_quote_path(s: &str) -> String {
+pub(crate) fn shell_quote_path(s: &str) -> String {
     if let Some(rest) = s.strip_prefix("~/") {
         // "$HOME" '/rest' — bash concatenates adjacent quoted strings.
         format!("\"$HOME\"{}", shell_quote(&format!("/{}", rest)))
@@ -143,8 +143,16 @@ fn join_remote(root: &str, rel: &str) -> String {
 
 // ─── ssh subprocess wrapper ───────────────────────────────────────────────
 
-const SSH_OPTS: &[&str] = &[
+pub(crate) const SSH_OPTS: &[&str] = &[
     "-o", "BatchMode=yes",
+    "-o", "ConnectTimeout=10",
+    "-o", "ServerAliveInterval=20",
+    "-o", "ServerAliveCountMax=3",
+];
+
+/// Same as SSH_OPTS but without BatchMode — for the interactive terminal
+/// where ssh may need to prompt for a 2FA token, host-key confirmation, etc.
+pub(crate) const SSH_OPTS_INTERACTIVE: &[&str] = &[
     "-o", "ConnectTimeout=10",
     "-o", "ServerAliveInterval=20",
     "-o", "ServerAliveCountMax=3",

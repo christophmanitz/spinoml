@@ -9,6 +9,7 @@ use tauri::{Manager, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 
 mod ssh;
+mod pty;
 
 pub(crate) const PROJECT_FILE: &str = "mlforge.project.json";
 pub(crate) const SUBDIRS: &[&str] = &["models", "datasets", "notes", "experiments"];
@@ -667,6 +668,7 @@ pub fn run() {
         .manage(WorkspaceState::default())
         .manage(Sidecars::default())
         .manage(ssh::RemoteWorkspaceState::default())
+        .manage(pty::PtyState::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -700,6 +702,8 @@ pub fn run() {
             if let WindowEvent::CloseRequested { .. } = event {
                 let sc: State<Sidecars> = window.state();
                 shutdown_sidecars(&sc);
+                let pty_state: State<pty::PtyState> = window.state();
+                pty::kill_all(&pty_state);
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -744,6 +748,10 @@ pub fn run() {
             ssh::ssh_append_experiment,
             ssh::ssh_read_experiment,
             ssh::ssh_list_datasets,
+            pty::pty_spawn,
+            pty::pty_write,
+            pty::pty_resize,
+            pty::pty_kill,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

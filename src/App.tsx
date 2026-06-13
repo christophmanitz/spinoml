@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels'
 import Palette from './palette/Palette'
 import LeftSidebar from './workspace/LeftSidebar'
@@ -6,6 +6,7 @@ import Canvas from './canvas/Canvas'
 import Inspector from './inspector/Inspector'
 import ChatPanel from './chat/ChatPanel'
 import CodePreview from './codegen/CodePreview'
+import Terminal from './terminal/Terminal'
 import { useInferenceStore } from './inference/store'
 import { useChatStore } from './chat/store'
 import { useManagedSidecars } from './sidecars/managed'
@@ -15,6 +16,7 @@ import Toolbar from './Toolbar'
 import { isTauri } from './workspace/tauri-fs'
 import { useDatasetsStore } from './datasets/store'
 import DatasetDetail from './datasets/DatasetDetail'
+import { useConnectionsStore, getCurrentConnection } from './connections/store'
 
 function InferenceBadge() {
   const status = useInferenceStore((s) => s.status)
@@ -61,9 +63,11 @@ function LLMBadge() {
 function ProjectHeader() {
   const status = useProjectStore((s) => s.status)
   const closeProject = useProjectStore((s) => s.closeProject)
+  const currentId = useConnectionsStore((s) => s.currentId)
   if (status.kind !== 'loaded') {
     return <span className="font-semibold tracking-tight">MLForge</span>
   }
+  const conn = getCurrentConnection()
   return (
     <div className="flex items-baseline gap-2">
       <span className="font-semibold tracking-tight">MLForge</span>
@@ -71,6 +75,15 @@ function ProjectHeader() {
       <span className="text-[#e6e8eb]" title={status.meta.goal || status.meta.description}>
         {status.meta.name}
       </span>
+      {conn.kind === 'remote-ssh' && (
+        <span
+          className="rounded bg-violet-900/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-violet-300"
+          title={`${conn.alias}:${conn.root}`}
+          key={currentId}
+        >
+          ssh · {conn.alias}
+        </span>
+      )}
       <button
         onClick={() => void closeProject()}
         className="ml-1 text-[10px] text-[#5a6068] hover:text-[#9aa1a8]"
@@ -80,6 +93,36 @@ function ProjectHeader() {
       </button>
     </div>
   )
+}
+
+type BottomTab = 'code' | 'terminal'
+
+function BottomTabs() {
+  const [tab, setTab] = useState<BottomTab>('code')
+  return (
+    <div className="flex h-full flex-col bg-[#0b0d10]">
+      <div className="flex shrink-0 border-b border-[#1f2429] bg-[#0e1115]">
+        <TabBtn active={tab === 'code'} onClick={() => setTab('code')}>Code</TabBtn>
+        <TabBtn active={tab === 'terminal'} onClick={() => setTab('terminal')}>Terminal</TabBtn>
+      </div>
+      <div className="relative min-h-0 flex-1">
+        <div style={{ display: tab === 'code' ? 'block' : 'none' }} className="h-full">
+          <CodePreview />
+        </div>
+        <div style={{ display: tab === 'terminal' ? 'block' : 'none' }} className="h-full">
+          <Terminal />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  const base = 'px-3 py-1 text-xs transition-colors border-b-2'
+  const cls = active
+    ? 'border-[#6ab7ff] text-[#e6e8eb]'
+    : 'border-transparent text-[#7a8088] hover:text-[#e6e8eb]'
+  return <button onClick={onClick} className={`${base} ${cls}`}>{children}</button>
 }
 
 const storage = typeof window !== 'undefined' ? window.localStorage : undefined
@@ -151,7 +194,7 @@ export default function App() {
             >
               <Panel defaultSize="70%" minSize="120px"><Canvas /></Panel>
               <Separator className={VBAR} />
-              <Panel defaultSize="30%" minSize="80px"><CodePreview /></Panel>
+              <Panel defaultSize="30%" minSize="80px"><BottomTabs /></Panel>
             </Group>
           </Panel>
           <Separator className={HBAR} />

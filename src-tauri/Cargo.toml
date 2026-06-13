@@ -29,6 +29,7 @@ tauri = { version = "2.11.2", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["sync"] }
+portable-pty = "0.8"
 # Pin: time >=0.3.47 has a HourBase impl that conflicts with cookie 0.18's
 # blanket From<Into<Option<OffsetDateTime>>>. Downgrade resolves trait coherence.
 time = "=0.3.46"
