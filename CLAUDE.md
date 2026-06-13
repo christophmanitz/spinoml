@@ -27,8 +27,16 @@ src/
                   'tauri' = real disk via Rust commands).
                   FileExplorer.tsx (the VSCode-like tree).
                   LeftSidebar.tsx (Files/Datasets tab switcher).
-                  tauri-fs.ts (typed invoke wrappers).
+                  tauri-fs.ts (typed invoke wrappers — LOCAL FS only).
                   PyCodeModal.tsx (generated .py preview).
+  connections/    store.ts (saved SSH connections + current backend selection,
+                  persisted to localStorage; secrets stay in ~/.ssh/config).
+                  tauri-ssh.ts (typed invoke wrappers — remote FS over ssh).
+                  backend.ts (DISPATCH LAYER — fs/project/notes/experiments/
+                  datasets route to local or remote based on getCurrentConnection().
+                  Other code MUST go through these, NOT tauri-fs/tauri-ssh).
+  terminal/       Terminal.tsx — xterm.js bound to a Rust-side PTY session
+                  (local bash or `ssh -tt <alias>`).
   datasets/       client.ts (HTTP to torch sidecar /dataset/*)
                   store.ts (per-relpath inspect/stats/smoke cache)
                   DatasetExplorer.tsx (list under workspace/datasets/)
@@ -44,9 +52,17 @@ src/
   index.css       Tailwind + a few CSS hacks (e.g. GPU layers for nodes).
 
 src-tauri/
-  src/lib.rs      Tauri Builder + filesystem commands + sidecar lifecycle.
+  src/lib.rs      Tauri Builder + LOCAL filesystem commands + sidecar lifecycle.
                   ALL invocable Rust commands are registered in
-                  invoke_handler! here.
+                  invoke_handler! here (local + ssh:: + pty::).
+  src/ssh.rs      Mirror of every local FS command as an `ssh_*` variant.
+                  Transport: system `ssh` subprocess (uses ~/.ssh/config,
+                  agent, ProxyJump, GSSAPI — no secrets stored). Path
+                  quoting in shell_quote_path() handles `~/` → `"$HOME"`.
+  src/pty.rs      PTY sessions for the terminal tab. portable-pty crate.
+                  Local: spawns $SHELL -l with cwd=workspaceRoot.
+                  Remote: spawns `ssh -tt <alias>` then `cd <root>; exec $SHELL`.
+                  Emits Tauri events `pty:<id>:data` / `pty:<id>:exit`.
   tauri.conf.json bundle config, window config, dev URL.
   capabilities/default.json   Plugin permissions.
 
@@ -68,22 +84,47 @@ scripts/verify-sidecar.ts    autostarts the torch sidecar and asserts
                              happy-path + intentional-error responses.
 ```
 
-## Two execution modes — keep them straight
+## Two execution modes + two FS backends — keep them straight
+
+**Execution mode** (`workspace/store.ts.mode`, decided at runtime):
 
 | | browser dev | Tauri dev | installed .deb |
 |-|-|-|-|
 | launch | `npm run dev` + http://localhost:5173 | `npm run tauri dev` | `mlforge` from launcher |
-| filesystem | localStorage virtual FS only | localStorage *or* picked folder | localStorage *or* picked folder |
+| filesystem | localStorage virtual FS only | localStorage *or* a workspace | localStorage *or* a workspace |
 | sidecars | manual (`npm run sidecar:torch` + `…:llm`) | spawned by Rust | spawned by Rust |
 | `isTauri()` | false | true | true |
 
 `workspace/store.ts` branches on `mode === 'tauri'`. EVERY mutating action
-has two implementations. When you add a workspace action, ALWAYS implement
-both branches.
+has two implementations (browser virtual-FS vs Tauri-backed). When you add
+a workspace action, ALWAYS implement both branches.
 
 `isTauri()` reads `window.__TAURI_INTERNALS__`. Don't `import` Tauri APIs
 at module top-level when they'd be a no-op in browser — guard the side
 effect with `if (isTauri())`.
+
+**FS backend** (within Tauri mode only, decided by `connections/store.ts`):
+
+| | local | remote-ssh |
+|-|-|-|
+| workspace root | a folder picked via dialog | an alias + path on a remote host |
+| transport | `fs::*` in Rust | system `ssh` / `sftp`-style writes |
+| sidecars | localhost (7421 torch, 7422 llm) | localhost (Phase 12a). HPC-side sidecar = Phase 12b |
+| dataset smoke test | works | blocked with a hint until Phase 12b |
+
+The dispatch happens in `src/connections/backend.ts` — every higher-level
+store (workspace, project, datasets, chat-snapshot) imports `fs` / `project`
+/ `notes` / `experiments` / `datasets` from there. **Do NOT import
+`tauri-fs` or `tauri-ssh` directly** outside that file; if you do, you've
+created a backend leak and remote workspaces will silently call the local
+FS (or vice versa).
+
+A remote connection is a `{ alias, root }` pair. `alias` must exist in
+`~/.ssh/config` and be reachable WITHOUT a password prompt
+(`BatchMode=yes` is set for all ssh_* commands except the terminal).
+`root` is either absolute (`/scratch/.../mlforge`) or tilde-prefixed
+(`~/mlforge`); `shell_quote_path()` in `ssh.rs` handles the tilde
+substitution to `"$HOME"`.
 
 ## Verification commands you should run
 
@@ -175,7 +216,33 @@ Adding e.g. a `list-of-int` field touches:
 2. Add to `tauri::generate_handler![...]` at the bottom.
 3. `src/workspace/tauri-fs.ts` — add a typed wrapper.
 4. `src/workspace/store.ts` — branch the action on `mode === 'tauri'`.
-5. `cargo check` then `npm run tauri dev` and exercise it.
+5. **Mirror it on the remote side** if it's a FS-touching command —
+   see "Add an ssh_* mirror" below. Skipping this is what breaks remote
+   workspaces silently.
+6. `cargo check` then `npm run tauri dev` and exercise it.
+
+### Add an ssh_* mirror for a remote-mirrored command
+
+When you add a local `foo(state, …)` that reads/writes the workspace,
+also add the remote-mirrored variant:
+
+1. `src-tauri/src/ssh.rs` — write `#[tauri::command] pub fn ssh_foo(alias,
+   root, …)`. Use `validate_alias` + `validate_remote_root` +
+   `validate_relpath` for every input that touches the shell. NEVER
+   `format!()` user input into a remote command without
+   `shell_quote_path` (for paths) or `shell_quote` (for non-path strings).
+   Tilde-prefixed roots are handled by `shell_quote_path` — `'~/foo'`
+   becomes `"$HOME"'/foo'` so the remote shell expands it.
+2. Register in `lib.rs` `generate_handler![…, ssh::ssh_foo, …]`.
+3. `src/connections/tauri-ssh.ts` — typed wrapper `ssh_foo(alias, root, …)`.
+4. `src/connections/backend.ts` — add the operation to the right backend
+   object (`fs.foo`, `project.foo`, `notes.foo`, …) and dispatch on
+   `getCurrentConnection().kind`. **Every consumer goes through this**;
+   that's where the local↔remote switch happens.
+5. If the result shape differs from local, normalize at the backend
+   boundary so consumers see one shape (cf. `ProjectLoadResult`).
+6. Test with a real SSH alias: `ssh <alias> echo ok` first, then exercise
+   the UI path.
 
 ### Bug: shape inference flickers or loops
 
@@ -260,6 +327,18 @@ not catch it cleanly. Fix path:
 - Save in browser mode appears not to write to disk → correct, in
   browser mode "Save" goes to localStorage. Use Export to disk for a
   real file.
+- "Verbindung testen" returns SSH exit 255 → BatchMode is on for
+  non-terminal ssh calls, so password prompts auto-fail. Fix: configure
+  key-based auth (or GSSAPI/Kerberos) for that alias. The terminal
+  itself uses `SSH_OPTS_INTERACTIVE` and CAN prompt — try opening the
+  Terminal tab first to accept host keys / enter 2FA.
+- Remote smoke test errors with "Sidecar braucht HPC" → expected on
+  Phase 12a. The local torch sidecar can't open paths like
+  `/scratch/...`. Phase 12b will deploy a sidecar on the HPC side and
+  tunnel its port.
+- Terminal shows "[terminal exited]" immediately on remote connect →
+  `ssh -tt` was rejected (255 = auth/network, other codes = remote
+  shell). The exit line includes the captured stderr.
 
 ## When you don't know
 
@@ -274,7 +353,11 @@ not catch it cleanly. Fix path:
 
 - Don't add a third execution mode (Electron, web worker, …) without
   factoring the workspace + sidecar abstractions further. Two modes is
-  already a tax; three doubles every new action.
+  already a tax.
+- Don't add a new FS backend by branching inside each store. The
+  branch lives in `src/connections/backend.ts` — everyone else dispatches
+  through it. If you find yourself writing `if (conn.kind === 'remote-ssh')`
+  in a store, that's a smell.
 - Don't reach for new state libraries. Zustand is the convention. If
   some state belongs everywhere (selection, hovered node) put it in
   GraphStore; if it's domain-specific, give it its own small store and
