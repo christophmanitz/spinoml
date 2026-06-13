@@ -1,11 +1,13 @@
 import { create } from 'zustand'
-import { isTauri, tauriFs, type DatasetEntry } from '../workspace/tauri-fs'
+import { isTauri, type DatasetEntry } from '../workspace/tauri-fs'
 import { inspectDataset, statsDataset, smokeDataset } from './client'
 import type { InspectResult, StatsResult, SmokeResult } from './types'
 import { useGraphStore } from '../canvas/GraphStore'
 import { generate } from '../codegen/generator'
 import { useProjectStore } from '../project/store'
 import { useWorkspaceStore } from '../workspace/store'
+import { datasets as datasetsBackend, experiments as experimentsBackend } from '../connections/backend'
+import { isRemoteActive } from '../connections/store'
 
 type Cached<T> = {
   loading: boolean
@@ -65,7 +67,7 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
     }
     set({ listLoading: true, listError: null })
     try {
-      const entries = await tauriFs.listDatasets()
+      const entries = await datasetsBackend.list()
       set({ entries, listLoading: false })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -114,6 +116,13 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
   runSmoke: async (relpath, inputShape) => {
     const entry = entryByRel(get().entries, relpath)
     if (!entry) return
+    if (isRemoteActive()) {
+      set({ smoke: { ...get().smoke, [relpath]: {
+        loading: false, data: null,
+        error: 'Smoke-Tests gegen Remote-Datensätze brauchen einen Sidecar auf dem HPC (Phase 12b). Kopiere den Datensatz lokal um sofort zu testen.',
+      } } })
+      return
+    }
     const { nodes, edges } = useGraphStore.getState()
     const { code, inputs } = generate(nodes, edges)
     // Per-input dataset binding: if every Input node has a bound dataset (via
@@ -181,7 +190,7 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
         error: final.error,
       }
       try {
-        await tauriFs.appendExperiment('smoke-results.jsonl', JSON.stringify(histEntry))
+        await experimentsBackend.append('smoke-results.jsonl', JSON.stringify(histEntry))
         set({ history: [histEntry, ...get().history].slice(0, 50) })
       } catch { /* logging is best-effort */ }
     }
@@ -190,7 +199,7 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
   loadHistory: async () => {
     if (!isTauri() || useProjectStore.getState().status.kind !== 'loaded') return
     try {
-      const text = await tauriFs.readExperiment('smoke-results.jsonl')
+      const text = await experimentsBackend.read('smoke-results.jsonl')
       const lines = text.split('\n').filter((l) => l.trim())
       const items: SmokeHistoryEntry[] = []
       for (const line of lines) {

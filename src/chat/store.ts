@@ -5,7 +5,8 @@ import { useInferenceStore } from '../inference/store'
 import { useProjectStore } from '../project/store'
 import { useDatasetsStore } from '../datasets/store'
 import { useWorkspaceStore } from '../workspace/store'
-import { isTauri, tauriFs } from '../workspace/tauri-fs'
+import { isTauri } from '../workspace/tauri-fs'
+import { notes as notesBackend } from '../connections/backend'
 
 export type ToolCall = {
   id: string
@@ -201,11 +202,11 @@ async function snapshotProject() {
 
   let recent_notes: { name: string; excerpt: string }[] = []
   try {
-    const notes = await tauriFs.listNotes()
-    const top = notes.slice(0, 3)
+    const list = await notesBackend.list()
+    const top = list.slice(0, 3)
     for (const n of top) {
       try {
-        const full = await tauriFs.readNote(n.name)
+        const full = await notesBackend.read(n.name)
         recent_notes.push({ name: n.name, excerpt: full.slice(0, 1500) })
       } catch { /* skip individual failures */ }
     }

@@ -3,6 +3,8 @@ import { useGraphStore, captureStructuralSnapshot } from '../canvas/GraphStore'
 import { parseFile, serializeCurrent } from '../persistence/file'
 import { generateFromSnapshot } from '../codegen/generator'
 import { isTauri, tauriFs } from './tauri-fs'
+import { fs as fsBackend } from '../connections/backend'
+import { useConnectionsStore } from '../connections/store'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -163,9 +165,9 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       const wantName = uniqueName(name ?? 'untitled.mlforge', siblingNames(get().entries, parentId))
       const relpath = joinRel(parentRel, wantName)
       const content = serializeCurrent()
-      await tauriFs.write(relpath, content)
+      await fsBackend.write(relpath, content)
       try {
-        await tauriFs.write(pyTwinPath(relpath), generateFromSnapshot(parseFile(content)).code)
+        await fsBackend.write(pyTwinPath(relpath), generateFromSnapshot(parseFile(content)).code)
       } catch { /* ignore .py write errors */ }
       await get().refreshFromDisk()
       set({ activeFileId: relpath, dirty: false })
@@ -200,7 +202,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       const parentRel = parentId === ROOT_ID ? '' : parentId
       const wantName = uniqueName(name ?? 'new folder', siblingNames(get().entries, parentId))
       const relpath = joinRel(parentRel, wantName)
-      await tauriFs.mkdir(relpath)
+      await fsBackend.mkdir(relpath)
       await get().refreshFromDisk()
       set({ expanded: new Set([...get().expanded, relpath]) })
       return relpath
@@ -231,9 +233,9 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       const parentRel = (!e.parentId || e.parentId === ROOT_ID) ? '' : e.parentId
       const final = uniqueName(trimmed, siblingNames(get().entries, e.parentId ?? ROOT_ID))
       const newRel = joinRel(parentRel, final)
-      await tauriFs.rename(id, newRel)
+      await fsBackend.rename(id, newRel)
       if (e.kind === 'file' && id.toLowerCase().endsWith('.mlforge')) {
-        try { await tauriFs.rename(pyTwinPath(id), pyTwinPath(newRel)) } catch { /* maybe absent */ }
+        try { await fsBackend.rename(pyTwinPath(id), pyTwinPath(newRel)) } catch { /* maybe absent */ }
       }
       const wasActive = get().activeFileId === id
       await get().refreshFromDisk()
@@ -253,9 +255,9 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     if (get().mode === 'tauri') {
       const e = get().entries[id]
       if (!e) return
-      await tauriFs.remove(id)
+      await fsBackend.remove(id)
       if (e.kind === 'file' && id.toLowerCase().endsWith('.mlforge')) {
-        try { await tauriFs.remove(pyTwinPath(id)) } catch { /* maybe absent */ }
+        try { await fsBackend.remove(pyTwinPath(id)) } catch { /* maybe absent */ }
       }
       await get().refreshFromDisk()
       if (get().activeFileId === id) set({ activeFileId: null, dirty: false })
@@ -298,9 +300,9 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       }
       const destRel = newParentId === ROOT_ID ? '' : newParentId
       const newRel = joinRel(destRel, node.name)
-      await tauriFs.rename(id, newRel)
+      await fsBackend.rename(id, newRel)
       if (node.kind === 'file' && id.toLowerCase().endsWith('.mlforge')) {
-        try { await tauriFs.rename(pyTwinPath(id), pyTwinPath(newRel)) } catch { /* maybe absent */ }
+        try { await fsBackend.rename(pyTwinPath(id), pyTwinPath(newRel)) } catch { /* maybe absent */ }
       }
       const wasActive = get().activeFileId === id
       await get().refreshFromDisk()
@@ -351,7 +353,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     try {
       let content = e.content
       if (get().mode === 'tauri') {
-        content = await tauriFs.read(id)
+        content = await fsBackend.read(id)
         set({ entries: { ...get().entries, [id]: { ...e, content } } })
       }
       const snap = parseFile(content)
@@ -371,9 +373,9 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     if (!e || e.kind !== 'file') return
     const content = serializeCurrent()
     if (get().mode === 'tauri') {
-      await tauriFs.write(id, content)
+      await fsBackend.write(id, content)
       try {
-        await tauriFs.write(pyTwinPath(id), generateFromSnapshot(parseFile(content)).code)
+        await fsBackend.write(pyTwinPath(id), generateFromSnapshot(parseFile(content)).code)
       } catch { /* skip .py if codegen fails */ }
       set({
         entries: {
@@ -411,9 +413,9 @@ export const useWorkspaceStore = create<State>((set, get) => ({
         siblingNames(get().entries, parentId),
       )
       const relpath = joinRel(parentRel, wantName)
-      await tauriFs.write(relpath, text)
+      await fsBackend.write(relpath, text)
       try {
-        await tauriFs.write(pyTwinPath(relpath), generateFromSnapshot(parseFile(text)).code)
+        await fsBackend.write(pyTwinPath(relpath), generateFromSnapshot(parseFile(text)).code)
       } catch { /* ignore */ }
       await get().refreshFromDisk()
       return relpath
@@ -440,6 +442,9 @@ export const useWorkspaceStore = create<State>((set, get) => ({
 
   openDirectory: async () => {
     if (!isTauri()) return false
+    // openDirectory always means a LOCAL pick — reset connection so backend
+    // calls don't keep routing through a remote one.
+    useConnectionsStore.getState().setCurrent('local')
     const picked = await tauriFs.pickDir()
     if (!picked) return false
     const rootName = picked.split('/').pop() || picked.split('\\').pop() || 'workspace'
@@ -472,7 +477,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
 
   refreshFromDisk: async () => {
     if (get().mode !== 'tauri') return
-    const list = await tauriFs.list()
+    const list = await fsBackend.list()
     const rootName = get().workspaceRoot?.split(/[\\/]/).filter(Boolean).pop() ?? 'workspace'
     const entries: Record<string, Entry> = {
       [ROOT_ID]: { kind: 'folder', id: ROOT_ID, name: rootName, parentId: null, childIds: [] },

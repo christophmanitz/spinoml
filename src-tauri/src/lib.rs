@@ -8,8 +8,10 @@ use serde::{Deserialize, Serialize};
 use tauri::{Manager, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 
-const PROJECT_FILE: &str = "mlforge.project.json";
-const SUBDIRS: &[&str] = &["models", "datasets", "notes", "experiments"];
+mod ssh;
+
+pub(crate) const PROJECT_FILE: &str = "mlforge.project.json";
+pub(crate) const SUBDIRS: &[&str] = &["models", "datasets", "notes", "experiments"];
 
 #[derive(Default)]
 struct WorkspaceState {
@@ -271,7 +273,7 @@ struct ProjectLoad {
     legacy_mlforge_count: usize,
 }
 
-fn now_iso() -> String {
+pub(crate) fn now_iso() -> String {
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     // Crude ISO8601 — good enough for human reading; we don't need timezone math.
     format!("{}Z", secs_to_iso(secs))
@@ -664,6 +666,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(WorkspaceState::default())
         .manage(Sidecars::default())
+        .manage(ssh::RemoteWorkspaceState::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -722,6 +725,25 @@ pub fn run() {
             append_note,
             append_experiment,
             read_experiment,
+            ssh::ssh_test_connection,
+            ssh::ssh_load_project,
+            ssh::ssh_init_project,
+            ssh::ssh_update_project_meta,
+            ssh::ssh_close,
+            ssh::ssh_current,
+            ssh::ssh_walk,
+            ssh::ssh_read_file,
+            ssh::ssh_write_file,
+            ssh::ssh_delete_path,
+            ssh::ssh_mkdir,
+            ssh::ssh_rename,
+            ssh::ssh_list_notes,
+            ssh::ssh_read_note,
+            ssh::ssh_write_note,
+            ssh::ssh_append_note,
+            ssh::ssh_append_experiment,
+            ssh::ssh_read_experiment,
+            ssh::ssh_list_datasets,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,6 +1,13 @@
 import { useState } from 'react'
 import { useProjectStore, type ProjectStatus } from './store'
 import { isTauri } from '../workspace/tauri-fs'
+import {
+  useConnectionsStore,
+  type RemoteSshConnection,
+} from '../connections/store'
+import type { SshTestResult } from '../connections/tauri-ssh'
+
+type View = 'main' | 'remote-picker' | 'remote-form'
 
 export default function Welcome() {
   const status = useProjectStore((s) => s.status)
@@ -9,7 +16,14 @@ export default function Welcome() {
   const migrate = useProjectStore((s) => s.migrate)
   const refresh = useProjectStore((s) => s.refresh)
   const closeProject = useProjectStore((s) => s.closeProject)
+  const openConnection = useProjectStore((s) => s.openConnection)
 
+  const saved = useConnectionsStore((s) => s.saved)
+  const addRemote = useConnectionsStore((s) => s.addRemote)
+  const removeRemote = useConnectionsStore((s) => s.removeRemote)
+  const testConnection = useConnectionsStore((s) => s.testConnection)
+
+  const [view, setView] = useState<View>('main')
   const [showCreateFor, setShowCreateFor] = useState<null | 'new' | 'migrate'>(null)
 
   if (!isTauri()) {
@@ -52,6 +66,34 @@ export default function Welcome() {
         <Card title="Fehler beim Laden des Projekts">
           <p className="mb-3 text-sm text-rose-300">{status.error}</p>
           <Button onClick={() => void refresh()}>Erneut versuchen</Button>
+          <span className="mx-2 text-[#5a6068]">·</span>
+          <Button onClick={() => void closeProject()}>Anderen Ordner wählen</Button>
+        </Card>
+      </FullScreen>
+    )
+  }
+
+  if (status.kind === 'remote-missing') {
+    return (
+      <FullScreen>
+        <Card
+          title="Leerer / fehlender Remote-Pfad"
+          subtitle={`${status.alias}:${status.root}`}
+        >
+          <p className="mb-3 text-sm leading-relaxed text-[#9aa1a8]">
+            Auf <code className="rounded bg-[#1f2429] px-1 py-0.5">{status.alias}</code>{' '}
+            existiert unter <code className="rounded bg-[#1f2429] px-1 py-0.5">{status.root}</code>{' '}
+            noch kein MLForge-Projekt. Initialisiere eins — das legt
+            <code className="mx-1 rounded bg-[#1f2429] px-1 py-0.5">mlforge.project.json</code>
+            + die Standardordner (<code>models/</code>, <code>datasets/</code>,{' '}
+            <code>notes/</code>, <code>experiments/</code>) auf dem Remote an.
+          </p>
+          <div className="flex gap-2">
+            <Button primary onClick={() => setShowCreateFor('new')}>
+              Projekt auf {status.alias} initialisieren
+            </Button>
+            <Button onClick={() => void closeProject()}>Andere Verbindung wählen</Button>
+          </div>
         </Card>
       </FullScreen>
     )
@@ -93,7 +135,91 @@ export default function Welcome() {
     )
   }
 
-  // status.kind === 'none'
+  // status.kind === 'none' — pick a backend.
+
+  if (view === 'remote-form') {
+    return (
+      <RemoteConnectionForm
+        onTest={testConnection}
+        onSave={(label, alias, root) => {
+          const c = addRemote(label, alias, root)
+          return c
+        }}
+        onOpen={async (c) => {
+          await openConnection(c.id)
+          setView('main')
+        }}
+        onCancel={() => setView('remote-picker')}
+      />
+    )
+  }
+
+  if (view === 'remote-picker') {
+    return (
+      <FullScreen>
+        <Card
+          title="Remote-Workspace (SSH)"
+          subtitle="Arbeite auf einem anderen Server — z. B. dem HPC-Cluster."
+        >
+          {saved.length === 0 ? (
+            <p className="mb-3 text-sm text-[#9aa1a8]">
+              Noch keine Verbindungen gespeichert. Verbindungen nutzen deine
+              vorhandene <code className="rounded bg-[#1f2429] px-1 py-0.5">~/.ssh/config</code>{' '}
+              + ssh-agent — MLForge speichert keine Passwörter oder Keys.
+            </p>
+          ) : (
+            <div className="mb-3 space-y-1.5">
+              {saved.map((c) => (
+                <div
+                  key={c.id}
+                  className="flex items-center gap-2 rounded border border-[#2a3038] bg-[#1a1e22] px-2 py-1.5"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm text-[#e6e8eb]">{c.label}</div>
+                    <div className="truncate text-[10px] text-[#7a8088]">
+                      {c.alias}:<span className="text-[#9aa1a8]">{c.root}</span>
+                    </div>
+                  </div>
+                  <Button
+                    primary
+                    onClick={async () => {
+                      await openConnection(c.id)
+                      setView('main')
+                    }}
+                  >
+                    Öffnen
+                  </Button>
+                  <button
+                    onClick={() => {
+                      if (confirm(`Verbindung „${c.label}" entfernen?`)) removeRemote(c.id)
+                    }}
+                    title="Verbindung löschen"
+                    className="rounded px-1.5 py-1 text-[#7a8088] hover:bg-[#2a3038] hover:text-rose-300"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <Button primary onClick={() => setView('remote-form')}>
+              Neue Verbindung
+            </Button>
+            <Button onClick={() => setView('main')}>Zurück</Button>
+          </div>
+          <p className="mt-4 text-[10px] leading-relaxed text-[#5a6068]">
+            <strong>Voraussetzung:</strong> Der SSH-Alias muss in deiner
+            <code className="mx-1 rounded bg-[#1f2429] px-1 py-0.5">~/.ssh/config</code>
+            stehen und ohne Passwort-Prompt erreichbar sein (Key + Agent, GSSAPI,
+            ControlMaster, etc.). MLForge ruft systemweites <code>ssh</code> auf.
+          </p>
+        </Card>
+      </FullScreen>
+    )
+  }
+
+  // view === 'main'
   return (
     <FullScreen>
       <Card
@@ -107,8 +233,147 @@ export default function Welcome() {
           Claude liest den Projektkontext bei jedem Chat, damit er fokussiert
           mitarbeiten kann.
         </p>
-        <div className="flex gap-2">
-          <Button onClick={() => void pickFolder()} primary>Projekt öffnen / Ordner wählen…</Button>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => void pickFolder()} primary>
+            Lokaler Ordner…
+          </Button>
+          <Button onClick={() => setView('remote-picker')}>
+            Remote-Workspace (SSH)
+          </Button>
+        </div>
+        {saved.length > 0 && (
+          <p className="mt-3 text-[11px] text-[#7a8088]">
+            {saved.length} Remote-Verbindung{saved.length === 1 ? '' : 'en'} gespeichert —{' '}
+            <button
+              className="underline hover:text-[#6ab7ff]"
+              onClick={() => setView('remote-picker')}
+            >
+              auswählen
+            </button>
+          </p>
+        )}
+      </Card>
+    </FullScreen>
+  )
+}
+
+function RemoteConnectionForm({
+  onTest,
+  onSave,
+  onOpen,
+  onCancel,
+}: {
+  onTest: (alias: string) => Promise<SshTestResult>
+  onSave: (label: string, alias: string, root: string) => RemoteSshConnection
+  onOpen: (c: RemoteSshConnection) => Promise<void>
+  onCancel: () => void
+}) {
+  const [label, setLabel] = useState('')
+  const [alias, setAlias] = useState('')
+  const [root, setRoot] = useState('~/mlforge')
+  const [testing, setTesting] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [testResult, setTestResult] = useState<SshTestResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const validAlias = /^[a-zA-Z0-9._-]+$/.test(alias)
+  const validRoot = root.startsWith('/') || root.startsWith('~/') || root === '~'
+
+  return (
+    <FullScreen>
+      <Card title="Neue SSH-Verbindung">
+        <div className="space-y-3">
+          <Field label="Label" hint="Wie soll das in der Liste auftauchen?">
+            <input
+              autoFocus
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="z.B. Leipzig HPC"
+              className="w-full rounded border border-[#2a3038] bg-[#0e1115] px-2 py-1 text-sm text-[#e6e8eb] focus:border-[#6ab7ff] focus:outline-none"
+            />
+          </Field>
+          <Field
+            label="SSH-Alias"
+            hint="Eintrag aus deiner ~/.ssh/config — kein Host:Port hier."
+          >
+            <input
+              value={alias}
+              onChange={(e) => {
+                setAlias(e.target.value)
+                setTestResult(null)
+              }}
+              placeholder="leipzig-hpc"
+              className={`w-full rounded border bg-[#0e1115] px-2 py-1 text-sm text-[#e6e8eb] focus:outline-none ${
+                alias && !validAlias ? 'border-rose-500' : 'border-[#2a3038] focus:border-[#6ab7ff]'
+              }`}
+            />
+          </Field>
+          <Field
+            label="Remote-Pfad"
+            hint="Absolut (/scratch/me/mlforge) oder Home-relativ (~/projects/mlforge)."
+          >
+            <input
+              value={root}
+              onChange={(e) => setRoot(e.target.value)}
+              placeholder="~/mlforge"
+              className={`w-full rounded border bg-[#0e1115] px-2 py-1 text-sm text-[#e6e8eb] focus:outline-none ${
+                root && !validRoot ? 'border-rose-500' : 'border-[#2a3038] focus:border-[#6ab7ff]'
+              }`}
+            />
+          </Field>
+
+          {testResult && (
+            <div className="rounded border border-emerald-700/40 bg-emerald-900/15 px-2 py-1.5 text-xs text-emerald-300">
+              <div className="font-medium">Verbindung OK</div>
+              <div className="text-emerald-400/80">{testResult.uname}</div>
+              <div className="text-emerald-400/60">HOME = {testResult.home}</div>
+            </div>
+          )}
+          {error && (
+            <div className="rounded bg-rose-900/20 px-2 py-1.5 text-xs text-rose-300 whitespace-pre-wrap">
+              {error}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              disabled={!validAlias || testing}
+              onClick={async () => {
+                setTesting(true)
+                setError(null)
+                setTestResult(null)
+                try {
+                  const r = await onTest(alias.trim())
+                  setTestResult(r)
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e))
+                } finally {
+                  setTesting(false)
+                }
+              }}
+            >
+              {testing ? 'Teste…' : 'Verbindung testen'}
+            </Button>
+            <Button
+              primary
+              disabled={!validAlias || !validRoot || busy || !label.trim()}
+              onClick={async () => {
+                setBusy(true)
+                setError(null)
+                try {
+                  const c = onSave(label.trim(), alias.trim(), root.trim())
+                  await onOpen(c)
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e))
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              {busy ? 'Öffne…' : 'Anlegen & öffnen'}
+            </Button>
+            <Button onClick={onCancel} disabled={busy}>Abbrechen</Button>
+          </div>
         </div>
       </Card>
     </FullScreen>
@@ -123,20 +388,26 @@ function CreateProjectForm({
   onCancel: () => void
   status: ProjectStatus
 }) {
-  const defaultName = (status.kind === 'legacy' || status.kind === 'loaded')
-    ? status.root.split(/[\\/]/).filter(Boolean).pop() ?? ''
-    : ''
+  const defaultName =
+    (status.kind === 'legacy' || status.kind === 'loaded' || status.kind === 'remote-missing')
+      ? status.root.split(/[\\/]/).filter(Boolean).pop() ?? ''
+      : ''
   const [name, setName] = useState(defaultName)
   const [description, setDescription] = useState('')
   const [goal, setGoal] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const subtitle =
+    status.kind === 'remote-missing' ? `${status.alias}:${status.root}` :
+    status.kind === 'legacy' ? status.root :
+    undefined
+
   return (
     <FullScreen>
       <Card
         title={mode === 'new' ? 'Neues Projekt' : 'Bestehende Dateien in Projekt konvertieren'}
-        subtitle={status.kind === 'legacy' ? status.root : undefined}
+        subtitle={subtitle}
       >
         <div className="space-y-3">
           <Field label="Name" hint="Kurz, prägnant — taucht in der Topbar auf.">
