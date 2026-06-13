@@ -41,4 +41,54 @@ export const tauriFs = {
   listDatasets: () => invoke<DatasetEntry[]>('list_datasets'),
   datasetAbspath: (relpath: string) =>
     invoke<string>('dataset_abspath', { relpath }),
+  loadProject: () => invoke<ProjectLoad>('load_project'),
+  initProject: (name: string, description: string, goal: string) =>
+    invoke<ProjectMeta>('init_project', { name, description, goal }),
+  updateProjectMeta: (patch: ProjectMetaPatch) =>
+    invoke<ProjectMeta>('update_project_meta', { patch }),
+  migrateLegacyProject: (name: string, description: string, goal: string) =>
+    invoke<ProjectMeta>('migrate_legacy_project', { name, description, goal }),
+  listNotes: () => invoke<NoteEntry[]>('list_notes'),
+  readNote: (name: string) => invoke<string>('read_note', { name }),
+  writeNote: (name: string, content: string) =>
+    invoke<void>('write_note', { name, content }),
+  appendNote: (name: string, content: string) =>
+    invoke<void>('append_note', { name, content }),
+  appendExperiment: (filename: string, line: string) =>
+    invoke<void>('append_experiment', { filename, line }),
+  readExperiment: (filename: string) =>
+    invoke<string>('read_experiment', { filename }),
+}
+
+export type ProjectMeta = {
+  name: string
+  description: string
+  goal: string
+  active_model: string | null
+  active_dataset: string | null
+  created_at: string
+  updated_at: string
+  schema_version: number
+}
+
+export type ProjectMetaPatch = Partial<{
+  name: string
+  description: string
+  goal: string
+  active_model: string | null
+  active_dataset: string | null
+}>
+
+export type ProjectLoad = {
+  root: string
+  meta: ProjectMeta | null
+  has_legacy_files: boolean
+  legacy_mlforge_count: number
+}
+
+export type NoteEntry = {
+  name: string
+  relpath: string
+  size_bytes: number
+  modified_at: string
 }

@@ -4,11 +4,25 @@ import { inspectDataset, statsDataset, smokeDataset } from './client'
 import type { InspectResult, StatsResult, SmokeResult } from './types'
 import { useGraphStore } from '../canvas/GraphStore'
 import { generate } from '../codegen/generator'
+import { useProjectStore } from '../project/store'
+import { useWorkspaceStore } from '../workspace/store'
 
 type Cached<T> = {
   loading: boolean
   data: T | null
   error: string | null
+}
+
+export type SmokeHistoryEntry = {
+  at: string
+  ok: boolean
+  dataset: string
+  model: string | null
+  input_shape?: number[]
+  output_shape?: number[] | null
+  n_params?: number
+  error?: string
+  stage?: string
 }
 
 type DatasetsState = {
@@ -20,12 +34,14 @@ type DatasetsState = {
   inspects: Record<string, Cached<InspectResult>>
   stats: Record<string, Cached<StatsResult>>
   smoke: Record<string, Cached<SmokeResult>>
+  history: SmokeHistoryEntry[]
 
   refresh: () => Promise<void>
   select: (relpath: string | null) => void
   inspect: (relpath: string, force?: boolean) => Promise<void>
   loadStats: (relpath: string, force?: boolean) => Promise<void>
   runSmoke: (relpath: string, inputShape?: number[]) => Promise<void>
+  loadHistory: () => Promise<void>
 }
 
 function entryByRel(entries: DatasetEntry[], rel: string): DatasetEntry | undefined {
@@ -40,6 +56,7 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
   inspects: {},
   stats: {},
   smoke: {},
+  history: [],
 
   refresh: async () => {
     if (!isTauri()) {
@@ -106,6 +123,53 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
       set({ smoke: { ...get().smoke, [relpath]: { loading: false, data: null, error: result.error } } })
       return
     }
-    set({ smoke: { ...get().smoke, [relpath]: { loading: false, data: result as SmokeResult, error: null } } })
+    const final = result as SmokeResult
+    set({ smoke: { ...get().smoke, [relpath]: { loading: false, data: final, error: null } } })
+
+    // Persist to experiments/smoke-results.jsonl if a project is loaded.
+    if (isTauri() && useProjectStore.getState().status.kind === 'loaded') {
+      const modelName = pickActiveModelName()
+      const histEntry: SmokeHistoryEntry = final.ok ? {
+        at: new Date().toISOString(),
+        ok: true,
+        dataset: relpath,
+        model: modelName,
+        input_shape: final.input_shape,
+        output_shape: final.output_shape,
+        n_params: final.n_params,
+      } : {
+        at: new Date().toISOString(),
+        ok: false,
+        dataset: relpath,
+        model: modelName,
+        input_shape: final.input_shape,
+        stage: final.stage,
+        error: final.error,
+      }
+      try {
+        await tauriFs.appendExperiment('smoke-results.jsonl', JSON.stringify(histEntry))
+        set({ history: [histEntry, ...get().history].slice(0, 50) })
+      } catch { /* logging is best-effort */ }
+    }
+  },
+
+  loadHistory: async () => {
+    if (!isTauri() || useProjectStore.getState().status.kind !== 'loaded') return
+    try {
+      const text = await tauriFs.readExperiment('smoke-results.jsonl')
+      const lines = text.split('\n').filter((l) => l.trim())
+      const items: SmokeHistoryEntry[] = []
+      for (const line of lines) {
+        try { items.push(JSON.parse(line)) } catch { /* skip bad lines */ }
+      }
+      set({ history: items.reverse().slice(0, 50) })
+    } catch { /* file may not exist yet */ }
   },
 }))
+
+function pickActiveModelName(): string | null {
+  const ws = useWorkspaceStore.getState()
+  if (!ws.activeFileId) return null
+  const e = ws.entries[ws.activeFileId]
+  return e?.kind === 'file' ? e.name : null
+}

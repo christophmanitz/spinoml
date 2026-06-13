@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels'
 import Palette from './palette/Palette'
 import LeftSidebar from './workspace/LeftSidebar'
@@ -8,7 +9,10 @@ import CodePreview from './codegen/CodePreview'
 import { useInferenceStore } from './inference/store'
 import { useChatStore } from './chat/store'
 import { useManagedSidecars } from './sidecars/managed'
+import { useProjectStore } from './project/store'
+import Welcome from './project/Welcome'
 import Toolbar from './Toolbar'
+import { isTauri } from './workspace/tauri-fs'
 
 function InferenceBadge() {
   const status = useInferenceStore((s) => s.status)
@@ -52,6 +56,30 @@ function LLMBadge() {
   return <span className={`rounded px-2 py-0.5 ${color}`}>{label}</span>
 }
 
+function ProjectHeader() {
+  const status = useProjectStore((s) => s.status)
+  const closeProject = useProjectStore((s) => s.closeProject)
+  if (status.kind !== 'loaded') {
+    return <span className="font-semibold tracking-tight">MLForge</span>
+  }
+  return (
+    <div className="flex items-baseline gap-2">
+      <span className="font-semibold tracking-tight">MLForge</span>
+      <span className="text-[#7a8088]">·</span>
+      <span className="text-[#e6e8eb]" title={status.meta.goal || status.meta.description}>
+        {status.meta.name}
+      </span>
+      <button
+        onClick={() => void closeProject()}
+        className="ml-1 text-[10px] text-[#5a6068] hover:text-[#9aa1a8]"
+        title="close project"
+      >
+        ×
+      </button>
+    </div>
+  )
+}
+
 const storage = typeof window !== 'undefined' ? window.localStorage : undefined
 const HBAR =
   'w-px bg-[#1f2429] hover:w-[3px] hover:bg-[#3a4148] data-[separator-active]:w-[3px] data-[separator-active]:bg-[#6ab7ff] transition-colors cursor-col-resize'
@@ -68,12 +96,20 @@ export default function App() {
   const center = useSaved('mlforge.center')
   const right = useSaved('mlforge.right')
   const left = useSaved('mlforge.left')
+  const status = useProjectStore((s) => s.status)
+  const refresh = useProjectStore((s) => s.refresh)
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  const showWelcome = isTauri() && status.kind !== 'loaded'
 
   return (
     <div className="flex h-screen w-screen flex-col bg-[#0b0d10] text-[#e6e8eb]">
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-[#1f2429] pl-4 pr-3">
         <div className="flex items-center gap-4">
-          <span className="font-semibold tracking-tight">MLForge</span>
+          <ProjectHeader />
           <Toolbar />
         </div>
         <div className="flex items-center gap-2 text-xs text-[#7a8088]">
@@ -82,50 +118,54 @@ export default function App() {
         </div>
       </header>
 
-      <Group
-        orientation="horizontal"
-        className="min-h-0 flex-1"
-        defaultLayout={cols.defaultLayout}
-        onLayoutChanged={cols.onLayoutChanged}
-      >
-        <Panel defaultSize="15%" minSize="140px">
-          <Group
-            orientation="vertical"
-            defaultLayout={left.defaultLayout}
-            onLayoutChanged={left.onLayoutChanged}
-          >
-            <Panel defaultSize="50%" minSize="100px"><Palette /></Panel>
-            <Separator className={VBAR} />
-            <Panel defaultSize="50%" minSize="120px"><LeftSidebar /></Panel>
-          </Group>
-        </Panel>
-        <Separator className={HBAR} />
+      {showWelcome ? (
+        <div className="min-h-0 flex-1"><Welcome /></div>
+      ) : (
+        <Group
+          orientation="horizontal"
+          className="min-h-0 flex-1"
+          defaultLayout={cols.defaultLayout}
+          onLayoutChanged={cols.onLayoutChanged}
+        >
+          <Panel defaultSize="15%" minSize="140px">
+            <Group
+              orientation="vertical"
+              defaultLayout={left.defaultLayout}
+              onLayoutChanged={left.onLayoutChanged}
+            >
+              <Panel defaultSize="50%" minSize="100px"><Palette /></Panel>
+              <Separator className={VBAR} />
+              <Panel defaultSize="50%" minSize="120px"><LeftSidebar /></Panel>
+            </Group>
+          </Panel>
+          <Separator className={HBAR} />
 
-        <Panel defaultSize="58%" minSize="240px">
-          <Group
-            orientation="vertical"
-            defaultLayout={center.defaultLayout}
-            onLayoutChanged={center.onLayoutChanged}
-          >
-            <Panel defaultSize="70%" minSize="120px"><Canvas /></Panel>
-            <Separator className={VBAR} />
-            <Panel defaultSize="30%" minSize="80px"><CodePreview /></Panel>
-          </Group>
-        </Panel>
-        <Separator className={HBAR} />
+          <Panel defaultSize="58%" minSize="240px">
+            <Group
+              orientation="vertical"
+              defaultLayout={center.defaultLayout}
+              onLayoutChanged={center.onLayoutChanged}
+            >
+              <Panel defaultSize="70%" minSize="120px"><Canvas /></Panel>
+              <Separator className={VBAR} />
+              <Panel defaultSize="30%" minSize="80px"><CodePreview /></Panel>
+            </Group>
+          </Panel>
+          <Separator className={HBAR} />
 
-        <Panel defaultSize="27%" minSize="240px">
-          <Group
-            orientation="vertical"
-            defaultLayout={right.defaultLayout}
-            onLayoutChanged={right.onLayoutChanged}
-          >
-            <Panel defaultSize="50%" minSize="100px"><Inspector /></Panel>
-            <Separator className={VBAR} />
-            <Panel defaultSize="50%" minSize="100px"><ChatPanel /></Panel>
-          </Group>
-        </Panel>
-      </Group>
+          <Panel defaultSize="27%" minSize="240px">
+            <Group
+              orientation="vertical"
+              defaultLayout={right.defaultLayout}
+              onLayoutChanged={right.onLayoutChanged}
+            >
+              <Panel defaultSize="50%" minSize="100px"><Inspector /></Panel>
+              <Separator className={VBAR} />
+              <Panel defaultSize="50%" minSize="100px"><ChatPanel /></Panel>
+            </Group>
+          </Panel>
+        </Group>
+      )}
     </div>
   )
 }

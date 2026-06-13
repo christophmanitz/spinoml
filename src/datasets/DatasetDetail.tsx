@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useDatasetsStore } from './store'
+import { useEffect, useState } from 'react'
+import { useDatasetsStore, type SmokeHistoryEntry } from './store'
 import { useGraphStore } from '../canvas/GraphStore'
 import { iconFor, colorFor, formatSize } from './icons'
 import type {
@@ -509,6 +509,12 @@ function SmokeBody({
     return sh ?? null
   })
   const hasModel = useGraphStore((s) => s.nodes.length > 0)
+  const history = useDatasetsStore((s) => s.history)
+  const loadHistory = useDatasetsStore((s) => s.loadHistory)
+
+  useEffect(() => { void loadHistory() }, [loadHistory])
+
+  const datasetHistory = history.filter((h) => h.dataset === relpath).slice(0, 12)
   return (
     <div className="space-y-2">
       <div className="text-[#9aa1a8]">
@@ -553,6 +559,28 @@ function SmokeBody({
           )}
         </div>
       )}
+      {datasetHistory.length > 0 && <SmokeHistory entries={datasetHistory} />}
+    </div>
+  )
+}
+
+function SmokeHistory({ entries }: { entries: SmokeHistoryEntry[] }) {
+  return (
+    <div className="mt-3 border-t border-[#1f2429] pt-2">
+      <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">previous runs</div>
+      <div className="space-y-1">
+        {entries.map((e, i) => (
+          <div key={i} className="flex items-baseline gap-2 text-[10px]">
+            <span className={e.ok ? 'text-emerald-300' : 'text-rose-300'}>{e.ok ? '✓' : '✗'}</span>
+            <span className="text-[#5a6068]">{e.at.slice(5, 16).replace('T', ' ')}</span>
+            <span className="flex-1 truncate text-[#9aa1a8]">
+              {e.model ?? '(no model)'}
+              {e.ok && e.output_shape ? ` → [${e.output_shape.join(',')}]` : ''}
+              {!e.ok && e.error ? `: ${e.error.slice(0, 60)}` : ''}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

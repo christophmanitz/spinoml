@@ -2,6 +2,10 @@ import { create } from 'zustand'
 import { llmHealth, streamChat, type ChatEvent } from './client'
 import { useGraphStore, autoPositionAfter } from '../canvas/GraphStore'
 import { useInferenceStore } from '../inference/store'
+import { useProjectStore } from '../project/store'
+import { useDatasetsStore } from '../datasets/store'
+import { useWorkspaceStore } from '../workspace/store'
+import { isTauri, tauriFs } from '../workspace/tauri-fs'
 
 export type ToolCall = {
   id: string
@@ -65,13 +69,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const graph = snapshotGraph()
     const error = snapshotError()
+    const project = await snapshotProject()
 
     inflight = new AbortController()
     let mutatedGraph = false
 
     try {
       await streamChat(
-        { user: trimmed, messages: history, graph, error: error ?? undefined },
+        { user: trimmed, messages: history, graph, error: error ?? undefined, project: project ?? undefined },
         (ev) => {
           if (ev.type === 'action') mutatedGraph = true
           applyEvent(assistantId, ev, set, get)
@@ -164,6 +169,50 @@ function snapshotError() {
     message: inf.error,
     failingNodeId: inf.failingNodeId,
     failingNodeLayerType: inf.failingNodeLayerType,
+  }
+}
+
+async function snapshotProject() {
+  if (!isTauri()) return null
+  const ps = useProjectStore.getState()
+  if (ps.status.kind !== 'loaded') return null
+  const { root, meta } = ps.status
+
+  let active_model: string | null = meta.active_model ?? null
+  const ws = useWorkspaceStore.getState()
+  if (ws.activeFileId) {
+    const entry = ws.entries[ws.activeFileId]
+    if (entry && entry.kind === 'file') active_model = entry.name
+  }
+
+  let active_dataset_inspect: unknown
+  const active_dataset = meta.active_dataset ?? useDatasetsStore.getState().selectedRel
+  if (active_dataset) {
+    const cached = useDatasetsStore.getState().inspects[active_dataset]
+    active_dataset_inspect = cached?.data ?? undefined
+  }
+
+  let recent_notes: { name: string; excerpt: string }[] = []
+  try {
+    const notes = await tauriFs.listNotes()
+    const top = notes.slice(0, 3)
+    for (const n of top) {
+      try {
+        const full = await tauriFs.readNote(n.name)
+        recent_notes.push({ name: n.name, excerpt: full.slice(0, 1500) })
+      } catch { /* skip individual failures */ }
+    }
+  } catch { /* notes optional */ }
+
+  return {
+    root,
+    name: meta.name,
+    description: meta.description,
+    goal: meta.goal,
+    active_model,
+    active_dataset,
+    active_dataset_inspect,
+    recent_notes,
   }
 }
 

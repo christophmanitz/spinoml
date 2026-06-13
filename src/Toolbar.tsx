@@ -24,8 +24,10 @@ export default function Toolbar() {
     }
     // No active file: in Tauri webview window.prompt is unreliable, so just
     // auto-create with a default name. User can inline-rename in the tree.
+    // When a project is loaded, default to models/; otherwise to root.
+    const parentId = ws.entries['models']?.kind === 'folder' ? 'models' : ROOT_ID
     try {
-      const id = await ws.saveAsNew(ROOT_ID, 'untitled.mlforge')
+      const id = await ws.saveAsNew(parentId, 'untitled.mlforge')
       if (!id) await reportError('Save failed', 'workspace did not return a file id')
     } catch (e) {
       await reportError('Save failed', e)

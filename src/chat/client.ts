@@ -15,6 +15,16 @@ export type ChatRequest = {
     edges: { source: string; target: string }[]
   }
   error?: { message: string; failingNodeId?: string | null; failingNodeLayerType?: string | null }
+  project?: {
+    root: string
+    name: string
+    description: string
+    goal: string
+    active_model: string | null
+    active_dataset: string | null
+    active_dataset_inspect?: unknown
+    recent_notes?: { name: string; excerpt: string }[]
+  }
 }
 
 const SIDECAR_URL = 'http://127.0.0.1:7422'

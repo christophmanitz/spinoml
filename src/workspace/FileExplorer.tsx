@@ -79,12 +79,17 @@ export default function FileExplorer() {
         </div>
         <div className="flex items-center gap-1 text-[#7a8088]">
           <IconButton title="New file" onClick={() => {
-            createFile(ROOT_ID).then((id) => { if (id) setRename(id) })
+            const parentId = useWorkspaceStore.getState().entries['models']?.kind === 'folder' ? 'models' : ROOT_ID
+            createFile(parentId).then((id) => { if (id) setRename(id) })
           }}>📄+</IconButton>
           <IconButton title="New folder" onClick={() => {
-            createFolder(ROOT_ID).then((id) => { if (id) setRename(id) })
+            const parentId = useWorkspaceStore.getState().entries['models']?.kind === 'folder' ? 'models' : ROOT_ID
+            createFolder(parentId).then((id) => { if (id) setRename(id) })
           }}>📁+</IconButton>
-          <IconButton title="Import .mlforge" onClick={() => importFile(ROOT_ID)}>⇪</IconButton>
+          <IconButton title="Import .mlforge" onClick={() => {
+            const parentId = useWorkspaceStore.getState().entries['models']?.kind === 'folder' ? 'models' : ROOT_ID
+            importFile(parentId)
+          }}>⇪</IconButton>
         </div>
       </div>
 

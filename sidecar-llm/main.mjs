@@ -22,6 +22,8 @@
 //   {type: "done"}
 
 import { createServer } from 'node:http'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
 import { z } from 'zod'
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 
@@ -92,7 +94,16 @@ function makeActionStream() {
 // ────────────────────────────────────────────────────────────────────────────
 // MCP tool surface.
 
-function buildMcpServer(ctx, actions) {
+// Safe notes helpers — scoped to a single project root passed per-turn.
+function safeNoteFilename(name) {
+  const base = path.basename(name || '')
+  if (!base || base.startsWith('.')) throw new Error('invalid note name')
+  if (!/\.(md|txt)$/i.test(base)) throw new Error('note name must end in .md or .txt')
+  return base
+}
+
+function buildMcpServer(ctx, actions, projectRoot) {
+  const notesDir = projectRoot ? path.join(projectRoot, 'notes') : null
   const tools = [
     tool(
       'set_input_shape',
@@ -170,6 +181,62 @@ function buildMcpServer(ctx, actions) {
     ),
   ]
 
+  if (notesDir) {
+    tools.push(
+      tool(
+        'list_notes',
+        'List markdown notes in the project\'s notes/ folder. Use this to discover what context already exists before making suggestions.',
+        {},
+        async () => {
+          try {
+            const items = await fs.readdir(notesDir).catch(() => [])
+            const filtered = items.filter((f) => /\.(md|txt)$/i.test(f) && !f.startsWith('.'))
+            if (!filtered.length) return content('(no notes yet)')
+            const detail = []
+            for (const f of filtered.sort()) {
+              try {
+                const st = await fs.stat(path.join(notesDir, f))
+                detail.push(`${f} — ${st.size} bytes, modified ${new Date(st.mtimeMs).toISOString()}`)
+              } catch { detail.push(f) }
+            }
+            return content(detail.join('\n'))
+          } catch (e) {
+            return content(`error: ${e.message}`, true)
+          }
+        },
+      ),
+      tool(
+        'read_note',
+        'Read the full contents of a project note (markdown or text). Use to load decision logs, prior session notes, or the project README before suggesting changes.',
+        { name: z.string() },
+        async ({ name }) => {
+          try {
+            const fname = safeNoteFilename(name)
+            const text = await fs.readFile(path.join(notesDir, fname), 'utf8')
+            return content(text)
+          } catch (e) {
+            return content(`error: ${e.message}`, true)
+          }
+        },
+      ),
+      tool(
+        'append_note',
+        'Append text to a project note (creates the file if missing). Use to record decisions, things you tried, or hand-offs for the next session. Always include a timestamp header. Prefer a small set of notes — decisions.md, session-YYYY-MM-DD.md — over one note per turn.',
+        { name: z.string(), content: z.string() },
+        async ({ name, content: body }) => {
+          try {
+            const fname = safeNoteFilename(name)
+            await fs.mkdir(notesDir, { recursive: true })
+            await fs.appendFile(path.join(notesDir, fname), body.endsWith('\n') ? body : body + '\n', 'utf8')
+            return content(`appended ${body.length} chars to notes/${fname}`)
+          } catch (e) {
+            return content(`error: ${e.message}`, true)
+          }
+        },
+      ),
+    )
+  }
+
   return createSdkMcpServer({ name: 'mlforge-graph', version: '0.1.0', tools })
 }
 
@@ -195,7 +262,7 @@ function sendJson(res, status, obj) {
   res.end(JSON.stringify(obj))
 }
 
-function buildSystemPrompt(snapshot, error) {
+function buildSystemPrompt(snapshot, error, project) {
   const lines = [
     'You are an expert PyTorch architect embedded in MLForge, a drag-and-drop GUI for building nn.Module architectures.',
     '',
@@ -209,12 +276,44 @@ function buildSystemPrompt(snapshot, error) {
     'Layer params must match the input shape: Conv2d.in_channels = channel dim of input, BatchNorm2d.num_features = channel dim, Linear.in_features = last dim, LayerNorm.normalized_shape = trailing dims. Inspect the shapes shown for each node before choosing parameters.',
     '',
     'After tool calls, briefly tell the user what you changed (one short sentence) — they can see the result on the canvas.',
+  ]
+  if (project) {
+    lines.push(
+      '',
+      '═══ Project context ═══',
+      `Name: ${project.name || '(unnamed)'}`,
+    )
+    if (project.description) lines.push(`Description: ${project.description}`)
+    if (project.goal) lines.push(`Goal: ${project.goal}`)
+    if (project.active_model) lines.push(`Active model: ${project.active_model}`)
+    if (project.active_dataset) {
+      lines.push(`Active dataset: ${project.active_dataset}`)
+      if (project.active_dataset_inspect) {
+        lines.push('Active dataset summary:', '```json', JSON.stringify(project.active_dataset_inspect, null, 2), '```')
+      }
+    }
+    if (Array.isArray(project.recent_notes) && project.recent_notes.length) {
+      lines.push('', 'Recent project notes (excerpts):')
+      for (const n of project.recent_notes) {
+        lines.push(`--- ${n.name} ---`, n.excerpt, '')
+      }
+    }
+    lines.push(
+      '',
+      'You have notes tools: list_notes, read_note, append_note. Use append_note to record',
+      'non-obvious decisions, dead ends, or hand-offs for the next session — e.g.',
+      'append to "decisions.md" with a dated entry. Do this sparingly, only when the',
+      'information is worth keeping across sessions.',
+      '═══════════════════════',
+    )
+  }
+  lines.push(
     '',
     'Current architecture snapshot:',
     '```json',
     JSON.stringify(snapshot, null, 2),
     '```',
-  ]
+  )
   if (error) {
     lines.push('', `Current forward-pass error: ${error.message}`)
     if (error.failingNodeId) lines.push(`Failing node: ${error.failingNodeId} (${error.failingNodeLayerType ?? 'unknown'})`)
@@ -240,7 +339,7 @@ async function handleChat(req, res) {
   try { payload = JSON.parse(body || '{}') }
   catch (e) { return sendJson(res, 400, { error: `invalid json: ${e.message}` }) }
 
-  const { user, messages, graph, error } = payload
+  const { user, messages, graph, error, project } = payload
   if (typeof user !== 'string' || !user.trim()) {
     return sendJson(res, 400, { error: 'missing "user" string' })
   }
@@ -267,8 +366,9 @@ async function handleChat(req, res) {
     for await (const a of actions.drain()) emit({ type: 'action', op: a.op, payload: a.payload })
   })()
 
-  const mcp = buildMcpServer(ctx, actions)
-  const systemPrompt = buildSystemPrompt(ctx.snapshot(), error)
+  const projectRoot = project?.root || null
+  const mcp = buildMcpServer(ctx, actions, projectRoot)
+  const systemPrompt = buildSystemPrompt(ctx.snapshot(), error, project)
   const prompt = formatHistoryAsPrompt(messages, user)
 
   emit({ type: 'status', value: 'thinking' })
@@ -285,6 +385,11 @@ async function handleChat(req, res) {
           'mcp__graph__connect',
           'mcp__graph__update_params',
           'mcp__graph__delete_node',
+          ...(projectRoot ? [
+            'mcp__graph__list_notes',
+            'mcp__graph__read_note',
+            'mcp__graph__append_note',
+          ] : []),
         ],
         permissionMode: 'bypassPermissions',
         maxTurns: 60,

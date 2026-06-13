@@ -2,10 +2,14 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{Manager, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
+
+const PROJECT_FILE: &str = "mlforge.project.json";
+const SUBDIRS: &[&str] = &["models", "datasets", "notes", "experiments"];
 
 #[derive(Default)]
 struct WorkspaceState {
@@ -180,8 +184,12 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<FsEntry>) -> Result<(), String> {
         if name.starts_with('.') {
             continue;
         }
-        // datasets/ is surfaced by list_datasets in a dedicated panel.
-        if dir == root && name == "datasets" {
+        // Hide system subdirs at workspace root — they each have a dedicated panel.
+        if dir == root && matches!(name.as_str(), "datasets" | "notes" | "experiments") {
+            continue;
+        }
+        // Hide the project.json itself.
+        if dir == root && name == PROJECT_FILE {
             continue;
         }
         let rel = p
@@ -244,6 +252,328 @@ fn mkdir_workspace(state: State<WorkspaceState>, relpath: String) -> Result<(), 
     let root = current_root(&state)?;
     let full = resolve(&root, &relpath)?;
     fs::create_dir_all(&full).map_err(|e| format!("mkdir {}: {e}", full.display()))
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+struct ProjectMeta {
+    name: String,
+    description: String,
+    goal: String,
+    #[serde(default)]
+    active_model: Option<String>,
+    #[serde(default)]
+    active_dataset: Option<String>,
+    #[serde(default)]
+    created_at: String,
+    #[serde(default)]
+    updated_at: String,
+    #[serde(default = "default_schema_version")]
+    schema_version: u32,
+}
+
+fn default_schema_version() -> u32 { 1 }
+
+#[derive(Serialize)]
+struct ProjectLoad {
+    root: String,
+    meta: Option<ProjectMeta>,
+    has_legacy_files: bool,
+    legacy_mlforge_count: usize,
+}
+
+fn now_iso() -> String {
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    // Crude ISO8601 — good enough for human reading; we don't need timezone math.
+    format!("{}Z", secs_to_iso(secs))
+}
+
+fn secs_to_iso(secs: u64) -> String {
+    let days = secs / 86400;
+    let secs_of_day = secs % 86400;
+    let h = secs_of_day / 3600;
+    let m = (secs_of_day % 3600) / 60;
+    let s = secs_of_day % 60;
+    let (y, mo, d) = days_to_ymd(days as i64);
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}")
+}
+
+fn days_to_ymd(mut days: i64) -> (i32, u32, u32) {
+    let mut year: i32 = 1970;
+    loop {
+        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+        let d = if leap { 366 } else { 365 };
+        if days < d { break; }
+        days -= d;
+        year += 1;
+    }
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let months = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut month = 1u32;
+    for &dd in &months {
+        if days < dd { break; }
+        days -= dd;
+        month += 1;
+    }
+    (year, month, (days + 1) as u32)
+}
+
+fn project_path(root: &Path) -> PathBuf { root.join(PROJECT_FILE) }
+
+fn ensure_subdirs(root: &Path) -> Result<(), String> {
+    for sub in SUBDIRS {
+        let p = root.join(sub);
+        if !p.exists() {
+            fs::create_dir_all(&p).map_err(|e| format!("mkdir {}: {e}", p.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn write_project_meta(root: &Path, meta: &ProjectMeta) -> Result<(), String> {
+    let s = serde_json::to_string_pretty(meta).map_err(|e| e.to_string())?;
+    fs::write(project_path(root), s).map_err(|e| format!("write project.json: {e}"))
+}
+
+fn read_project_meta(root: &Path) -> Result<Option<ProjectMeta>, String> {
+    let p = project_path(root);
+    if !p.exists() { return Ok(None); }
+    let s = fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
+    let meta: ProjectMeta = serde_json::from_str(&s).map_err(|e| format!("parse project.json: {e}"))?;
+    Ok(Some(meta))
+}
+
+fn scan_legacy(root: &Path) -> (bool, usize) {
+    let mut count = 0usize;
+    if let Ok(rd) = fs::read_dir(root) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.to_lowercase().ends_with(".mlforge") {
+                count += 1;
+            }
+        }
+    }
+    (count > 0, count)
+}
+
+#[tauri::command]
+fn load_project(state: State<WorkspaceState>) -> Result<ProjectLoad, String> {
+    let root = current_root(&state)?;
+    let meta = read_project_meta(&root)?;
+    let (has_legacy, count) = scan_legacy(&root);
+    Ok(ProjectLoad {
+        root: root.to_string_lossy().to_string(),
+        meta,
+        has_legacy_files: has_legacy,
+        legacy_mlforge_count: count,
+    })
+}
+
+#[tauri::command]
+fn init_project(
+    state: State<WorkspaceState>,
+    name: String,
+    description: String,
+    goal: String,
+) -> Result<ProjectMeta, String> {
+    let root = current_root(&state)?;
+    if read_project_meta(&root)?.is_some() {
+        return Err("project already initialized in this folder".into());
+    }
+    let now = now_iso();
+    let meta = ProjectMeta {
+        name,
+        description,
+        goal,
+        active_model: None,
+        active_dataset: None,
+        created_at: now.clone(),
+        updated_at: now,
+        schema_version: 1,
+    };
+    ensure_subdirs(&root)?;
+    write_project_meta(&root, &meta)?;
+    Ok(meta)
+}
+
+#[derive(Deserialize, Default)]
+struct ProjectMetaPatch {
+    name: Option<String>,
+    description: Option<String>,
+    goal: Option<String>,
+    active_model: Option<Option<String>>,
+    active_dataset: Option<Option<String>>,
+}
+
+#[tauri::command]
+fn update_project_meta(
+    state: State<WorkspaceState>,
+    patch: ProjectMetaPatch,
+) -> Result<ProjectMeta, String> {
+    let root = current_root(&state)?;
+    let mut meta = read_project_meta(&root)?.ok_or_else(|| "no project in this folder".to_string())?;
+    if let Some(n) = patch.name { meta.name = n; }
+    if let Some(d) = patch.description { meta.description = d; }
+    if let Some(g) = patch.goal { meta.goal = g; }
+    if let Some(am) = patch.active_model { meta.active_model = am; }
+    if let Some(ad) = patch.active_dataset { meta.active_dataset = ad; }
+    meta.updated_at = now_iso();
+    write_project_meta(&root, &meta)?;
+    Ok(meta)
+}
+
+#[tauri::command]
+fn migrate_legacy_project(
+    state: State<WorkspaceState>,
+    name: String,
+    description: String,
+    goal: String,
+) -> Result<ProjectMeta, String> {
+    let root = current_root(&state)?;
+    if read_project_meta(&root)?.is_some() {
+        return Err("project already initialized; nothing to migrate".into());
+    }
+    ensure_subdirs(&root)?;
+    // Move root-level .mlforge and matching .py twins into models/.
+    let models = root.join("models");
+    if let Ok(rd) = fs::read_dir(&root) {
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if !p.is_file() { continue; }
+            let name_os = entry.file_name();
+            let fname = name_os.to_string_lossy().to_string();
+            let lower = fname.to_lowercase();
+            if lower.ends_with(".mlforge") || lower.ends_with(".py") {
+                let dest = models.join(&fname);
+                fs::rename(&p, &dest).map_err(|e| format!("move {fname}: {e}"))?;
+            }
+        }
+    }
+    let now = now_iso();
+    let meta = ProjectMeta {
+        name, description, goal,
+        active_model: None, active_dataset: None,
+        created_at: now.clone(), updated_at: now, schema_version: 1,
+    };
+    write_project_meta(&root, &meta)?;
+    Ok(meta)
+}
+
+// ─── Notes ────────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct NoteEntry {
+    name: String,
+    relpath: String,
+    size_bytes: u64,
+    modified_at: String,
+}
+
+#[tauri::command]
+fn list_notes(state: State<WorkspaceState>) -> Result<Vec<NoteEntry>, String> {
+    let root = current_root(&state)?;
+    let dir = root.join("notes");
+    if !dir.exists() { fs::create_dir_all(&dir).map_err(|e| format!("mkdir notes/: {e}"))?; }
+    let mut out: Vec<NoteEntry> = Vec::new();
+    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
+        let p = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || !p.is_file() { continue; }
+        let lower = name.to_lowercase();
+        if !lower.ends_with(".md") && !lower.ends_with(".txt") { continue; }
+        let meta = entry.metadata().map_err(|e| e.to_string())?;
+        let modified = meta.modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| secs_to_iso(d.as_secs()))
+            .unwrap_or_default();
+        out.push(NoteEntry {
+            name: name.clone(),
+            relpath: format!("notes/{name}"),
+            size_bytes: meta.len(),
+            modified_at: modified,
+        });
+    }
+    out.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+    Ok(out)
+}
+
+#[tauri::command]
+fn read_note(state: State<WorkspaceState>, name: String) -> Result<String, String> {
+    let root = current_root(&state)?;
+    if name.contains('/') || name.contains('\\') {
+        return Err("note name must be a plain filename".into());
+    }
+    let p = root.join("notes").join(&name);
+    fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))
+}
+
+#[tauri::command]
+fn write_note(state: State<WorkspaceState>, name: String, content: String) -> Result<(), String> {
+    let root = current_root(&state)?;
+    if name.contains('/') || name.contains('\\') {
+        return Err("note name must be a plain filename".into());
+    }
+    let dir = root.join("notes");
+    fs::create_dir_all(&dir).map_err(|e| format!("mkdir notes/: {e}"))?;
+    let p = dir.join(&name);
+    fs::write(&p, content).map_err(|e| format!("write {}: {e}", p.display()))
+}
+
+#[tauri::command]
+fn append_note(state: State<WorkspaceState>, name: String, content: String) -> Result<(), String> {
+    use std::io::Write;
+    let root = current_root(&state)?;
+    if name.contains('/') || name.contains('\\') {
+        return Err("note name must be a plain filename".into());
+    }
+    let dir = root.join("notes");
+    fs::create_dir_all(&dir).map_err(|e| format!("mkdir notes/: {e}"))?;
+    let p = dir.join(&name);
+    let mut f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&p)
+        .map_err(|e| format!("open {}: {e}", p.display()))?;
+    f.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ─── Experiments ─────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn append_experiment(
+    state: State<WorkspaceState>,
+    filename: String,
+    line: String,
+) -> Result<(), String> {
+    use std::io::Write;
+    let root = current_root(&state)?;
+    if filename.contains('/') || filename.contains('\\') {
+        return Err("experiment filename must be a plain name".into());
+    }
+    let dir = root.join("experiments");
+    fs::create_dir_all(&dir).map_err(|e| format!("mkdir experiments/: {e}"))?;
+    let p = dir.join(&filename);
+    let mut f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&p)
+        .map_err(|e| format!("open {}: {e}", p.display()))?;
+    let mut bytes = line.into_bytes();
+    if !bytes.ends_with(b"\n") { bytes.push(b'\n'); }
+    f.write_all(&bytes).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn read_experiment(state: State<WorkspaceState>, filename: String) -> Result<String, String> {
+    let root = current_root(&state)?;
+    if filename.contains('/') || filename.contains('\\') {
+        return Err("experiment filename must be a plain name".into());
+    }
+    let p = root.join("experiments").join(&filename);
+    if !p.exists() { return Ok(String::new()); }
+    fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))
 }
 
 #[derive(Serialize)]
@@ -392,6 +722,16 @@ pub fn run() {
             sidecar_managed_status,
             list_datasets,
             dataset_abspath,
+            load_project,
+            init_project,
+            update_project_meta,
+            migrate_legacy_project,
+            list_notes,
+            read_note,
+            write_note,
+            append_note,
+            append_experiment,
+            read_experiment,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
