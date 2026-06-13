@@ -27,14 +27,22 @@ export async function statsDataset(abspath: string) {
   return post<StatsResult>('/dataset/stats', { abspath })
 }
 
-export async function smokeDataset(code: string, abspath: string, inputShapes?: number[][]) {
+export type InputOption = { features?: string[]; target?: string }
+
+export async function smokeDataset(
+  code: string, abspath: string,
+  inputShapes?: number[][], inputOptions?: InputOption[],
+) {
   return post<SmokeResult>('/dataset/smoke', {
-    code, abspath, input_shapes: inputShapes ?? null,
+    code, abspath, input_shapes: inputShapes ?? null, input_options: inputOptions ?? null,
   })
 }
 
-export async function smokeDatasetMulti(code: string, abspaths: string[], inputShapes?: number[][]) {
+export async function smokeDatasetMulti(
+  code: string, abspaths: string[],
+  inputShapes?: number[][], inputOptions?: InputOption[],
+) {
   return post<SmokeResult>('/dataset/smoke', {
-    code, abspaths, input_shapes: inputShapes ?? null,
+    code, abspaths, input_shapes: inputShapes ?? null, input_options: inputOptions ?? null,
   })
 }

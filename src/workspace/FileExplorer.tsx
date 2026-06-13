@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useWorkspaceStore, ROOT_ID, type Entry } from './store'
+import { useDatasetsStore } from '../datasets/store'
 import PyCodeModal, { type PyPreview } from './PyCodeModal'
 
 const DRAG_MIME = 'application/mlforge-workspace-entry'
@@ -263,8 +264,16 @@ function Row({
   const indent = 8 + depth * 12
 
   const onClick = () => {
-    if (isFolder) toggle(id)
-    else if (isFile) open(id)
+    if (isFolder) { toggle(id); return }
+    if (!isFile) return
+    const lower = entry.name.toLowerCase()
+    if (lower.endsWith('.mlforge')) { open(id); return }
+    // datasets/: hand off to the dataset modal instead of trying to parse.
+    if (id.startsWith('datasets/')) {
+      const datasetRel = 'datasets/' + id.slice('datasets/'.length).split('/')[0]
+      useDatasetsStore.getState().select(datasetRel)
+    }
+    // Other files: just selection-visible, no editor action.
   }
 
   const onContextMenu = (e: React.MouseEvent) => {

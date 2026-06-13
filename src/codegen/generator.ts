@@ -310,6 +310,10 @@ function serializeParam(field: FieldSpec, value: unknown): string {
     }
     case 'dataset-ref':
       return `'${value as string}'`
+    case 'columns-multi':
+      return `[${(value as string[]).map((s) => `'${s}'`).join(', ')}]`
+    case 'column-single':
+      return `'${value as string}'`
   }
 }
 

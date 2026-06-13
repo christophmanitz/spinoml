@@ -116,14 +116,13 @@ def smoke_test(
     code: str,
     abspaths: list[str],
     input_shapes: list[list[int]] | None,
+    input_options: list[dict] | None = None,
 ) -> dict:
     """Build sample tensors from one dataset per input, then run them through the model.
 
-    abspaths is a list — one dataset path per model input. For single-input
-    models this is just [path]. For multi-input models with per-input
-    bindings, each input pulls its sample from its own dataset. If only one
-    abspath is given for an N-input model, that sample is broadcast to every
-    input (re-sampled per requested shape).
+    abspaths is a list — one dataset path per model input.
+    input_options is an optional per-input dict bag (e.g. {features: [...]} for
+    tabular column selection); aligned to abspaths/input_shapes by index.
     """
     t0 = time.perf_counter()
     if not abspaths:
@@ -132,22 +131,27 @@ def smoke_test(
     xs: list[torch.Tensor] = []
     notes: list[str] = []
 
+    def opts_for(i: int) -> dict | None:
+        if input_options and i < len(input_options):
+            v = input_options[i]
+            if isinstance(v, dict):
+                return v
+        return None
+
     if len(abspaths) == 1 and input_shapes and len(input_shapes) > 1:
-        # Broadcast: same dataset, re-sampled to each requested shape.
         path = abspaths[0]
-        for sh in input_shapes:
-            sub = ds_mod.sample_tensor(path, sh)
+        for i, sh in enumerate(input_shapes):
+            sub = ds_mod.sample_tensor(path, sh, opts_for(i))
             if not sub.get("ok"):
                 return {"ok": False, "stage": "sample", "error": sub.get("error"), "details": sub, "dataset": path}
             xs.append(sub["tensor"])
             if sub.get("note"): notes.append(f"{path.split('/')[-1]}: {sub['note']}")
     else:
-        # Per-input bindings: one path per input.
         n = max(len(abspaths), len(input_shapes) if input_shapes else 0)
         for i in range(n):
             path = abspaths[i] if i < len(abspaths) else abspaths[-1]
             sh = input_shapes[i] if input_shapes and i < len(input_shapes) else None
-            sub = ds_mod.sample_tensor(path, sh)
+            sub = ds_mod.sample_tensor(path, sh, opts_for(i))
             if not sub.get("ok"):
                 return {"ok": False, "stage": "sample", "error": sub.get("error"), "details": sub, "dataset": path}
             xs.append(sub["tensor"])
@@ -290,7 +294,9 @@ class Handler(BaseHTTPRequestHandler):
                     shapes = [[int(v) for v in s] for s in shapes_in if isinstance(s, list)]
                     if not shapes:
                         shapes = None
-                self._json(200, smoke_test(code, abspaths, shapes))
+                opts_in = payload.get("input_options")
+                opts = opts_in if isinstance(opts_in, list) else None
+                self._json(200, smoke_test(code, abspaths, shapes, opts))
                 return
         except Exception as e:
             self._json(500, {

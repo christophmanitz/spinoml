@@ -7,6 +7,11 @@ export type FieldSpec =
   | { name: string; type: 'shape'; default: number[] }
   /** Runtime-populated dropdown of dataset relpaths from datasetsStore. Stored as string. */
   | { name: string; type: 'dataset-ref'; default: string }
+  /** Runtime-populated multi-select of column names from the node's bound dataset
+   *  (looks up its sibling 'dataset' param + datasetsStore.inspects). */
+  | { name: string; type: 'columns-multi'; default: string[] }
+  /** Single-select column. Same lookup as columns-multi, single string. */
+  | { name: string; type: 'column-single'; default: string }
 
 export type LayerKind = 'module' | 'input' | 'output' | 'merge'
 
@@ -49,11 +54,15 @@ export const LAYERS: Record<string, LayerSpec> = {
       { name: 'name', type: 'select', options: ['x', 'x1', 'x2', 'x3', 'q', 'k', 'v', 'cond'], default: 'x' } as FieldSpec,
       f.shape('shape', [1, 3, 224, 224]),
       { name: 'dataset', type: 'dataset-ref', default: '' } as FieldSpec,
+      { name: 'features', type: 'columns-multi', default: [] } as FieldSpec,
+      { name: 'target', type: 'column-single', default: '' } as FieldSpec,
     ],
     summary: (p) => {
       const ds = String(get(p, 'dataset', ''))
       const dsTag = ds ? ` ← ${ds.split('/').pop()}` : ''
-      return `${get(p, 'name', 'x')} ∈ ${JSON.stringify(get(p, 'shape', [1, 3, 224, 224]))}${dsTag}`
+      const feats = get(p, 'features', []) as string[]
+      const featTag = ds && feats.length ? ` · ${feats.length} feat` : ''
+      return `${get(p, 'name', 'x')} ∈ ${JSON.stringify(get(p, 'shape', [1, 3, 224, 224]))}${dsTag}${featTag}`
     },
   },
   Output: {
@@ -302,6 +311,10 @@ function coerceField(field: FieldSpec, value: unknown): unknown {
       return arr.length ? arr : field.default
     }
     case 'dataset-ref':
+      return typeof value === 'string' ? value : field.default
+    case 'columns-multi':
+      return Array.isArray(value) ? value.filter((v) => typeof v === 'string') : field.default
+    case 'column-single':
       return typeof value === 'string' ? value : field.default
   }
 }

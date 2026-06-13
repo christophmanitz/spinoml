@@ -552,16 +552,20 @@ def _stats_molecule(abspath: str) -> dict[str, Any]:
 # ─── Sample → torch.Tensor (for smoke test) ───────────────────────────────
 
 
-def sample_tensor(abspath: str, target_shape: list[int] | None = None) -> dict[str, Any]:
+def sample_tensor(
+    abspath: str,
+    target_shape: list[int] | None = None,
+    options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build one input tensor with batch dim from the dataset.
 
-    target_shape is used as a hint — e.g. for tabular we'll trim/pad to the
-    requested feature count. For images we'll resize. If None, we return a
-    natural shape and let the smoke-test handler decide.
+    target_shape: shape hint (trim/pad/resize). If None, the natural shape is used.
+    options: per-input bag — currently {features: list[str]} for tabular.
     """
     kind = detect_kind(abspath)
     if kind == "tabular":
-        return _sample_tabular(abspath, target_shape)
+        feats = (options or {}).get("features") if options else None
+        return _sample_tabular(abspath, target_shape, feats if isinstance(feats, list) else None)
     if kind == "image_folder":
         return _sample_image_folder(abspath, target_shape)
     if kind == "tensor":
@@ -573,7 +577,11 @@ def sample_tensor(abspath: str, target_shape: list[int] | None = None) -> dict[s
     return {"ok": False, "error": f"sampling not supported for kind {kind}"}
 
 
-def _sample_tabular(abspath: str, target: list[int] | None) -> dict[str, Any]:
+def _sample_tabular(
+    abspath: str,
+    target: list[int] | None,
+    feature_cols: list[str] | None = None,
+) -> dict[str, Any]:
     try:
         import pandas as pd
     except ImportError:
@@ -585,17 +593,25 @@ def _sample_tabular(abspath: str, target: list[int] | None) -> dict[str, Any]:
         df = pd.read_csv(p, sep="\t")
     else:
         df = pd.read_csv(p)
-    numeric = df.select_dtypes(include="number").fillna(0)
-    if numeric.shape[1] == 0:
-        return {"ok": False, "error": "no numeric columns in tabular dataset"}
+    if feature_cols:
+        missing = [c for c in feature_cols if c not in df.columns]
+        if missing:
+            return {"ok": False, "error": f"feature columns not in dataset: {missing}"}
+        feats = df[feature_cols].apply(pd.to_numeric, errors="coerce").fillna(0)
+        note_src = f"{len(feature_cols)} chosen cols ({', '.join(feature_cols[:4])}{'…' if len(feature_cols) > 4 else ''})"
+    else:
+        feats = df.select_dtypes(include="number").fillna(0)
+        note_src = f"{feats.shape[1]} numeric cols"
+    if feats.shape[1] == 0:
+        return {"ok": False, "error": "no usable feature columns in tabular dataset"}
     batch = 1
-    n_feat = numeric.shape[1]
+    n_feat = feats.shape[1]
     if target and len(target) == 2:
         batch = max(1, target[0])
         n_feat = target[1]
     elif target and len(target) == 1:
         n_feat = target[0]
-    rows = numeric.iloc[:batch].values
+    rows = feats.iloc[:batch].values
     if rows.shape[1] < n_feat:
         import numpy as np
         pad = np.zeros((rows.shape[0], n_feat - rows.shape[1]))
@@ -605,7 +621,7 @@ def _sample_tabular(abspath: str, target: list[int] | None) -> dict[str, Any]:
     while rows.shape[0] < batch:
         rows = rows.repeat(2, axis=0)[:batch]
     return {"ok": True, "tensor": torch.tensor(rows, dtype=torch.float32),
-            "natural_shape": [batch, n_feat], "note": f"used first {batch} rows × {n_feat} numeric cols"}
+            "natural_shape": [batch, n_feat], "note": f"used first {batch} rows × {note_src}"}
 
 
 def _sample_image_folder(abspath: str, target: list[int] | None) -> dict[str, Any]:

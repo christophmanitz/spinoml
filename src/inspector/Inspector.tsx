@@ -327,7 +327,128 @@ function FieldInput({
       return <ShapeInput value={value} onChange={onChange} baseClass={baseClass} />
     case 'dataset-ref':
       return <DatasetRefInput value={value as string} onChange={onChange} baseClass={baseClass} />
+    case 'columns-multi':
+      return <ColumnsMultiInput value={value as string[]} onChange={onChange} />
+    case 'column-single':
+      return <ColumnSingleInput value={value as string} onChange={onChange} baseClass={baseClass} />
   }
+}
+
+function columnsFor(datasetRel: string | undefined): string[] | null {
+  if (!datasetRel) return null
+  const data = useDatasetsStore.getState().inspects[datasetRel]?.data
+  if (!data || !data.ok) return null
+  if (data.kind === 'tabular') return data.columns
+  return null
+}
+
+function useBoundDatasetCols(): { cols: string[] | null; datasetRel: string } {
+  const datasetRel = useGraphStore((s) => {
+    const id = s.selectedNodeId
+    if (!id) return ''
+    const node = s.nodes.find((n) => n.id === id)
+    return String(node?.data.params.dataset ?? '')
+  })
+  const inspectData = useDatasetsStore((s) => (datasetRel ? s.inspects[datasetRel]?.data : null))
+  const cols = inspectData && inspectData.ok && inspectData.kind === 'tabular' ? inspectData.columns : null
+  // Silence unused linter (helper API).
+  void columnsFor
+  return { cols, datasetRel }
+}
+
+function ColumnsMultiInput({
+  value, onChange,
+}: { value: string[]; onChange: (v: unknown) => void }) {
+  const { cols, datasetRel } = useBoundDatasetCols()
+  const selectedNodeId = useGraphStore((s) => s.selectedNodeId)
+  const updateNodeParams = useGraphStore((s) => s.updateNodeParams)
+
+  if (!datasetRel) {
+    return <div className="text-[10px] italic text-[#5b6168]">(braucht ein gebundenes Dataset)</div>
+  }
+  if (!cols) {
+    return <div className="text-[10px] italic text-[#5b6168]">(nur für tabular Datasets)</div>
+  }
+
+  function toggle(col: string) {
+    const next = value.includes(col) ? value.filter((c) => c !== col) : [...value, col]
+    onChange(next)
+    if (selectedNodeId) {
+      const node = useGraphStore.getState().nodes.find((n) => n.id === selectedNodeId)
+      if (node) {
+        const newShape = [(node.data.params.shape as number[] | undefined)?.[0] ?? 1, next.length]
+        updateNodeParams(selectedNodeId, { ...node.data.params, features: next, shape: newShape })
+      }
+    }
+  }
+
+  function selectAllNumeric() {
+    const data = useDatasetsStore.getState().inspects[datasetRel]?.data
+    if (!data || !data.ok || data.kind !== 'tabular') return
+    const numeric = data.columns.filter((_c, i) => /int|float/.test(data.dtypes[i] ?? ''))
+    onChange(numeric)
+    if (selectedNodeId) {
+      const node = useGraphStore.getState().nodes.find((n) => n.id === selectedNodeId)
+      if (node) {
+        updateNodeParams(selectedNodeId, {
+          ...node.data.params,
+          features: numeric,
+          shape: [(node.data.params.shape as number[] | undefined)?.[0] ?? 1, numeric.length],
+        })
+      }
+    }
+  }
+
+  return (
+    <div className="space-y-1 rounded border border-[#1f2429] bg-[#0b0e11] p-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] text-[#7a8088]">{value.length}/{cols.length} ausgewählt</span>
+        <button
+          onClick={selectAllNumeric}
+          className="text-[10px] text-[#6ab7ff] hover:underline"
+        >
+          alle numerischen
+        </button>
+      </div>
+      <div className="max-h-32 space-y-0.5 overflow-y-auto">
+        {cols.map((col) => (
+          <label key={col} className="flex cursor-pointer items-center gap-1.5 text-[10px] text-[#e6e8eb] hover:bg-[#13171b]">
+            <input
+              type="checkbox"
+              checked={value.includes(col)}
+              onChange={() => toggle(col)}
+              className="h-3 w-3 accent-[#6ab7ff]"
+            />
+            <span className="truncate">{col}</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ColumnSingleInput({
+  value, onChange, baseClass,
+}: { value: string; onChange: (v: unknown) => void; baseClass: string }) {
+  const { cols, datasetRel } = useBoundDatasetCols()
+  if (!datasetRel) {
+    return <div className="text-[10px] italic text-[#5b6168]">(braucht ein gebundenes Dataset)</div>
+  }
+  if (!cols) {
+    return <div className="text-[10px] italic text-[#5b6168]">(nur für tabular Datasets)</div>
+  }
+  return (
+    <select
+      className={baseClass}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      <option value="">— kein Target —</option>
+      {cols.map((c) => (
+        <option key={c} value={c}>{c}</option>
+      ))}
+    </select>
+  )
 }
 
 function DatasetRefInput({
@@ -364,16 +485,28 @@ function DatasetRefInput({
   function pick(rel: string) {
     onChange(rel)
     if (!rel || !selectedNodeId) return
-    // Fire inspect → as soon as we know the natural shape, auto-write it to
-    // the Input node so the rest of the graph (shape inference, codegen) re-runs.
     void (async () => {
       await inspect(rel)
       const data = useDatasetsStore.getState().inspects[rel]?.data
       if (!data || !data.ok) return
-      const shape = sampleNaturalShapeFrom(data)
-      if (!shape) return
       const node = useGraphStore.getState().nodes.find((n) => n.id === selectedNodeId)
       if (!node) return
+
+      // For tabular: default features = all numeric columns; shape = [1, n_numeric].
+      if (data.kind === 'tabular') {
+        const numeric = data.columns.filter((_c, i) => /int|float/.test(data.dtypes[i] ?? ''))
+        updateNodeParams(selectedNodeId, {
+          ...node.data.params,
+          dataset: rel,
+          features: numeric,
+          target: '',
+          shape: [1, numeric.length],
+        })
+        return
+      }
+      // Non-tabular: just use the natural shape.
+      const shape = sampleNaturalShapeFrom(data)
+      if (!shape) return
       updateNodeParams(selectedNodeId, { ...node.data.params, dataset: rel, shape })
     })()
   }

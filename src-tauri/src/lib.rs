@@ -184,14 +184,6 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<FsEntry>) -> Result<(), String> {
         if name.starts_with('.') {
             continue;
         }
-        // Hide system subdirs at workspace root — they each have a dedicated panel.
-        if dir == root && matches!(name.as_str(), "datasets" | "notes" | "experiments") {
-            continue;
-        }
-        // Hide the project.json itself.
-        if dir == root && name == PROJECT_FILE {
-            continue;
-        }
         let rel = p
             .strip_prefix(root)
             .map_err(|e| e.to_string())?
@@ -202,10 +194,8 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<FsEntry>) -> Result<(), String> {
             out.push(FsEntry { name, relpath: rel.clone(), is_dir: true });
             walk(root, &p, out)?;
         } else {
-            let lower = name.to_lowercase();
-            if lower.ends_with(".mlforge") || lower.ends_with(".py") {
-                out.push(FsEntry { name, relpath: rel, is_dir: false });
-            }
+            // Everything visible. The frontend decides what's clickable.
+            out.push(FsEntry { name, relpath: rel, is_dir: false });
         }
     }
     Ok(())

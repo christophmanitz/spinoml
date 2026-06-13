@@ -121,6 +121,14 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
     // fall back to broadcasting the clicked dataset to every input.
     const inputNodes = nodes.filter((n) => n.data.layerType === 'Input')
     const perInputDatasets = inputNodes.map((n) => String(n.data.params.dataset ?? ''))
+    const perInputOptions = inputNodes.map((n) => {
+      const feats = n.data.params.features as string[] | undefined
+      const target = n.data.params.target as string | undefined
+      const opt: { features?: string[]; target?: string } = {}
+      if (Array.isArray(feats) && feats.length) opt.features = feats
+      if (target) opt.target = target
+      return opt
+    })
     const allBound = inputs.length > 1 && perInputDatasets.every((d) => d.length > 0)
     const shapes = inputShape ? [inputShape] : inputs.map((i) => i.shape)
     set({ smoke: { ...get().smoke, [relpath]: { loading: true, data: null, error: null } } })
@@ -140,9 +148,10 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
         abspaths.push(e.abspath)
       }
       const { smokeDatasetMulti } = await import('./client')
-      result = await smokeDatasetMulti(code, abspaths, shapes)
+      result = await smokeDatasetMulti(code, abspaths, shapes, perInputOptions)
     } else {
-      result = await smokeDataset(code, entry.abspath, shapes)
+      // Single-dataset broadcast: use options for the single input (if any).
+      result = await smokeDataset(code, entry.abspath, shapes, perInputOptions.slice(0, 1))
     }
     if ('offline' in result && result.offline) {
       set({ smoke: { ...get().smoke, [relpath]: { loading: false, data: null, error: result.error } } })
