@@ -275,22 +275,56 @@ function DatasetRefInput({
   const refresh = useDatasetsStore((s) => s.refresh)
   const select = useDatasetsStore((s) => s.select)
   const inspect = useDatasetsStore((s) => s.inspect)
+  const selectedNodeId = useGraphStore((s) => s.selectedNodeId)
+  const updateNodeParams = useGraphStore((s) => s.updateNodeParams)
+  const nodeParams = useGraphStore((s) => {
+    const id = s.selectedNodeId
+    if (!id) return null
+    const node = s.nodes.find((n) => n.id === id)
+    return node?.data.params ?? null
+  })
+
   useEffect(() => {
     if (isTauri() && entries.length === 0) void refresh()
     if (value) void inspect(value)
   }, [refresh, inspect, value, entries.length])
 
   const meta = value ? inspects[value]?.data : null
-  const naturalShape = meta?.ok ? sampleNaturalShapeFrom(meta) : null
+  const naturalShape = meta && meta.ok ? sampleNaturalShapeFrom(meta) : null
+  const currentShape = (nodeParams?.shape as number[] | undefined) ?? []
+  const shapesMatch = naturalShape && shallowEqShape(currentShape, naturalShape)
+
+  function pick(rel: string) {
+    onChange(rel)
+    if (!rel || !selectedNodeId) return
+    // Fire inspect → as soon as we know the natural shape, auto-write it to
+    // the Input node so the rest of the graph (shape inference, codegen) re-runs.
+    void (async () => {
+      await inspect(rel)
+      const data = useDatasetsStore.getState().inspects[rel]?.data
+      if (!data || !data.ok) return
+      const shape = sampleNaturalShapeFrom(data)
+      if (!shape) return
+      const node = useGraphStore.getState().nodes.find((n) => n.id === selectedNodeId)
+      if (!node) return
+      updateNodeParams(selectedNodeId, { ...node.data.params, dataset: rel, shape })
+    })()
+  }
+
+  function applyShape() {
+    if (!selectedNodeId || !naturalShape) return
+    updateNodeParams(selectedNodeId, { ...(nodeParams ?? {}), shape: naturalShape })
+  }
 
   return (
     <div className="flex flex-col gap-1">
       <select
         className={baseClass}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => pick(e.target.value)}
       >
         <option value="">— kein Datensatz gebunden —</option>
+        {entries.length === 0 && <option disabled value="">(leg Daten in datasets/ ab)</option>}
         {entries.map((e) => (
           <option key={e.relpath} value={e.relpath}>
             {e.name}
@@ -298,21 +332,49 @@ function DatasetRefInput({
         ))}
       </select>
       {value && (
-        <div className="flex items-center gap-2 text-[10px] text-[#7a8088]">
-          {naturalShape && (
-            <span>shape: <code className="text-[#9aa1a8]">[{naturalShape.join(', ')}]</code></span>
+        <div className="space-y-1 rounded border border-[#1f2429] bg-[#0b0e11] p-1.5 text-[10px]">
+          {meta && !meta.ok && (
+            <div className="text-rose-300">inspect: {meta.error ?? 'fehlgeschlagen'}</div>
           )}
-          <button
-            onClick={() => select(value)}
-            className="ml-auto text-[#6ab7ff] hover:underline"
-            title="open dataset detail modal"
-          >
-            ansehen ↗
-          </button>
+          {naturalShape && (
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[#7a8088]">
+                Dataset-Shape: <code className="text-[#9aa1a8]">[{naturalShape.join(', ')}]</code>
+              </span>
+              {!shapesMatch && (
+                <button
+                  onClick={applyShape}
+                  className="rounded bg-amber-900/40 px-1.5 py-0.5 text-[10px] text-amber-200 hover:bg-amber-900/60"
+                  title="set Input.shape to the dataset's natural shape"
+                >
+                  übernehmen
+                </button>
+              )}
+              {shapesMatch && (
+                <span className="text-emerald-400">✓ shapes match</span>
+              )}
+            </div>
+          )}
+          <div className="flex items-baseline justify-between">
+            <span className="text-[#7a8088]">{value}</span>
+            <button
+              onClick={() => select(value)}
+              className="text-[#6ab7ff] hover:underline"
+              title="open dataset detail modal"
+            >
+              ansehen ↗
+            </button>
+          </div>
         </div>
       )}
     </div>
   )
+}
+
+function shallowEqShape(a: number[], b: number[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
 }
 
 function sampleNaturalShapeFrom(meta: unknown): number[] | null {
