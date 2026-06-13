@@ -47,6 +47,10 @@ type State = {
 
   addLayer: (layerType: string, position: XYPosition, opts?: { id?: string; params?: Record<string, unknown> }) => string
   updateNodeParams: (id: string, params: Record<string, unknown>) => void
+  /** Swap the layerType of an existing node in place. Edges, id, and position
+   *  stay the same; params are reset to defaults for the new layer type and
+   *  merged with the optional extraParams. */
+  replaceNodeLayer: (id: string, newLayerType: string, extraParams?: Record<string, unknown>) => void
   setSelectedNodeId: (id: string | null) => void
   deleteNode: (id: string) => void
   connectNodes: (source: string, target: string) => void
@@ -91,6 +95,26 @@ export const useGraphStore = create<State>((set, get) => ({
         if (n.id !== id) return n
         const merged = { ...n.data.params, ...params }
         return { ...n, data: { ...n.data, params: coerceParams(n.data.layerType, merged) } }
+      }),
+    })
+  },
+
+  replaceNodeLayer: (id, newLayerType, extraParams) => {
+    set({
+      nodes: get().nodes.map((n) => {
+        if (n.id !== id) return n
+        const merged = { ...defaultParamsFor(newLayerType), ...(extraParams ?? {}) }
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            layerType: newLayerType,
+            params: coerceParams(newLayerType, merged),
+            inferredInputShape: undefined,
+            inferredOutputShape: undefined,
+            hasError: false,
+          },
+        }
       }),
     })
   },

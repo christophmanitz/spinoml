@@ -61,7 +61,7 @@ export default function Inspector() {
             forward failed at this layer{inferenceStage ? ` (${inferenceStage})` : ''}
           </div>
           <div className="font-mono text-rose-200/80">{shortenError(inferenceError)}</div>
-          <FixHints layerType={node.data.layerType} params={params} inShape={inShape}
+          <FixHints nodeId={node.id} layerType={node.data.layerType} params={params} inShape={inShape}
                     onPatch={(patch) => updateNodeParams(node.id, patch)} />
         </div>
       )}
@@ -89,15 +89,72 @@ function shortenError(s: string): string {
 }
 
 function FixHints({
-  layerType, params, inShape, onPatch,
+  nodeId, layerType, params, inShape, onPatch,
 }: {
+  nodeId: string
   layerType: string
   params: Record<string, unknown>
   inShape: number[] | undefined
   onPatch: (patch: Record<string, unknown>) => void
 }) {
+  const replaceNodeLayer = useGraphStore((s) => s.replaceNodeLayer)
   if (!inShape) return null
   const hints: { label: string; patch: Record<string, unknown>; rationale: string }[] = []
+  const swaps: { label: string; rationale: string; apply: () => void }[] = []
+
+  const rank = inShape.length
+
+  // ─── Rank-mismatch swaps: when the chosen layer fundamentally can't
+  // accept the input rank (e.g. Conv2d on 2D tabular data). These are
+  // bigger fixes than param patches — they replace the whole layer.
+  if (layerType === 'Conv2d' && rank < 4) {
+    const lastDim = inShape[rank - 1]
+    swaps.push({
+      label: `mit Linear ersetzen (in_features=${lastDim})`,
+      rationale: `Conv2d braucht 4D-Input [N,C,H,W]; dein Input ist ${rank}D. Für Tabular/Sequenz nimm Linear.`,
+      apply: () => replaceNodeLayer(nodeId, 'Linear', {
+        in_features: lastDim,
+        out_features: typeof params.out_channels === 'number' ? params.out_channels : 64,
+      }),
+    })
+  }
+  if (layerType === 'Conv1d' && rank < 3) {
+    const lastDim = inShape[rank - 1]
+    swaps.push({
+      label: `mit Linear ersetzen (in_features=${lastDim})`,
+      rationale: `Conv1d braucht 3D-Input [N,C,L]; dein Input ist ${rank}D.`,
+      apply: () => replaceNodeLayer(nodeId, 'Linear', {
+        in_features: lastDim,
+        out_features: typeof params.out_channels === 'number' ? params.out_channels : 64,
+      }),
+    })
+  }
+  if ((layerType === 'BatchNorm2d' || layerType === 'GroupNorm') && rank < 4) {
+    swaps.push({
+      label: `mit BatchNorm1d ersetzen`,
+      rationale: `${layerType} braucht 4D-Input; dein Input ist ${rank}D. Nimm LayerNorm/BatchNorm1d.`,
+      apply: () => replaceNodeLayer(nodeId, 'LayerNorm', {
+        normalized_shape: [inShape[rank - 1]],
+      }),
+    })
+  }
+  if ((layerType === 'MaxPool2d' || layerType === 'AvgPool2d' || layerType === 'AdaptiveAvgPool2d') && rank < 4) {
+    swaps.push({
+      label: `Pool entfernen — passt nicht zu ${rank}D-Input`,
+      rationale: `${layerType} braucht einen 4D-Tensor; dein Input ist ${rank}D.`,
+      apply: () => {
+        // Replace pool with Identity-like Flatten so pipeline keeps moving.
+        replaceNodeLayer(nodeId, 'Flatten')
+      },
+    })
+  }
+  if (layerType === 'Linear' && rank > 2) {
+    swaps.push({
+      label: `Flatten davor einfügen empfohlen`,
+      rationale: `Linear arbeitet auf der letzten Dim; bei ${rank}D-Input hilft Flatten oder GlobalPool davor.`,
+      apply: () => replaceNodeLayer(nodeId, 'Flatten'),
+    })
+  }
 
   if (layerType === 'LayerNorm') {
     const last = inShape[inShape.length - 1]
@@ -155,9 +212,19 @@ function FixHints({
     }
   }
 
-  if (!hints.length) return null
+  if (!hints.length && !swaps.length) return null
   return (
     <div className="mt-1.5 flex flex-col gap-1">
+      {swaps.map((s, i) => (
+        <button
+          key={`swap${i}`}
+          className="self-start rounded bg-amber-900/60 px-1.5 py-0.5 text-left text-[10px] text-amber-100 hover:bg-amber-800"
+          onClick={s.apply}
+          title={s.rationale}
+        >
+          ⇄ {s.label}
+        </button>
+      ))}
       {hints.map((h, i) => (
         <button
           key={i}
