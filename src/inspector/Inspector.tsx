@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useGraphStore } from '../canvas/GraphStore'
 import { LAYERS, type FieldSpec } from '../layers/registry'
 import { useInferenceStore } from '../inference/store'
+import { useDatasetsStore } from '../datasets/store'
+import { isTauri } from '../workspace/tauri-fs'
 
 export default function Inspector() {
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId)
@@ -256,7 +258,70 @@ function FieldInput({
       return <TupleIntInput field={field} value={value} onChange={onChange} baseClass={baseClass} />
     case 'shape':
       return <ShapeInput value={value} onChange={onChange} baseClass={baseClass} />
+    case 'dataset-ref':
+      return <DatasetRefInput value={value as string} onChange={onChange} baseClass={baseClass} />
   }
+}
+
+function DatasetRefInput({
+  value, onChange, baseClass,
+}: {
+  value: string
+  onChange: (v: unknown) => void
+  baseClass: string
+}) {
+  const entries = useDatasetsStore((s) => s.entries)
+  const inspects = useDatasetsStore((s) => s.inspects)
+  const refresh = useDatasetsStore((s) => s.refresh)
+  const select = useDatasetsStore((s) => s.select)
+  const inspect = useDatasetsStore((s) => s.inspect)
+  useEffect(() => {
+    if (isTauri() && entries.length === 0) void refresh()
+    if (value) void inspect(value)
+  }, [refresh, inspect, value, entries.length])
+
+  const meta = value ? inspects[value]?.data : null
+  const naturalShape = meta?.ok ? sampleNaturalShapeFrom(meta) : null
+
+  return (
+    <div className="flex flex-col gap-1">
+      <select
+        className={baseClass}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">— kein Datensatz gebunden —</option>
+        {entries.map((e) => (
+          <option key={e.relpath} value={e.relpath}>
+            {e.name}
+          </option>
+        ))}
+      </select>
+      {value && (
+        <div className="flex items-center gap-2 text-[10px] text-[#7a8088]">
+          {naturalShape && (
+            <span>shape: <code className="text-[#9aa1a8]">[{naturalShape.join(', ')}]</code></span>
+          )}
+          <button
+            onClick={() => select(value)}
+            className="ml-auto text-[#6ab7ff] hover:underline"
+            title="open dataset detail modal"
+          >
+            ansehen ↗
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function sampleNaturalShapeFrom(meta: unknown): number[] | null {
+  const m = meta as { kind?: string; cols?: number; sample_size?: [number, number]; shape?: number[] }
+  if (!m || !m.kind) return null
+  if (m.kind === 'tabular' && typeof m.cols === 'number') return [1, m.cols]
+  if (m.kind === 'image_folder' && m.sample_size) return [1, 3, m.sample_size[1], m.sample_size[0]]
+  if (m.kind === 'tensor' && Array.isArray(m.shape)) return m.shape
+  return null
 }
 
 function IntInput({

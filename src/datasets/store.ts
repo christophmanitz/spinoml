@@ -116,10 +116,34 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
     if (!entry) return
     const { nodes, edges } = useGraphStore.getState()
     const { code, inputs } = generate(nodes, edges)
-    // Caller may pass an override shape; otherwise use every input's declared shape.
+    // Per-input dataset binding: if every Input node has a bound dataset (via
+    // its 'dataset' param), use the multi-dataset smoke endpoint. Otherwise
+    // fall back to broadcasting the clicked dataset to every input.
+    const inputNodes = nodes.filter((n) => n.data.layerType === 'Input')
+    const perInputDatasets = inputNodes.map((n) => String(n.data.params.dataset ?? ''))
+    const allBound = inputs.length > 1 && perInputDatasets.every((d) => d.length > 0)
     const shapes = inputShape ? [inputShape] : inputs.map((i) => i.shape)
     set({ smoke: { ...get().smoke, [relpath]: { loading: true, data: null, error: null } } })
-    const result = await smokeDataset(code, entry.abspath, shapes)
+
+    let result
+    if (allBound) {
+      const abspaths: string[] = []
+      for (const rel of perInputDatasets) {
+        const e = entryByRel(get().entries, rel)
+        if (!e) {
+          set({ smoke: { ...get().smoke, [relpath]: {
+            loading: false, data: null,
+            error: `Input bound to '${rel}' but dataset not found in workspace.`,
+          } } })
+          return
+        }
+        abspaths.push(e.abspath)
+      }
+      const { smokeDatasetMulti } = await import('./client')
+      result = await smokeDatasetMulti(code, abspaths, shapes)
+    } else {
+      result = await smokeDataset(code, entry.abspath, shapes)
+    }
     if ('offline' in result && result.offline) {
       set({ smoke: { ...get().smoke, [relpath]: { loading: false, data: null, error: result.error } } })
       return

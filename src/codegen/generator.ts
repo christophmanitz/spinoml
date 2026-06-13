@@ -308,6 +308,8 @@ function serializeParam(field: FieldSpec, value: unknown): string {
       const arr = (Array.isArray(value) ? value : field.default) as number[]
       return pyTuple(arr)
     }
+    case 'dataset-ref':
+      return `'${value as string}'`
   }
 }
 

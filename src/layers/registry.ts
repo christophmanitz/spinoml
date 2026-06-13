@@ -5,6 +5,8 @@ export type FieldSpec =
   | { name: string; type: 'select'; options: string[]; default: string }
   | { name: string; type: 'tuple-int'; arity: 2 | 3; default: number[] }
   | { name: string; type: 'shape'; default: number[] }
+  /** Runtime-populated dropdown of dataset relpaths from datasetsStore. Stored as string. */
+  | { name: string; type: 'dataset-ref'; default: string }
 
 export type LayerKind = 'module' | 'input' | 'output' | 'merge'
 
@@ -46,8 +48,13 @@ export const LAYERS: Record<string, LayerSpec> = {
     fields: [
       { name: 'name', type: 'select', options: ['x', 'x1', 'x2', 'x3', 'q', 'k', 'v', 'cond'], default: 'x' } as FieldSpec,
       f.shape('shape', [1, 3, 224, 224]),
+      { name: 'dataset', type: 'dataset-ref', default: '' } as FieldSpec,
     ],
-    summary: (p) => `${get(p, 'name', 'x')} ∈ ${JSON.stringify(get(p, 'shape', [1, 3, 224, 224]))}`,
+    summary: (p) => {
+      const ds = String(get(p, 'dataset', ''))
+      const dsTag = ds ? ` ← ${ds.split('/').pop()}` : ''
+      return `${get(p, 'name', 'x')} ∈ ${JSON.stringify(get(p, 'shape', [1, 3, 224, 224]))}${dsTag}`
+    },
   },
   Output: {
     type: 'Output', category: 'IO', pytorchModule: '', kind: 'output',
@@ -294,6 +301,8 @@ function coerceField(field: FieldSpec, value: unknown): unknown {
       const arr = toIntArray(value)
       return arr.length ? arr : field.default
     }
+    case 'dataset-ref':
+      return typeof value === 'string' ? value : field.default
   }
 }
 

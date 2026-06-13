@@ -112,32 +112,46 @@ def infer(code: str, input_shapes: list[list[int]]) -> dict:
     return {"ok": True, "shapes": shapes, "n_params": n_params}
 
 
-def smoke_test(code: str, abspath: str, input_shapes: list[list[int]] | None) -> dict:
-    """Build sample tensors from the dataset (one per input), then run them through the model.
+def smoke_test(
+    code: str,
+    abspaths: list[str],
+    input_shapes: list[list[int]] | None,
+) -> dict:
+    """Build sample tensors from one dataset per input, then run them through the model.
 
-    input_shapes (if provided) shapes each input — for multi-input models the
-    same dataset sample is broadcast to every input. Single-input is just
-    input_shapes=[shape] under the hood.
+    abspaths is a list — one dataset path per model input. For single-input
+    models this is just [path]. For multi-input models with per-input
+    bindings, each input pulls its sample from its own dataset. If only one
+    abspath is given for an N-input model, that sample is broadcast to every
+    input (re-sampled per requested shape).
     """
     t0 = time.perf_counter()
-    target = input_shapes[0] if input_shapes else None
-    sample = ds_mod.sample_tensor(abspath, target)
-    if not sample.get("ok"):
-        return {"ok": False, "stage": "sample", "error": sample.get("error"), "details": sample}
-    base_x: torch.Tensor = sample["tensor"]
+    if not abspaths:
+        return {"ok": False, "stage": "sample", "error": "no dataset paths provided"}
+
     xs: list[torch.Tensor] = []
-    if not input_shapes or len(input_shapes) == 1:
-        xs = [base_x]
-    else:
-        # Broadcast: re-sample for each requested shape if different, else reuse.
+    notes: list[str] = []
+
+    if len(abspaths) == 1 and input_shapes and len(input_shapes) > 1:
+        # Broadcast: same dataset, re-sampled to each requested shape.
+        path = abspaths[0]
         for sh in input_shapes:
-            if list(base_x.shape) == sh:
-                xs.append(base_x)
-            else:
-                sub = ds_mod.sample_tensor(abspath, sh)
-                if not sub.get("ok"):
-                    return {"ok": False, "stage": "sample", "error": sub.get("error"), "details": sub}
-                xs.append(sub["tensor"])
+            sub = ds_mod.sample_tensor(path, sh)
+            if not sub.get("ok"):
+                return {"ok": False, "stage": "sample", "error": sub.get("error"), "details": sub, "dataset": path}
+            xs.append(sub["tensor"])
+            if sub.get("note"): notes.append(f"{path.split('/')[-1]}: {sub['note']}")
+    else:
+        # Per-input bindings: one path per input.
+        n = max(len(abspaths), len(input_shapes) if input_shapes else 0)
+        for i in range(n):
+            path = abspaths[i] if i < len(abspaths) else abspaths[-1]
+            sh = input_shapes[i] if input_shapes and i < len(input_shapes) else None
+            sub = ds_mod.sample_tensor(path, sh)
+            if not sub.get("ok"):
+                return {"ok": False, "stage": "sample", "error": sub.get("error"), "details": sub, "dataset": path}
+            xs.append(sub["tensor"])
+            if sub.get("note"): notes.append(f"{path.split('/')[-1]}: {sub['note']}")
     t_sample = time.perf_counter() - t0
 
     ns: dict = {"__name__": "<mlforge-model>"}
@@ -200,7 +214,7 @@ def smoke_test(code: str, abspath: str, input_shapes: list[list[int]] | None) ->
         "input_shape": input_shape_report,
         "output_shape": out_shape,
         "n_params": n_params,
-        "sample_note": sample.get("note"),
+        "sample_note": " · ".join(notes) if notes else None,
         "timings_ms": {
             "sample": round(t_sample * 1000, 2),
             "forward": round(t_forward * 1000, 2),
@@ -255,21 +269,28 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/dataset/smoke":
                 code = payload.get("code")
-                abspath = payload.get("abspath")
+                # Accept either {abspath: str} (single dataset, broadcast) or
+                # {abspaths: str[]} (one per input, multi-binding).
+                abspaths_in = payload.get("abspaths")
+                if abspaths_in is None:
+                    single = payload.get("abspath")
+                    if isinstance(single, str):
+                        abspaths_in = [single]
                 shapes_in = payload.get("input_shapes")
                 if shapes_in is None:
-                    single = payload.get("input_shape")
-                    if isinstance(single, list):
-                        shapes_in = [single]
-                if not isinstance(code, str) or not isinstance(abspath, str):
-                    self._json(400, {"ok": False, "error": "expected {code: str, abspath: str, input_shapes?: int[][]}"})
+                    single_shape = payload.get("input_shape")
+                    if isinstance(single_shape, list):
+                        shapes_in = [single_shape]
+                if not isinstance(code, str) or not isinstance(abspaths_in, list) or not abspaths_in:
+                    self._json(400, {"ok": False, "error": "expected {code, abspaths: str[] | abspath: str, input_shapes?: int[][]}"})
                     return
+                abspaths = [str(p) for p in abspaths_in if isinstance(p, str)]
                 shapes: list[list[int]] | None = None
                 if isinstance(shapes_in, list):
                     shapes = [[int(v) for v in s] for s in shapes_in if isinstance(s, list)]
                     if not shapes:
                         shapes = None
-                self._json(200, smoke_test(code, abspath, shapes))
+                self._json(200, smoke_test(code, abspaths, shapes))
                 return
         except Exception as e:
             self._json(500, {

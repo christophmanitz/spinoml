@@ -13,6 +13,8 @@ import { useProjectStore } from './project/store'
 import Welcome from './project/Welcome'
 import Toolbar from './Toolbar'
 import { isTauri } from './workspace/tauri-fs'
+import { useDatasetsStore } from './datasets/store'
+import DatasetDetail from './datasets/DatasetDetail'
 
 function InferenceBadge() {
   const status = useInferenceStore((s) => s.status)
@@ -104,6 +106,7 @@ export default function App() {
   }, [refresh])
 
   const showWelcome = isTauri() && status.kind !== 'loaded'
+  const selectedDataset = useDatasetsStore((s) => s.selectedRel)
 
   return (
     <div className="flex h-screen w-screen flex-col bg-[#0b0d10] text-[#e6e8eb]">
@@ -166,6 +169,8 @@ export default function App() {
           </Panel>
         </Group>
       )}
+
+      {selectedDataset && <DatasetDetail relpath={selectedDataset} />}
     </div>
   )
 }

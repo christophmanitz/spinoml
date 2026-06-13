@@ -2,7 +2,6 @@ import { useEffect } from 'react'
 import { isTauri } from '../workspace/tauri-fs'
 import { useDatasetsStore } from './store'
 import { iconFor, colorFor, guessKindFromName, formatSize } from './icons'
-import DatasetDetail from './DatasetDetail'
 
 export default function DatasetExplorer() {
   const entries = useDatasetsStore((s) => s.entries)
@@ -73,7 +72,6 @@ export default function DatasetExplorer() {
           )
         })}
       </div>
-      {selectedRel && <DatasetDetail relpath={selectedRel} />}
     </div>
   )
 }

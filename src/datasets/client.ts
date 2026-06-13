@@ -32,3 +32,9 @@ export async function smokeDataset(code: string, abspath: string, inputShapes?: 
     code, abspath, input_shapes: inputShapes ?? null,
   })
 }
+
+export async function smokeDatasetMulti(code: string, abspaths: string[], inputShapes?: number[][]) {
+  return post<SmokeResult>('/dataset/smoke', {
+    code, abspaths, input_shapes: inputShapes ?? null,
+  })
+}

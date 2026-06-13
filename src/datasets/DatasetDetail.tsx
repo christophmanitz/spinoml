@@ -20,54 +20,67 @@ export default function DatasetDetail({ relpath }: { relpath: string }) {
   const runSmoke = useDatasetsStore((s) => s.runSmoke)
   const close = useDatasetsStore((s) => s.select)
 
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') close(null)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [close])
+
   if (!entry) return null
 
   const data = inspect?.data
   const kind = data?.kind ?? 'unknown'
 
   return (
-    <div className="flex max-h-[60%] min-h-0 flex-col border-t border-[#1f2429] bg-[#0e1115]">
-      <div className="flex items-center gap-2 border-b border-[#1f2429] px-3 py-2">
-        <span className={`rounded px-1 font-mono text-[10px] ${colorFor(kind)}`}>
-          {iconFor(kind)}
-        </span>
-        <span className="flex-1 truncate text-xs text-[#e6e8eb]">{entry.name}</span>
-        <span className="text-[10px] text-[#7a8088]">{formatSize(entry.size_bytes)}</span>
-        <button
-          onClick={() => close(null)}
-          className="rounded px-1 text-[#7a8088] hover:bg-[#1a1e22]"
-          title="close"
-        >
-          ×
-        </button>
-      </div>
-      <div className="flex border-b border-[#1f2429] text-[11px]">
-        {(['overview', 'stats', 'smoke'] as Tab[]).map((t) => (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
+      onClick={(e) => { if (e.target === e.currentTarget) close(null) }}
+    >
+      <div className="flex h-full max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-[#1f2429] bg-[#0e1115] shadow-2xl">
+        <div className="flex items-center gap-2 border-b border-[#1f2429] px-4 py-3">
+          <span className={`rounded px-1.5 py-0.5 font-mono text-[11px] ${colorFor(kind)}`}>
+            {iconFor(kind)}
+          </span>
+          <span className="flex-1 truncate text-sm text-[#e6e8eb]">{entry.name}</span>
+          <span className="text-[11px] text-[#7a8088]">{formatSize(entry.size_bytes)}</span>
           <button
-            key={t}
-            onClick={() => {
-              setTab(t)
-              if (t === 'stats') void loadStats(relpath)
-            }}
-            className={`px-3 py-1.5 ${
-              tab === t ? 'border-b border-[#6ab7ff] text-[#e6e8eb]' : 'text-[#7a8088] hover:text-[#9aa1a8]'
-            }`}
+            onClick={() => close(null)}
+            className="ml-2 rounded px-2 py-0.5 text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#e6e8eb]"
+            title="close (Esc)"
           >
-            {t === 'smoke' ? 'Smoke test' : t}
+            ×
           </button>
-        ))}
-      </div>
-      <div className="min-h-0 flex-1 overflow-auto p-3 text-xs">
-        {inspect?.loading && <div className="text-[#7a8088]">inspecting…</div>}
-        {inspect?.error && <ErrorBox msg={inspect.error} />}
-        {data && !data.ok && <InspectError data={data} />}
-        {tab === 'overview' && data && data.ok && <OverviewBody data={data} relpath={relpath} />}
-        {tab === 'stats' && (
-          <StatsBody loading={stats?.loading} error={stats?.error} data={stats?.data ?? null} kind={kind} />
-        )}
-        {tab === 'smoke' && (
-          <SmokeBody relpath={relpath} loading={smoke?.loading} error={smoke?.error} data={smoke?.data ?? null} runSmoke={runSmoke} />
-        )}
+        </div>
+        <div className="flex border-b border-[#1f2429] text-xs">
+          {(['overview', 'stats', 'smoke'] as Tab[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => {
+                setTab(t)
+                if (t === 'stats') void loadStats(relpath)
+              }}
+              className={`px-4 py-2 ${
+                tab === t ? 'border-b border-[#6ab7ff] text-[#e6e8eb]' : 'text-[#7a8088] hover:text-[#9aa1a8]'
+              }`}
+            >
+              {t === 'smoke' ? 'Smoke test' : t === 'overview' ? 'Overview' : 'Stats'}
+            </button>
+          ))}
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto p-5 text-xs">
+          {inspect?.loading && <div className="text-[#7a8088]">inspecting…</div>}
+          {inspect?.error && <ErrorBox msg={inspect.error} />}
+          {data && !data.ok && <InspectError data={data} />}
+          {tab === 'overview' && data && data.ok && <OverviewBody data={data} relpath={relpath} />}
+          {tab === 'stats' && (
+            <StatsBody loading={stats?.loading} error={stats?.error} data={stats?.data ?? null} kind={kind} />
+          )}
+          {tab === 'smoke' && (
+            <SmokeBody relpath={relpath} loading={smoke?.loading} error={smoke?.error} data={smoke?.data ?? null} runSmoke={runSmoke} />
+          )}
+        </div>
       </div>
     </div>
   )
@@ -553,21 +566,154 @@ function SmokeBody({
         </div>
       )}
       {data && !data.ok && (
-        <div className="rounded border border-rose-900/40 bg-rose-900/10 p-2">
-          <div className="text-rose-300">✗ {data.stage}: {data.error}</div>
-          {data.input_shape && (
-            <div className="mt-1 text-[10px] text-[#7a8088]">
-              input shape: <code>{formatShape(data.input_shape)}</code>
-            </div>
-          )}
-          {data.trace && (
-            <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-[10px] text-rose-200/70">{data.trace}</pre>
-          )}
-        </div>
+        <SmokeError result={data} requestedShape={inputShape} relpath={relpath} />
       )}
       {datasetHistory.length > 0 && <SmokeHistory entries={datasetHistory} />}
     </div>
   )
+}
+
+function SmokeError({
+  result, requestedShape, relpath,
+}: {
+  result: Extract<SmokeResult, { ok: false }>
+  requestedShape: number[] | null
+  relpath: string
+}) {
+  const [showTrace, setShowTrace] = useState(false)
+  const stageLabel: Record<string, string> = {
+    sample: 'Sample-Build',
+    compile: 'Code-Compile',
+    construct: 'Modell-Init',
+    forward: 'Forward-Pass',
+  }
+  const hint = buildHint(result, requestedShape)
+  const updateNodeParams = useGraphStore((s) => s.updateNodeParams)
+  const inputNodes = useGraphStore((s) =>
+    s.nodes.filter((n) => n.data.layerType === 'Input'),
+  )
+  const inspectData = useDatasetsStore((s) => s.inspects[relpath]?.data)
+  const naturalShape = sampleNaturalShape(inspectData)
+
+  return (
+    <div className="rounded border border-rose-700/40 bg-rose-950/30">
+      <div className="flex items-center gap-2 border-b border-rose-700/40 bg-rose-900/30 px-3 py-2">
+        <span className="rounded bg-rose-900/60 px-1.5 py-0.5 font-mono text-[10px] text-rose-200">
+          {stageLabel[result.stage] ?? result.stage}
+        </span>
+        <span className="text-[11px] text-rose-200">smoke test failed</span>
+      </div>
+      <div className="space-y-2 px-3 py-2 text-[11px] text-[#e6e8eb]">
+        <div className="font-mono text-rose-300">{result.error}</div>
+
+        <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[10px] text-[#9aa1a8]">
+          {result.input_shape && (
+            <>
+              <span className="text-[#7a8088]">tatsächlicher Input:</span>
+              <code className="text-[#e6e8eb]">{formatShape(result.input_shape)}</code>
+            </>
+          )}
+          {requestedShape && (
+            <>
+              <span className="text-[#7a8088]">erwartete Input-Shape:</span>
+              <code className="text-[#e6e8eb]">[{requestedShape.join(', ')}]</code>
+            </>
+          )}
+          {result.n_params != null && (
+            <>
+              <span className="text-[#7a8088]">Modellgröße:</span>
+              <span className="text-[#9aa1a8]">{result.n_params.toLocaleString()} Params</span>
+            </>
+          )}
+        </div>
+
+        {hint && (
+          <div className="rounded border border-amber-700/40 bg-amber-950/20 p-2 text-[10px] leading-snug text-amber-200">
+            <div className="font-semibold">Hinweis</div>
+            <div className="mt-0.5 text-amber-100/80">{hint}</div>
+            {naturalShape && naturalShape.length > 0 && inputNodes.length > 0 && (
+              <button
+                onClick={() => {
+                  const first = inputNodes[0]
+                  updateNodeParams(first.id, { ...first.data.params, shape: naturalShape })
+                }}
+                className="mt-1 rounded border border-amber-600/40 bg-amber-900/30 px-1.5 py-0.5 text-[10px] text-amber-100 hover:bg-amber-900/50"
+                title="set Input.shape to the dataset's natural shape"
+              >
+                Input-Shape auf [{naturalShape.join(', ')}] setzen
+              </button>
+            )}
+          </div>
+        )}
+
+        {result.trace && (
+          <div>
+            <button
+              onClick={() => setShowTrace((s) => !s)}
+              className="text-[10px] text-[#7a8088] underline-offset-2 hover:text-[#9aa1a8] hover:underline"
+            >
+              {showTrace ? 'Stacktrace ausblenden' : 'Stacktrace anzeigen'}
+            </button>
+            {showTrace && (
+              <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap rounded bg-[#0b0d10]/60 p-2 text-[10px] leading-snug text-rose-200/80">
+                {result.trace}
+              </pre>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function buildHint(
+  result: Extract<SmokeResult, { ok: false }>,
+  requestedShape: number[] | null,
+): string | null {
+  if (result.stage === 'sample') {
+    if (result.error.includes('pandas') || result.error.includes('rdkit') || result.error.includes('Pillow') || result.error.includes('biopython')) {
+      return 'Eine optionale Python-Lib fehlt. Tipp: in der mlforge-dev env nachinstallieren (z.B. pip install pandas pillow rdkit-pypi biopython datasets).'
+    }
+    return 'Der Datensatz konnte nicht geladen werden — Pfad oder Format-Erkennung prüfen.'
+  }
+  if (result.stage === 'compile') {
+    return 'Der generierte PyTorch-Code lässt sich nicht ausführen. Meist liegt ein ungültiger Parameter an einem Layer vor — schau in den Code-Preview unten.'
+  }
+  if (result.stage === 'construct') {
+    return 'Das Modell konnte nicht konstruiert werden — wahrscheinlich ungültige Layer-Parameter (z.B. negative Kernel-Größe, in_channels=0).'
+  }
+  if (result.stage === 'forward') {
+    const actualShape = Array.isArray(result.input_shape?.[0])
+      ? (result.input_shape as number[][])[0]
+      : (result.input_shape as number[] | undefined)
+    if (requestedShape && actualShape && !shapesEqual(requestedShape, actualShape)) {
+      return `Das Modell erwartet Input-Shape [${requestedShape.join(', ')}], aus dem Datensatz kam aber [${actualShape.join(', ')}]. Entweder Input-Shape am Input-Node anpassen, oder ein zur Architektur passendes Dataset wählen (Tabular ↔ Linear/MLP, Bilder ↔ Conv2d).`
+    }
+    if (result.error.includes('mat1 and mat2 shapes cannot be multiplied')) {
+      return 'Eine Linear-Schicht hat in_features falsch gesetzt. Schau in der Inspector-Spalte rechts: die FixHint zeigt dir den richtigen Wert basierend auf der eingehenden Shape.'
+    }
+    if (result.error.includes('Expected') && result.error.includes('conv2d')) {
+      return 'Conv2d braucht einen 4D-Tensor [N, C, H, W]. Tabulardaten sind nur 2D — entweder die Architektur auf MLP umstellen oder den Datensatz reshapen.'
+    }
+    return 'Das Modell läuft auf einen Forward-Fehler — die Layer passen nicht zur Shape-Kette. Schau dir Stage und Stacktrace an, und nutze die Inspector-Hints zum Fixen.'
+  }
+  return null
+}
+
+function shapesEqual(a: number[], b: number[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
+function sampleNaturalShape(inspect: InspectResult | null | undefined): number[] | null {
+  if (!inspect || !inspect.ok) return null
+  if (inspect.kind === 'tabular') return [1, inspect.cols]
+  if (inspect.kind === 'image_folder' && inspect.sample_size) {
+    return [1, 3, inspect.sample_size[1], inspect.sample_size[0]]
+  }
+  if (inspect.kind === 'tensor' && inspect.shape) return inspect.shape
+  return null
 }
 
 function SmokeHistory({ entries }: { entries: SmokeHistoryEntry[] }) {
