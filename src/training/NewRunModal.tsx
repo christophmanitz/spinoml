@@ -114,7 +114,11 @@ export default function NewRunModal() {
             .map((e) => e.relpath)
             .sort(),
         )
-        const ds = await datasetsBackend.list()
+        // Prime the datasets store so onPickDataset's inspect() can find the
+        // entry (it looks up the store's entries, not this local list). Without
+        // this, picking a dataset left the target dropdown empty.
+        await useDatasetsStore.getState().refresh()
+        const ds = useDatasetsStore.getState().entries
         setDsList(ds.map((d) => ({ relpath: d.relpath, name: d.name, is_dir: d.is_dir })))
       } catch (e) {
         setListErr(e instanceof Error ? e.message : String(e))
