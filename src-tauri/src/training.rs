@@ -62,6 +62,7 @@ pub(crate) const READABLE: &[&str] = &[
     "model.py",
     "model.mlforge",
     "train.py",
+    "train.sbatch",
     "pid",
 ];
 

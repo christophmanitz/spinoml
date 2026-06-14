@@ -27,9 +27,16 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   const [stderr, setStderr] = useState('')
   const [busy, setBusy] = useState(false)
   const [lossLog, setLossLog] = useState(false)
+  const [trainSbatch, setTrainSbatch] = useState('')
 
   const status = summary?.status ?? 'unknown'
   const active = RUNNING_STATES.has(status) || (summary?.alive ?? false)
+
+  // Backend (direct vs SLURM) is frozen in run.json.
+  const backend = (() => {
+    try { return (JSON.parse(runJson) as RunConfig).backend } catch { return null }
+  })()
+  const isSlurm = backend?.kind === 'slurm'
 
   // Rebuild this run's training graph onto the canvas, even if its .mltrain was
   // never saved — run.json carries the full frozen config.
@@ -48,16 +55,18 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   // (run.json, train.py) which never change after the run is created.
   const reload = useCallback(async () => {
     try {
-      const [ev, rj, tp, so, se] = await Promise.all([
+      const [ev, rj, tp, sb, so, se] = await Promise.all([
         training.readFile(runId, 'events.jsonl'),
         training.readFile(runId, 'run.json'),
         training.readFile(runId, 'train.py'),
+        training.readFile(runId, 'train.sbatch'),
         training.readFile(runId, 'stdout.log'),
         training.readFile(runId, 'stderr.log'),
       ])
       setEvents(parseEventLines(ev))
       setRunJson(rj)
       setTrainPy(tp)
+      setTrainSbatch(sb)
       setStdout(so)
       setStderr(se)
     } catch { /* file may not exist yet */ }
@@ -143,7 +152,13 @@ export default function RunDetailModal({ runId }: { runId: string }) {
         <div className="flex items-center gap-2 border-b border-[#1f2429] px-4 py-3">
           <StatusPill status={status} alive={summary?.alive} />
           <span className="truncate text-sm text-[#e6e8eb]">{summary?.run_label || runId}</span>
-          <span className="ml-2 truncate font-mono text-[10px] text-[#5a6068]">{runId}</span>
+          <span
+            className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${isSlurm ? 'bg-violet-900/30 text-violet-300' : 'bg-[#1f2429] text-[#7a8088]'}`}
+            title={isSlurm ? `SLURM-Job · Partition ${backend?.kind === 'slurm' ? backend.slurm.partition || '—' : ''}` : 'Direkter Prozess (nohup setsid)'}
+          >
+            {isSlurm ? 'SLURM' : 'direct'}
+          </span>
+          <span className="ml-1 truncate font-mono text-[10px] text-[#5a6068]">{runId}</span>
           <div className="ml-auto flex items-center gap-2">
             <button
               onClick={openOnCanvas}
@@ -291,6 +306,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
 
           {tab === 'script' && (
             <div className="space-y-3">
+              {isSlurm && <LogBlock title="train.sbatch (an SLURM übergeben)" text={trainSbatch} />}
               <LogBlock title="train.py (ausgeführtes Trainings-Skript)" text={trainPy} />
               <LogBlock title="run.json (eingefrorene Config)" text={runJson} />
             </div>
