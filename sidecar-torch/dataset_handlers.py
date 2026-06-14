@@ -97,6 +97,9 @@ def _looks_like_image_folder(path: Path) -> bool:
 
 
 def inspect(abspath: str) -> dict[str, Any]:
+    # Phase 12b: remote workspaces send tilde-prefixed paths ('~/mlforge/...');
+    # Python's os.path doesn't expand those, so we do it once at the entry point.
+    abspath = os.path.expanduser(abspath)
     kind = detect_kind(abspath)
     if kind == "tabular":
         return _inspect_tabular(abspath)
@@ -372,6 +375,7 @@ def _missing_dep(kind: str, dep: str) -> dict[str, Any]:
 
 
 def stats(abspath: str) -> dict[str, Any]:
+    abspath = os.path.expanduser(abspath)
     kind = detect_kind(abspath)
     if kind == "tabular":
         return _stats_tabular(abspath)
@@ -562,6 +566,7 @@ def sample_tensor(
     target_shape: shape hint (trim/pad/resize). If None, the natural shape is used.
     options: per-input bag — currently {features: list[str]} for tabular.
     """
+    abspath = os.path.expanduser(abspath)
     kind = detect_kind(abspath)
     if kind == "tabular":
         feats = (options or {}).get("features") if options else None
