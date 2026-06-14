@@ -5,6 +5,7 @@ import { downloadCurrent, pickAndLoad, clearAutosave } from './persistence/file'
 import { TEMPLATES } from './templates/templates'
 import { useWorkspaceStore, ROOT_ID } from './workspace/store'
 import { isTauri } from './workspace/tauri-fs'
+import { confirmDialog } from './ui/confirm'
 
 export default function Toolbar() {
   const activeFileName = useWorkspaceStore((s) =>
@@ -37,8 +38,8 @@ export default function Toolbar() {
   return (
     <div className="flex items-center gap-1 text-xs">
       <Menu label="File">
-        <Item onSelect={() => {
-          if (confirm('Reset graph? Current model will be lost (Cmd+Z to undo).')) {
+        <Item onSelect={async () => {
+          if (await confirmDialog('Reset graph? Current model will be lost (Cmd+Z to undo).')) {
             useGraphStore.getState().resetGraph()
             useWorkspaceStore.getState().closeActive()
             clearAutosave()
@@ -90,9 +91,9 @@ export default function Toolbar() {
         {TEMPLATES.map((t) => (
           <Item
             key={t.id}
-            onSelect={() => {
+            onSelect={async () => {
               if (useGraphStore.getState().nodes.length > 1 &&
-                  !confirm(`Replace current graph with "${t.name}"? (Cmd+Z to undo)`)) return
+                  !(await confirmDialog(`Replace current graph with "${t.name}"? (Cmd+Z to undo)`))) return
               useGraphStore.getState().loadSnapshot(t.build())
               useGraphStore.getState().autoLayout()
               useWorkspaceStore.getState().closeActive()

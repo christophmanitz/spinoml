@@ -5,6 +5,7 @@ import { generateFromSnapshot } from '../codegen/generator'
 import { isTauri, tauriFs } from './tauri-fs'
 import { fs as fsBackend } from '../connections/backend'
 import { useConnectionsStore } from '../connections/store'
+import { confirmDialog } from '../ui/confirm'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -347,7 +348,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     const e = get().entries[id]
     if (!e || e.kind !== 'file') return false
     if (get().dirty) {
-      const ok = confirm('Current model has unsaved changes. Discard and open this file?')
+      const ok = await confirmDialog('Current model has unsaved changes. Discard and open this file?')
       if (!ok) return false
     }
     try {

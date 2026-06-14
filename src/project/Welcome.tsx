@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useProjectStore, type ProjectStatus } from './store'
 import { isTauri } from '../workspace/tauri-fs'
+import { confirmDialog } from '../ui/confirm'
 import {
   useConnectionsStore,
   type RemoteSshConnection,
@@ -190,8 +191,8 @@ export default function Welcome() {
                     Öffnen
                   </Button>
                   <button
-                    onClick={() => {
-                      if (confirm(`Verbindung „${c.label}" entfernen?`)) removeRemote(c.id)
+                    onClick={async () => {
+                      if (await confirmDialog(`Verbindung „${c.label}" entfernen?`)) removeRemote(c.id)
                     }}
                     title="Verbindung löschen"
                     className="rounded px-1.5 py-1 text-[#7a8088] hover:bg-[#2a3038] hover:text-rose-300"

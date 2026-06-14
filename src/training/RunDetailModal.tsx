@@ -10,6 +10,7 @@ import { runConfigToTrainingSnapshot } from './graph/fromRun'
 import { useTrainingGraphStore } from './graph/store'
 import { useViewModeStore } from './graph/viewMode'
 import { getCurrentConnection } from '../connections/store'
+import { confirmDialog } from '../ui/confirm'
 
 type Tab = 'overview' | 'charts' | 'events' | 'logs' | 'script'
 
@@ -178,7 +179,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
               </button>
             ) : (
               <button
-                onClick={async () => { if (confirm('Run löschen?')) { await deleteRun(runId); close(null) } }}
+                onClick={async () => { if (await confirmDialog('Run löschen?')) { await deleteRun(runId); close(null) } }}
                 className="rounded px-2 py-0.5 text-[11px] text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#ff7a85]"
               >
                 Löschen

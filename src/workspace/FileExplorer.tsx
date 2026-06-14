@@ -3,6 +3,7 @@ import { useWorkspaceStore, ROOT_ID, type Entry } from './store'
 import { useDatasetsStore } from '../datasets/store'
 import PyCodeModal, { type PyPreview } from './PyCodeModal'
 import FileViewerModal from './FileViewerModal'
+import { confirmDialog } from '../ui/confirm'
 
 const DRAG_MIME = 'application/mlforge-workspace-entry'
 
@@ -377,8 +378,8 @@ function Row({
               }}>＋</IconButton>
             )}
             <IconButton title="Rename" onClick={() => setRename(id)}>✎</IconButton>
-            <IconButton title="Delete" onClick={() => {
-              if (confirm(`Delete "${entry.name}"${isFolder ? ' and its contents' : ''}?`)) {
+            <IconButton title="Delete" onClick={async () => {
+              if (await confirmDialog(`Delete "${entry.name}"${isFolder ? ' and its contents' : ''}?`)) {
                 useWorkspaceStore.getState().remove(id)
               }
             }}>✕</IconButton>
@@ -477,8 +478,8 @@ function ContextMenu({
       {menu.id !== ROOT_ID && (
         <MenuItem
           className="text-rose-300 hover:bg-rose-950/40"
-          onClick={() => {
-            if (confirm(`Delete "${entry.name}"${isFolder ? ' and its contents' : ''}?`)) {
+          onClick={async () => {
+            if (await confirmDialog(`Delete "${entry.name}"${isFolder ? ' and its contents' : ''}?`)) {
               useWorkspaceStore.getState().remove(menu.id)
             }
             close()
