@@ -253,8 +253,13 @@ fn build_run_command(alias: &str, root: &str) -> Command {
 
 #[tauri::command]
 pub fn remote_sidecar_status(state: State<RemoteSidecarState>) -> RemoteSidecarStatus {
-    let g = match state.current.lock() { Ok(g) => g, Err(_) => return RemoteSidecarStatus::Idle };
-    if g.is_some() {
+    let mut g = match state.current.lock() { Ok(g) => g, Err(_) => return RemoteSidecarStatus::Idle };
+    if let Some(rs) = g.as_mut() {
+        // Reap a tunnel whose process has exited so we don't lie "running".
+        if matches!(rs.child.try_wait(), Ok(Some(_))) {
+            *g = None;
+            return RemoteSidecarStatus::Stopped;
+        }
         let rs = g.as_ref().unwrap();
         RemoteSidecarStatus::Running {
             local_port: REMOTE_LOCAL_PORT,
@@ -272,13 +277,20 @@ pub async fn ensure_remote_sidecar(
     app: AppHandle,
     alias: String,
     root: String,
+    force: Option<bool>,
 ) -> Result<RemoteSidecarStatus, String> {
-    // If something is already running for THIS target, return immediately.
+    let force = force.unwrap_or(false);
+    // Reuse a LIVE tunnel for the same target (unless the caller forces a
+    // reconnect). A dead tunnel child is reaped so we don't report a stale
+    // "running" — that was the bug behind "badge says ok but sidecar offline".
     {
         let state: State<RemoteSidecarState> = app.state();
-        let g = state.current.lock().map_err(|e| e.to_string())?;
-        if let Some(rs) = g.as_ref() {
-            if rs.alias == alias && rs.root == root {
+        let mut g = state.current.lock().map_err(|e| e.to_string())?;
+        if let Some(rs) = g.as_mut() {
+            let dead = matches!(rs.child.try_wait(), Ok(Some(_)));
+            if dead {
+                *g = None; // reap; fall through to a fresh bootstrap
+            } else if !force && rs.alias == alias && rs.root == root {
                 return Ok(RemoteSidecarStatus::Running {
                     local_port: REMOTE_LOCAL_PORT,
                     remote_port: REMOTE_REMOTE_PORT,
@@ -287,7 +299,7 @@ pub async fn ensure_remote_sidecar(
             }
         }
     }
-    // Different target → tear down old first.
+    // Different target / forced reconnect / reaped → tear down old first.
     stop_remote_sidecar_internal(&app)?;
 
     // Do work on a blocking thread because we shell out to ssh several times
@@ -356,6 +368,11 @@ fn run_bootstrap(app: &AppHandle, alias: &str, root: &str) -> Result<RemoteSidec
     })?;
 
     emit(app, &RemoteSidecarStatus::Starting);
+    // Free our local forward port from any orphaned tunnel (e.g. left by a
+    // previously-killed app instance) so the new -L forward can bind. Without
+    // this, ssh hits "bind 127.0.0.1:7424: Address already in use" and, with
+    // ExitOnForwardFailure, the whole tunnel dies → "sidecar unreachable".
+    free_local_tunnel_port();
     let mut cmd = build_run_command(alias, root);
     let mut child = cmd.spawn().map_err(|e| format!("spawn ssh tunnel: {e}"))?;
 
@@ -365,6 +382,7 @@ fn run_bootstrap(app: &AppHandle, alias: &str, root: &str) -> Result<RemoteSidec
     let stderr = child.stderr.take().ok_or_else(|| "no stderr".to_string())?;
 
     let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
+    let tx_err = tx.clone();
     let app_for_thread = app.clone();
     std::thread::spawn(move || {
         let r = BufReader::new(stdout);
@@ -385,10 +403,22 @@ fn run_bootstrap(app: &AppHandle, alias: &str, root: &str) -> Result<RemoteSidec
         // Once announced, surface unexpected exits.
         let _ = app_for_thread.emit("remote-sidecar:status", RemoteSidecarStatus::Stopped);
     });
+    // Watch stderr for a failed LOCAL port forward — ssh announces the remote
+    // sidecar's "listening" on stdout even when our -L forward couldn't bind,
+    // so without this we'd report success for a tunnel that doesn't carry traffic.
     std::thread::spawn(move || {
         let r = BufReader::new(stderr);
         for line in r.lines().flatten() {
             eprintln!("[mlforge-torch-remote stderr] {line}");
+            if line.contains("Could not request local forwarding")
+                || line.contains("cannot listen to port")
+                || (line.contains("bind") && line.contains("Address already in use"))
+            {
+                let _ = tx_err.send(Err(format!(
+                    "local port {} busy — the tunnel could not be opened",
+                    REMOTE_LOCAL_PORT
+                )));
+            }
         }
     });
 
@@ -397,7 +427,27 @@ fn run_bootstrap(app: &AppHandle, alias: &str, root: &str) -> Result<RemoteSidec
     let ready = rx
         .recv_timeout(std::time::Duration::from_secs(60))
         .map_err(|_| "timeout waiting for remote sidecar to come up".to_string())?;
-    ready?;
+    if let Err(e) = ready {
+        let _ = child.kill();
+        emit(app, &RemoteSidecarStatus::Error { message: e.clone() });
+        return Err(e);
+    }
+
+    // Verify the forward actually carries traffic locally (belt-and-suspenders
+    // on top of the stderr watch): the remote can announce readiness even if the
+    // local bind silently failed.
+    let addr = format!("127.0.0.1:{}", REMOTE_LOCAL_PORT);
+    if let Ok(sa) = addr.parse::<std::net::SocketAddr>() {
+        if std::net::TcpStream::connect_timeout(&sa, std::time::Duration::from_secs(3)).is_err() {
+            let _ = child.kill();
+            let m = format!(
+                "tunnel announced remotely but local port {} is unreachable (forward failed)",
+                REMOTE_LOCAL_PORT
+            );
+            emit(app, &RemoteSidecarStatus::Error { message: m.clone() });
+            return Err(m);
+        }
+    }
 
     let state: State<RemoteSidecarState> = app.state();
     *state.current.lock().map_err(|e| e.to_string())? = Some(RemoteSidecar {
@@ -421,6 +471,17 @@ pub fn stop_remote_sidecar(app: AppHandle) -> Result<(), String> {
     stop_remote_sidecar_internal(&app)?;
     emit(&app, &RemoteSidecarStatus::Stopped);
     Ok(())
+}
+
+/// Kill any orphaned ssh tunnel still holding our local forward port. Matches
+/// only our own `-L 127.0.0.1:7424:127.0.0.1:7421` signature, so it won't touch
+/// unrelated ssh sessions. Best-effort.
+fn free_local_tunnel_port() {
+    let pat = format!(
+        "-L 127.0.0.1:{}:127.0.0.1:{}",
+        REMOTE_LOCAL_PORT, REMOTE_REMOTE_PORT
+    );
+    let _ = Command::new("pkill").arg("-f").arg(&pat).status();
 }
 
 fn stop_remote_sidecar_internal(app: &AppHandle) -> Result<(), String> {

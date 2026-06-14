@@ -25,7 +25,7 @@ import ModeToggle from './training/graph/ModeToggle'
 import TrainingPalette from './training/graph/TrainingPalette'
 import TrainingCanvas from './training/graph/TrainingCanvas'
 import TrainingInspector from './training/graph/TrainingInspector'
-import { useConnectionsStore, getCurrentConnection } from './connections/store'
+import { useConnectionsStore, getCurrentConnection, sshTarget } from './connections/store'
 import { useRemoteSidecarStore } from './sidecars/remoteSidecar'
 
 function InferenceBadge() {
@@ -54,8 +54,8 @@ function InferenceBadge() {
 
 function RemoteSidecarBadge() {
   const status = useRemoteSidecarStore((s) => s.status)
+  const ensure = useRemoteSidecarStore((s) => s.ensure)
   const conn = useConnectionsStore((s) => s.saved.find((c) => c.id === s.currentId))
-  const refresh = useProjectStore((s) => s.refresh)
   if (!conn) return null  // only meaningful for remote workspaces
   let label = ''
   let color = 'bg-[#1f2429] text-[#7a8088]'
@@ -74,7 +74,7 @@ function RemoteSidecarBadge() {
   const hint = busy ? title : `${title ? title + ' — ' : ''}Klicken: neu verbinden`
   return (
     <button
-      onClick={() => { if (!busy) void refresh() }}
+      onClick={() => { if (!busy) void ensure(sshTarget(conn), conn.root, true) }}
       disabled={busy}
       className={`rounded px-2 py-0.5 ${color} ${busy ? '' : 'cursor-pointer hover:brightness-125'}`}
       title={hint}
