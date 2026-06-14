@@ -15,6 +15,10 @@ export type ChatRequest = {
     nodes: { id: string; layerType: string; params: Record<string, unknown> }[]
     edges: { source: string; target: string }[]
   }
+  training_graph?: {
+    nodes: { id: string; trainingType: string; params: Record<string, unknown> }[]
+    edges: { source: string; target: string }[]
+  }
   error?: { message: string; failingNodeId?: string | null; failingNodeLayerType?: string | null }
   project?: {
     root: string

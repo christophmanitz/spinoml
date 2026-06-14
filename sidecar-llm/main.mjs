@@ -67,6 +67,36 @@ function makeGraphContext(initial) {
   }
 }
 
+// Transient TRAINING-graph state for one /chat turn — mirror of
+// makeGraphContext but for the visual training graph (Phase 14).
+function makeTrainingContext(initial) {
+  const nodes = new Map() // id → { id, trainingType, params }
+  const edges = new Map() // edge_key → { source, target }
+  let counter = 0
+
+  for (const n of initial?.nodes ?? []) {
+    nodes.set(n.id, { id: n.id, trainingType: n.trainingType, params: { ...(n.params ?? {}) } })
+  }
+  for (const e of initial?.edges ?? []) {
+    edges.set(`${e.source}->${e.target}`, { source: e.source, target: e.target })
+  }
+
+  function nextId() {
+    counter++
+    while (nodes.has(`tllm${counter}`)) counter++
+    return `tllm${counter}`
+  }
+
+  return {
+    nodes,
+    edges,
+    nextId,
+    snapshot() {
+      return { nodes: [...nodes.values()], edges: [...edges.values()] }
+    },
+  }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Per-turn action queue. Tool handlers push actions; the SSE writer drains.
 
@@ -267,7 +297,7 @@ async function downloadToDatasets(ws, url, filename) {
   return { relpath: `datasets/${safe}`, bytes: buf.length }
 }
 
-function buildMcpServer(ctx, actions, workspace) {
+function buildMcpServer(ctx, trainingCtx, actions, workspace) {
   const tools = [
     tool(
       'set_input_shape',
@@ -341,6 +371,83 @@ function buildMcpServer(ctx, actions, workspace) {
         }
         actions.push({ op: 'delete_node', payload: { id } })
         return content(`deleted ${id}`)
+      },
+    ),
+    // ─── Training-graph tools (Phase 14) ───────────────────────────────────
+    tool(
+      'add_training_node',
+      'Add a node to the TRAINING graph (separate from the architecture graph above). '
+      + 'node_type ∈ {DatasetSource, Split, DataLoader, ModelSource, Loss, Optimizer, Scheduler, Metric, EarlyStopping, GradientClipping, MixedPrecision, TrainLoop}. '
+      + 'Use "after" to also wire it from an existing training node id. Pass params as a JSON object of node-specific fields '
+      + '(e.g. {kind:"AdamW", lr:0.001} for Optimizer, {dataset:"datasets/iris.csv", target:"species"} for DatasetSource, '
+      + '{model:"models/iris-mlp.mlforge"} for ModelSource, {epochs:50} for TrainLoop). '
+      + 'A runnable graph needs at least: DatasetSource(+target), ModelSource(+model), Loss, Optimizer, TrainLoop — wire each into the TrainLoop.',
+      {
+        node_type: z.string(),
+        after: z.string().optional().describe('Optional source training-node id to connect from'),
+        params: z.record(z.string(), z.unknown()).optional(),
+      },
+      async ({ node_type, after, params }) => {
+        const id = trainingCtx.nextId()
+        trainingCtx.nodes.set(id, { id, trainingType: node_type, params: params ?? {} })
+        actions.push({ op: 'training:add_node', payload: { id, node_type, params: params ?? {} } })
+        if (after) {
+          if (!trainingCtx.nodes.has(after)) return content(`error: training source "${after}" not found`, true)
+          trainingCtx.edges.set(`${after}->${id}`, { source: after, target: id })
+          actions.push({ op: 'training:connect', payload: { source: after, target: id } })
+        }
+        return content(`added training ${node_type} as ${id}${after ? ` after ${after}` : ''}`)
+      },
+    ),
+    tool(
+      'connect_training_nodes',
+      'Wire one TRAINING node into another (typically a source/component into the TrainLoop).',
+      { source: z.string(), target: z.string() },
+      async ({ source, target }) => {
+        if (!trainingCtx.nodes.has(source)) return content(`error: training source "${source}" not found`, true)
+        if (!trainingCtx.nodes.has(target)) return content(`error: training target "${target}" not found`, true)
+        const key = `${source}->${target}`
+        if (trainingCtx.edges.has(key)) return content(`edge ${source}->${target} already exists`)
+        trainingCtx.edges.set(key, { source, target })
+        actions.push({ op: 'training:connect', payload: { source, target } })
+        return content(`connected ${source} → ${target}`)
+      },
+    ),
+    tool(
+      'update_training_params',
+      'Patch parameters on an existing TRAINING node. Only supplied keys change.',
+      { id: z.string(), params: z.record(z.string(), z.unknown()) },
+      async ({ id, params }) => {
+        const n = trainingCtx.nodes.get(id)
+        if (!n) return content(`error: training node "${id}" not found`, true)
+        n.params = { ...n.params, ...params }
+        actions.push({ op: 'training:update_params', payload: { id, params } })
+        return content(`patched training ${id}: ${JSON.stringify(params)}`)
+      },
+    ),
+    tool(
+      'delete_training_node',
+      'Remove a TRAINING node and its incident edges.',
+      { id: z.string() },
+      async ({ id }) => {
+        if (!trainingCtx.nodes.has(id)) return content(`error: training node "${id}" not found`, true)
+        trainingCtx.nodes.delete(id)
+        for (const [key, e] of trainingCtx.edges) {
+          if (e.source === id || e.target === id) trainingCtx.edges.delete(key)
+        }
+        actions.push({ op: 'training:delete_node', payload: { id } })
+        return content(`deleted training ${id}`)
+      },
+    ),
+    tool(
+      'clear_training_graph',
+      'Remove ALL training nodes and edges — use before building a fresh training graph from scratch.',
+      {},
+      async () => {
+        trainingCtx.nodes.clear()
+        trainingCtx.edges.clear()
+        actions.push({ op: 'training:clear', payload: {} })
+        return content('cleared the training graph')
       },
     ),
   ]
@@ -432,7 +539,7 @@ function sendJson(res, status, obj) {
   res.end(JSON.stringify(obj))
 }
 
-function buildSystemPrompt(snapshot, error, project) {
+function buildSystemPrompt(snapshot, error, project, trainingSnapshot) {
   const lines = [
     'You are an expert PyTorch architect embedded in MLForge, a drag-and-drop GUI for building nn.Module architectures.',
     '',
@@ -502,6 +609,43 @@ function buildSystemPrompt(snapshot, error, project) {
     JSON.stringify(snapshot, null, 2),
     '```',
   )
+  lines.push(
+    '',
+    '═══ Training graph (separate from the architecture) ═══',
+    'MLForge also has a VISUAL TRAINING GRAPH — how a model is trained, built as nodes',
+    'just like the architecture. Mutate it with the training tools: add_training_node,',
+    'connect_training_nodes, update_training_params, delete_training_node, clear_training_graph.',
+    'These are DIFFERENT from add_layer/connect (which only touch the architecture).',
+    'Use the training tools when the user asks to set up / configure training, a training',
+    'loop, optimizer, loss, schedule, callbacks, etc.',
+    '',
+    'Training node types and their key params:',
+    ' - DatasetSource {dataset: "datasets/<file>", target: "<column>", features: [<columns>] (empty = all numeric)}',
+    ' - Split {val_ratio: 0..0.9, seed}',
+    ' - DataLoader {batch_size, shuffle, num_workers, drop_last}',
+    ' - ModelSource {model: "models/<file>.mlforge"}',
+    ' - Loss {kind: CrossEntropyLoss|BCEWithLogitsLoss|MSELoss|L1Loss, label_smoothing}',
+    ' - Optimizer {kind: Adam|AdamW|SGD|RMSprop, lr, weight_decay, momentum}',
+    ' - Scheduler {kind: none|StepLR|CosineAnnealingLR|ReduceLROnPlateau, step_size, gamma, patience}',
+    ' - Metric {kind: accuracy|f1|precision|recall|mse|mae|r2}  (add several for multiple metrics)',
+    ' - EarlyStopping {monitor: val_loss|val_acc|train_loss, patience, mode: min|max}',
+    ' - GradientClipping {max_norm}',
+    ' - MixedPrecision {dtype: fp16|bf16}',
+    ' - TrainLoop {epochs, seed, log_every_n_steps, val_every_n_epochs, gradient_accumulation_steps}',
+    '',
+    'A runnable training graph needs at minimum: DatasetSource (with a target column),',
+    'ModelSource (with a .mlforge model), Loss, Optimizer, and TrainLoop — connect each',
+    'source/component INTO the TrainLoop. Phase 13/14 trains tabular datasets only.',
+    'Pick the loss to match the task: CrossEntropyLoss for classification, MSELoss for regression.',
+    'When building from scratch, call clear_training_graph first. Use the model + dataset from',
+    'the project context above when available.',
+    '',
+    'Current training-graph snapshot:',
+    '```json',
+    JSON.stringify(trainingSnapshot ?? { nodes: [], edges: [] }, null, 2),
+    '```',
+    '═══════════════════════',
+  )
   if (error) {
     lines.push('', `Current forward-pass error: ${error.message}`)
     if (error.failingNodeId) lines.push(`Failing node: ${error.failingNodeId} (${error.failingNodeLayerType ?? 'unknown'})`)
@@ -527,7 +671,7 @@ async function handleChat(req, res) {
   try { payload = JSON.parse(body || '{}') }
   catch (e) { return sendJson(res, 400, { error: `invalid json: ${e.message}` }) }
 
-  const { user, messages, graph, error, project } = payload
+  const { user, messages, graph, training_graph, error, project } = payload
   if (typeof user !== 'string' || !user.trim()) {
     return sendJson(res, 400, { error: 'missing "user" string' })
   }
@@ -547,6 +691,10 @@ async function handleChat(req, res) {
     nodes: graph?.nodes ?? [],
     edges: graph?.edges ?? [],
   })
+  const trainingCtx = makeTrainingContext({
+    nodes: training_graph?.nodes ?? [],
+    edges: training_graph?.edges ?? [],
+  })
   const actions = makeActionStream()
 
   // Drain actions to SSE as they're pushed, in parallel with the SDK.
@@ -555,8 +703,8 @@ async function handleChat(req, res) {
   })()
 
   const workspace = makeWorkspace(project)
-  const mcp = buildMcpServer(ctx, actions, workspace)
-  const systemPrompt = buildSystemPrompt(ctx.snapshot(), error, project)
+  const mcp = buildMcpServer(ctx, trainingCtx, actions, workspace)
+  const systemPrompt = buildSystemPrompt(ctx.snapshot(), error, project, trainingCtx.snapshot())
   const prompt = formatHistoryAsPrompt(messages, user)
 
   emit({ type: 'status', value: 'thinking' })
@@ -573,6 +721,11 @@ async function handleChat(req, res) {
           'mcp__graph__connect',
           'mcp__graph__update_params',
           'mcp__graph__delete_node',
+          'mcp__graph__add_training_node',
+          'mcp__graph__connect_training_nodes',
+          'mcp__graph__update_training_params',
+          'mcp__graph__delete_training_node',
+          'mcp__graph__clear_training_graph',
           ...(workspace ? [
             'mcp__graph__list_notes',
             'mcp__graph__read_note',

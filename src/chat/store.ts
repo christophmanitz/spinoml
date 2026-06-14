@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { llmHealth, streamChat, type ChatEvent } from './client'
 import { useGraphStore, autoPositionAfter } from '../canvas/GraphStore'
+import { useTrainingGraphStore } from '../training/graph/store'
 import { useInferenceStore } from '../inference/store'
 import { useProjectStore } from '../project/store'
 import { useDatasetsStore } from '../datasets/store'
@@ -70,17 +71,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       .map((m) => ({ role: m.role, content: m.content }))
 
     const graph = snapshotGraph()
+    const training_graph = snapshotTrainingGraph()
     const error = snapshotError()
     const project = await snapshotProject()
 
     inflight = new AbortController()
     let mutatedGraph = false
+    let mutatedTraining = false
 
     try {
       await streamChat(
-        { user: trimmed, messages: history, graph, error: error ?? undefined, project: project ?? undefined },
+        { user: trimmed, messages: history, graph, training_graph, error: error ?? undefined, project: project ?? undefined },
         (ev) => {
-          if (ev.type === 'action') mutatedGraph = true
+          if (ev.type === 'action') {
+            if (ev.op.startsWith('training:')) mutatedTraining = true
+            else mutatedGraph = true
+          }
           applyEvent(assistantId, ev, set, get)
         },
         inflight.signal,
@@ -94,6 +100,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       patchAssistant(assistantId, set, get, (a) => a.status === 'streaming' ? { ...a, status: 'done' } : a)
       set({ status: 'idle' })
       if (mutatedGraph) useGraphStore.getState().autoLayout()
+      if (mutatedTraining) useTrainingGraphStore.getState().autoLayout()
     }
   },
 }))
@@ -167,6 +174,14 @@ function snapshotGraph() {
       params: n.data.params,
       ...(n.data.inferredOutputShape ? { inferred_output_shape: n.data.inferredOutputShape } : {}),
     })),
+    edges: edges.map((e) => ({ source: e.source, target: e.target })),
+  }
+}
+
+function snapshotTrainingGraph() {
+  const { nodes, edges } = useTrainingGraphStore.getState()
+  return {
+    nodes: nodes.map((n) => ({ id: n.id, trainingType: n.data.trainingType, params: n.data.params })),
     edges: edges.map((e) => ({ source: e.source, target: e.target })),
   }
 }
@@ -268,6 +283,29 @@ function dispatchAction(op: string, p: Record<string, unknown>) {
         const rel = (p.relpath as string) || ''
         if (rel) useDatasetsStore.getState().select(rel)
       })
+      break
+    }
+    // ─── Training-graph actions (Phase 14) ───────────────────────────────
+    case 'training:add_node': {
+      const t = useTrainingGraphStore.getState()
+      const pos = { x: 80 + (t.nodes.length % 3) * 220, y: 60 + t.nodes.length * 70 }
+      t.addNode(p.node_type as string, pos, { id: p.id as string, params: (p.params ?? {}) as Record<string, unknown> })
+      break
+    }
+    case 'training:connect': {
+      useTrainingGraphStore.getState().connectNodes(p.source as string, p.target as string)
+      break
+    }
+    case 'training:update_params': {
+      useTrainingGraphStore.getState().updateNodeParams(p.id as string, p.params as Record<string, unknown>)
+      break
+    }
+    case 'training:delete_node': {
+      useTrainingGraphStore.getState().deleteNode(p.id as string)
+      break
+    }
+    case 'training:clear': {
+      useTrainingGraphStore.getState().resetGraph()
       break
     }
     default:
