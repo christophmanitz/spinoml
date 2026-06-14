@@ -177,9 +177,12 @@ fn cleanup_stale_remote(alias: &str, root: &str) -> Result<(), String> {
     let root_q = shell_quote_path(root);
     let script = format!(
         "ROOT={root_q}; MLDIR=\"$ROOT/.mlforge\"
+fuser -k {port}/tcp 2>/dev/null || true
 pkill -9 -f \"$MLDIR/venv/bin/python.*sidecar-torch\" 2>/dev/null || true
-for i in 1 2 3 4 5 6 7 8; do
+pkill -9 -f 'sidecar-torch/main.py' 2>/dev/null || true
+for i in 1 2 3 4 5 6 7 8 9 10; do
   if ss -ltn 2>/dev/null | awk '{{print $4}}' | grep -q ':{port}$'; then
+    fuser -k {port}/tcp 2>/dev/null || true
     sleep 0.3
   else
     echo PORT_FREE; exit 0
@@ -449,7 +452,15 @@ fn run_bootstrap(app: &AppHandle, alias: &str, root: &str) -> Result<RemoteSidec
     // local bind silently failed.
     let addr = format!("127.0.0.1:{}", REMOTE_LOCAL_PORT);
     if let Ok(sa) = addr.parse::<std::net::SocketAddr>() {
-        if std::net::TcpStream::connect_timeout(&sa, std::time::Duration::from_secs(3)).is_err() {
+        let mut reachable = false;
+        for _ in 0..5 {
+            if std::net::TcpStream::connect_timeout(&sa, std::time::Duration::from_secs(2)).is_ok() {
+                reachable = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        if !reachable {
             let _ = child.kill();
             let m = format!(
                 "tunnel announced remotely but local port {} is unreachable (forward failed)",
