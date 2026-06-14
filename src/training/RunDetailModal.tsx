@@ -2,10 +2,13 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import { training } from './backend'
 import { useTrainingStore } from './store'
-import { type TrainingEvent, RUNNING_STATES } from './types'
+import { type RunConfig, type TrainingEvent, RUNNING_STATES } from './types'
 import StatusPill from './StatusPill'
 import LineChart from './charts/LineChart'
 import { parseEventLines, lossSeries, lrSeries, metricSeries } from './charts/series'
+import { runConfigToTrainingSnapshot } from './graph/fromRun'
+import { useTrainingGraphStore } from './graph/store'
+import { useViewModeStore } from './graph/viewMode'
 
 type Tab = 'overview' | 'charts' | 'events' | 'logs' | 'script'
 
@@ -27,6 +30,19 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   const status = summary?.status ?? 'unknown'
   const active = RUNNING_STATES.has(status) || (summary?.alive ?? false)
 
+  // Rebuild this run's training graph onto the canvas, even if its .mltrain was
+  // never saved — run.json carries the full frozen config.
+  const openOnCanvas = () => {
+    if (!runJson) return
+    try {
+      const config = JSON.parse(runJson) as RunConfig
+      const snapshot = runConfigToTrainingSnapshot(config)
+      useTrainingGraphStore.getState().loadSnapshot(snapshot)
+      useViewModeStore.getState().setMode('training')
+      close(null)
+    } catch { /* run.json not ready / malformed */ }
+  }
+
   const reload = useCallback(async () => {
     try {
       const [ev, rj, tp, so, se] = await Promise.all([
@@ -44,9 +60,13 @@ export default function RunDetailModal({ runId }: { runId: string }) {
     } catch { /* file may not exist yet */ }
   }, [runId])
 
+  // Reload on open AND whenever the status changes. The status-change reload is
+  // what catches the final epoch + run.done on the running→done transition: the
+  // tail interval below stops the instant `active` flips false, so without this
+  // the last update would sometimes be missing until the modal was reopened.
   useEffect(() => {
     void reload()
-  }, [reload])
+  }, [reload, status])
 
   // tail while the run is alive
   useEffect(() => {
@@ -96,6 +116,14 @@ export default function RunDetailModal({ runId }: { runId: string }) {
           <span className="truncate text-sm text-[#e6e8eb]">{summary?.run_label || runId}</span>
           <span className="ml-2 truncate font-mono text-[10px] text-[#5a6068]">{runId}</span>
           <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={openOnCanvas}
+              disabled={!runJson}
+              className="rounded bg-[#13344f] px-2 py-0.5 text-[11px] text-[#6ab7ff] hover:bg-[#184466] disabled:opacity-40"
+              title="Dieses Training als Graph im Training-Canvas öffnen"
+            >
+              → Training-Canvas
+            </button>
             {active ? (
               <button
                 onClick={async () => { setBusy(true); try { await stopRun(runId) } finally { setBusy(false) } }}
