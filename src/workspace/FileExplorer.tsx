@@ -18,6 +18,7 @@ export default function FileExplorer() {
   const createFile = useWorkspaceStore((s) => s.createFile)
   const createFolder = useWorkspaceStore((s) => s.createFolder)
   const importFromText = useWorkspaceStore((s) => s.importFromText)
+  const refreshFromDisk = useWorkspaceStore((s) => s.refreshFromDisk)
   const [rename, setRename] = useState<string | null>(null)
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [dragOver, setDragOver] = useState<string | null>(null)
@@ -79,6 +80,9 @@ export default function FileExplorer() {
           )}
         </div>
         <div className="flex items-center gap-1 text-[#7a8088]">
+          {mode === 'tauri' && (
+            <IconButton title="Aktualisieren (von Disk neu laden)" onClick={() => { void refreshFromDisk() }}>↻</IconButton>
+          )}
           <IconButton title="New file" onClick={() => {
             const parentId = useWorkspaceStore.getState().entries['models']?.kind === 'folder' ? 'models' : ROOT_ID
             createFile(parentId).then((id) => { if (id) setRename(id) })

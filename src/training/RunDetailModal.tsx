@@ -5,7 +5,7 @@ import { useTrainingStore } from './store'
 import { type TrainingEvent, RUNNING_STATES } from './types'
 import StatusPill from './StatusPill'
 
-type Tab = 'overview' | 'events' | 'logs'
+type Tab = 'overview' | 'events' | 'logs' | 'script'
 
 function parseEvents(text: string): TrainingEvent[] {
   const out: TrainingEvent[] = []
@@ -26,6 +26,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   const [tab, setTab] = useState<Tab>('overview')
   const [events, setEvents] = useState<TrainingEvent[]>([])
   const [runJson, setRunJson] = useState('')
+  const [trainPy, setTrainPy] = useState('')
   const [stdout, setStdout] = useState('')
   const [stderr, setStderr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -35,14 +36,16 @@ export default function RunDetailModal({ runId }: { runId: string }) {
 
   const reload = useCallback(async () => {
     try {
-      const [ev, rj, so, se] = await Promise.all([
+      const [ev, rj, tp, so, se] = await Promise.all([
         training.readFile(runId, 'events.jsonl'),
         training.readFile(runId, 'run.json'),
+        training.readFile(runId, 'train.py'),
         training.readFile(runId, 'stdout.log'),
         training.readFile(runId, 'stderr.log'),
       ])
       setEvents(parseEvents(ev))
       setRunJson(rj)
+      setTrainPy(tp)
       setStdout(so)
       setStderr(se)
     } catch { /* file may not exist yet */ }
@@ -102,7 +105,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
         </div>
 
         <div className="flex border-b border-[#1f2429] text-xs">
-          {(['overview', 'events', 'logs'] as Tab[]).map((t) => (
+          {(['overview', 'events', 'logs', 'script'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -168,6 +171,13 @@ export default function RunDetailModal({ runId }: { runId: string }) {
             <div className="space-y-3">
               <LogBlock title="stdout.log" text={stdout} />
               <LogBlock title="stderr.log" text={stderr} tone="err" />
+            </div>
+          )}
+
+          {tab === 'script' && (
+            <div className="space-y-3">
+              <LogBlock title="train.py (ausgeführtes Trainings-Skript)" text={trainPy} />
+              <LogBlock title="run.json (eingefrorene Config)" text={runJson} />
             </div>
           )}
         </div>
