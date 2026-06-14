@@ -9,6 +9,7 @@ import { parseEventLines, lossSeries, lrSeries, metricSeries } from './charts/se
 import { runConfigToTrainingSnapshot } from './graph/fromRun'
 import { useTrainingGraphStore } from './graph/store'
 import { useViewModeStore } from './graph/viewMode'
+import { getCurrentConnection } from '../connections/store'
 
 type Tab = 'overview' | 'charts' | 'events' | 'logs' | 'script'
 
@@ -43,6 +44,8 @@ export default function RunDetailModal({ runId }: { runId: string }) {
     } catch { /* run.json not ready / malformed */ }
   }
 
+  // Full read — used on open + on status change. Includes the immutable files
+  // (run.json, train.py) which never change after the run is created.
   const reload = useCallback(async () => {
     try {
       const [ev, rj, tp, so, se] = await Promise.all([
@@ -60,20 +63,46 @@ export default function RunDetailModal({ runId }: { runId: string }) {
     } catch { /* file may not exist yet */ }
   }, [runId])
 
+  // Lightweight tail — only the file(s) that actually grow. On a remote (ssh)
+  // connection every readFile is an ssh round-trip, so we DON'T re-fetch the
+  // immutable run.json/train.py each tick, and only fetch the logs when the
+  // logs tab is open. This is what keeps a remote run from saturating ssh.
+  const tailReload = useCallback(async () => {
+    try {
+      setEvents(parseEventLines(await training.readFile(runId, 'events.jsonl')))
+      if (tab === 'logs') {
+        const [so, se] = await Promise.all([
+          training.readFile(runId, 'stdout.log'),
+          training.readFile(runId, 'stderr.log'),
+        ])
+        setStdout(so)
+        setStderr(se)
+      }
+    } catch { /* file may not exist yet */ }
+  }, [runId, tab])
+
   // Reload on open AND whenever the status changes. The status-change reload is
   // what catches the final epoch + run.done on the running→done transition: the
-  // tail interval below stops the instant `active` flips false, so without this
-  // the last update would sometimes be missing until the modal was reopened.
+  // tail loop below stops the instant `active` flips false, so without this the
+  // last update would sometimes be missing until the modal was reopened.
   useEffect(() => {
     void reload()
   }, [reload, status])
 
-  // tail while the run is alive
+  // Tail while the run is alive — NON-overlapping (await before scheduling the
+  // next tick) so a slow ssh call can't pile up. Slower cadence on remote.
   useEffect(() => {
     if (!active) return
-    const t = setInterval(() => void reload(), 2000)
-    return () => clearInterval(t)
-  }, [active, reload])
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout>
+    const delay = getCurrentConnection().kind === 'remote-ssh' ? 5000 : 2000
+    const tick = async () => {
+      await tailReload()
+      if (!stopped) timer = setTimeout(tick, delay)
+    }
+    timer = setTimeout(tick, delay)
+    return () => { stopped = true; clearTimeout(timer) }
+  }, [active, tailReload])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') close(null) }

@@ -4,6 +4,7 @@ import { isTauri } from '../workspace/tauri-fs'
 import { parseFile } from '../persistence/file'
 import { generateFromSnapshot } from '../codegen/generator'
 import { fs } from '../connections/backend'
+import { getCurrentConnection } from '../connections/store'
 import { training } from './backend'
 import {
   type RunSummary,
@@ -54,17 +55,32 @@ type TrainingState = {
 }
 
 // Single shared poller — refreshes the list while any run is still alive so the
-// UI tracks queued→running→done without the user clicking refresh.
-let pollTimer: ReturnType<typeof setInterval> | null = null
+// UI tracks queued→running→done without the user clicking refresh. NON-overlapping
+// (each refresh is awaited before the next is scheduled): on a remote ssh
+// connection a refresh is an ssh round-trip that can take seconds, and a plain
+// setInterval would stack those up and saturate the connection. Slower cadence
+// on remote for the same reason.
+let pollTimer: ReturnType<typeof setTimeout> | null = null
 
+function pollDelay(): number {
+  return getCurrentConnection().kind === 'remote-ssh' ? 5000 : 2000
+}
+
+// Called at the end of every refresh(). Keeps exactly one pending tick while a
+// run is active. The tick nulls the timer THEN calls refresh(), so no new tick
+// is scheduled until that refresh finishes and re-enters here — i.e. ssh calls
+// can never overlap no matter how slow the connection is.
 function syncPolling(get: () => TrainingState) {
   const anyActive = get().runs.some((r) => RUNNING_STATES.has(r.status) || r.alive)
-  if (anyActive && pollTimer === null) {
-    pollTimer = setInterval(() => void get().refresh(), 2000)
-  } else if (!anyActive && pollTimer !== null) {
-    clearInterval(pollTimer)
-    pollTimer = null
+  if (!anyActive) {
+    if (pollTimer !== null) { clearTimeout(pollTimer); pollTimer = null }
+    return
   }
+  if (pollTimer !== null) return // a tick is already pending
+  pollTimer = setTimeout(() => {
+    pollTimer = null
+    void get().refresh()
+  }, pollDelay())
 }
 
 export const useTrainingStore = create<TrainingState>((set, get) => ({
