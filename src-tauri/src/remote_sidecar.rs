@@ -162,6 +162,37 @@ echo MLFORGE_INSTALL_DONE"
     Ok(())
 }
 
+/// Kill any leftover sidecar-torch python on the remote that may have
+/// outlived the previous ssh-tunnel session. systemd-logind doesn't reap
+/// user processes when their login session ends by default (RHEL/Rocky
+/// default `KillUserProcesses=no`), so the python lingers and holds 7421 —
+/// the next bootstrap then dies on "Address already in use". Wait for the
+/// port to actually go away before returning; pkill is async.
+fn cleanup_stale_remote(alias: &str, root: &str) -> Result<(), String> {
+    let root_q = shell_quote_path(root);
+    let script = format!(
+        "ROOT={root_q}; MLDIR=\"$ROOT/.mlforge\"
+pkill -9 -f \"$MLDIR/venv/bin/python.*sidecar-torch\" 2>/dev/null || true
+for i in 1 2 3 4 5 6 7 8; do
+  if ss -ltn 2>/dev/null | awk '{{print $4}}' | grep -q ':{port}$'; then
+    sleep 0.3
+  else
+    echo PORT_FREE; exit 0
+  fi
+done
+echo PORT_STILL_HELD >&2; exit 1",
+        port = REMOTE_REMOTE_PORT,
+    );
+    let out = run_remote(alias, &script, None)?;
+    if !out.contains("PORT_FREE") {
+        return Err(format!(
+            "remote port {} still held after cleanup attempt",
+            REMOTE_REMOTE_PORT
+        ));
+    }
+    Ok(())
+}
+
 fn deploy(alias: &str, root: &str, sidecar_dir: &PathBuf) -> Result<(), String> {
     // Upload main.py and dataset_handlers.py. We could tar but two files
     // via stdin is simpler and doesn't depend on local `tar`.
@@ -304,6 +335,19 @@ fn run_bootstrap(app: &AppHandle, alias: &str, root: &str) -> Result<RemoteSidec
     let sidecar_dir = crate::sidecar_root_pub(app).join("sidecar-torch");
     deploy(alias, root, &sidecar_dir).map_err(|e| {
         let m = format!("deploy failed: {e}");
+        let s = RemoteSidecarStatus::Error { message: m.clone() };
+        emit(app, &s); m
+    })?;
+
+    // Clean up any lingering python from a prior session — RHEL-style
+    // systemd-logind keeps user processes after ssh disconnect by default,
+    // so without this the next spawn dies on "Address already in use".
+    emit(app, &RemoteSidecarStatus::Preparing {
+        phase: "cleanup".into(),
+        message: "Killing any leftover sidecar process from a previous session…".into(),
+    });
+    cleanup_stale_remote(alias, root).map_err(|e| {
+        let m = format!("cleanup failed: {e}");
         let s = RemoteSidecarStatus::Error { message: m.clone() };
         emit(app, &s); m
     })?;
