@@ -19,6 +19,11 @@ import DatasetDetail from './datasets/DatasetDetail'
 import { useTrainingStore } from './training/store'
 import NewRunModal from './training/NewRunModal'
 import RunDetailModal from './training/RunDetailModal'
+import { useViewModeStore } from './training/graph/viewMode'
+import ModeToggle from './training/graph/ModeToggle'
+import TrainingPalette from './training/graph/TrainingPalette'
+import TrainingCanvas from './training/graph/TrainingCanvas'
+import TrainingInspector from './training/graph/TrainingInspector'
 import { useConnectionsStore, getCurrentConnection } from './connections/store'
 import { useRemoteSidecarStore } from './sidecars/remoteSidecar'
 
@@ -174,6 +179,7 @@ export default function App() {
   const selectedDataset = useDatasetsStore((s) => s.selectedRel)
   const selectedRun = useTrainingStore((s) => s.selectedRunId)
   const newRunOpen = useTrainingStore((s) => s.newRunOpen)
+  const viewMode = useViewModeStore((s) => s.mode)
 
   return (
     <div className="flex h-screen w-screen flex-col bg-[#0b0d10] text-[#e6e8eb]">
@@ -181,6 +187,7 @@ export default function App() {
         <div className="flex items-center gap-4">
           <ProjectHeader />
           <Toolbar />
+          <ModeToggle />
         </div>
         <div className="flex items-center gap-2 text-xs text-[#7a8088]">
           <RemoteSidecarBadge />
@@ -204,7 +211,7 @@ export default function App() {
               defaultLayout={left.defaultLayout}
               onLayoutChanged={left.onLayoutChanged}
             >
-              <Panel defaultSize="50%" minSize="100px"><Palette /></Panel>
+              <Panel defaultSize="50%" minSize="100px">{viewMode === 'training' ? <TrainingPalette /> : <Palette />}</Panel>
               <Separator className={VBAR} />
               <Panel defaultSize="50%" minSize="120px"><LeftSidebar /></Panel>
             </Group>
@@ -217,7 +224,7 @@ export default function App() {
               defaultLayout={center.defaultLayout}
               onLayoutChanged={center.onLayoutChanged}
             >
-              <Panel defaultSize="70%" minSize="120px"><Canvas /></Panel>
+              <Panel defaultSize="70%" minSize="120px">{viewMode === 'training' ? <TrainingCanvas /> : <Canvas />}</Panel>
               <Separator className={VBAR} />
               <Panel defaultSize="30%" minSize="80px"><BottomTabs /></Panel>
             </Group>
@@ -230,7 +237,7 @@ export default function App() {
               defaultLayout={right.defaultLayout}
               onLayoutChanged={right.onLayoutChanged}
             >
-              <Panel defaultSize="50%" minSize="100px"><Inspector /></Panel>
+              <Panel defaultSize="50%" minSize="100px">{viewMode === 'training' ? <TrainingInspector /> : <Inspector />}</Panel>
               <Separator className={VBAR} />
               <Panel defaultSize="50%" minSize="100px"><ChatPanel /></Panel>
             </Group>
