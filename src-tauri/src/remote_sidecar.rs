@@ -39,6 +39,11 @@ pub const REMOTE_REMOTE_PORT: u16 = 7421;
 #[derive(Default)]
 pub struct RemoteSidecarState {
     pub current: Mutex<Option<RemoteSidecar>>,
+    /// Serializes ensure_remote_sidecar so two concurrent calls (e.g. React
+    /// StrictMode double-invoking the load effect in dev) can't race — the
+    /// second would otherwise free_local_tunnel_port() the first's freshly
+    /// bound tunnel. The second call waits, then short-circuits on `current`.
+    pub bootstrap_lock: tokio::sync::Mutex<()>,
 }
 
 pub struct RemoteSidecar {
@@ -280,6 +285,12 @@ pub async fn ensure_remote_sidecar(
     force: Option<bool>,
 ) -> Result<RemoteSidecarStatus, String> {
     let force = force.unwrap_or(false);
+    // Serialize bootstraps so concurrent ensures (StrictMode double-effect)
+    // can't free_local_tunnel_port each other's tunnel. The loser waits here,
+    // then short-circuits on the live `current` below.
+    let lock_state: State<RemoteSidecarState> = app.state();
+    let _bootstrap_guard = lock_state.bootstrap_lock.lock().await;
+
     // Reuse a LIVE tunnel for the same target (unless the caller forces a
     // reconnect). A dead tunnel child is reaped so we don't report a stale
     // "running" — that was the bug behind "badge says ok but sidecar offline".
