@@ -7,6 +7,7 @@ import { useDatasetsStore } from '../datasets/store'
 import { useWorkspaceStore } from '../workspace/store'
 import { isTauri } from '../workspace/tauri-fs'
 import { notes as notesBackend } from '../connections/backend'
+import { getCurrentConnection, sshTarget } from '../connections/store'
 
 export type ToolCall = {
   id: string
@@ -212,8 +213,15 @@ async function snapshotProject() {
     }
   } catch { /* notes optional */ }
 
+  // Tell the sidecar whether to use local fs or shell out to ssh for file
+  // operations + dataset downloads. ssh_target is the same string Tauri
+  // uses (user@host or a plain alias from ~/.ssh/config).
+  const conn = getCurrentConnection()
+  const ssh_target = conn.kind === 'remote-ssh' ? sshTarget(conn) : null
+
   return {
     root,
+    ssh_target,
     name: meta.name,
     description: meta.description,
     goal: meta.goal,
@@ -250,6 +258,16 @@ function dispatchAction(op: string, p: Record<string, unknown>) {
     }
     case 'delete_node': {
       g.deleteNode(p.id as string)
+      break
+    }
+    case 'dataset-added': {
+      // sidecar downloaded a file into <root>/datasets/ — pull the new
+      // dataset list and auto-select the freshly added entry so it shows
+      // up in the right-side modal.
+      void useDatasetsStore.getState().refresh().then(() => {
+        const rel = (p.relpath as string) || ''
+        if (rel) useDatasetsStore.getState().select(rel)
+      })
       break
     }
     default:

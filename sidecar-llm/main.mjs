@@ -23,6 +23,7 @@
 
 import { createServer } from 'node:http'
 import { promises as fs } from 'node:fs'
+import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { z } from 'zod'
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
@@ -92,6 +93,71 @@ function makeActionStream() {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Workspace abstraction. The frontend tells us per turn whether file ops
+// should hit the laptop's filesystem (local workspace) or an SSH target
+// (remote-ssh workspace, root path is raw — may be tilde-prefixed). The
+// helpers below dispatch on `ws.isRemote`. No new HTTP server: we just
+// shell out to ssh from Node, which keeps auth + key handling identical
+// to what Tauri does.
+
+const SSH_OPTS = [
+  '-o', 'BatchMode=yes',
+  '-o', 'ConnectTimeout=10',
+  '-o', 'ServerAliveInterval=20',
+  '-o', 'ServerAliveCountMax=3',
+]
+
+function shellQuote(s) {
+  return "'" + String(s).replace(/'/g, "'\\''") + "'"
+}
+
+/** Quote a path, expanding a leading `~/` to "$HOME" so the remote shell
+ *  resolves it. Mirrors Rust's ssh.rs::shell_quote_path exactly. */
+function shellQuotePath(s) {
+  if (typeof s !== 'string' || s.length === 0) return shellQuote(s ?? '')
+  if (s === '~') return '"$HOME"'
+  if (s.startsWith('~/')) {
+    return `"$HOME"${shellQuote('/' + s.slice(2))}`
+  }
+  return shellQuote(s)
+}
+
+function runSsh(target, remoteCmd, stdin) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('ssh', [...SSH_OPTS, target, remoteCmd], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (d) => { stdout += d.toString() })
+    child.stderr.on('data', (d) => { stderr += d.toString() })
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout)
+      } else {
+        const trimmed = stderr.trim()
+        const hint = code === 255 ? ' (255 = connection/auth; check ~/.ssh/config + agent)' : ''
+        reject(new Error(`ssh exit ${code}: ${trimmed}${hint}`))
+      }
+    })
+    if (stdin !== undefined && stdin !== null) {
+      child.stdin.write(stdin)
+    }
+    child.stdin.end()
+  })
+}
+
+function makeWorkspace(project) {
+  if (!project || !project.root) return null
+  return {
+    root: String(project.root).replace(/\/$/, ''),
+    sshTarget: project.ssh_target || null,
+    isRemote: !!project.ssh_target,
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // MCP tool surface.
 
 // Safe notes helpers — scoped to a single project root passed per-turn.
@@ -102,8 +168,106 @@ function safeNoteFilename(name) {
   return base
 }
 
-function buildMcpServer(ctx, actions, projectRoot) {
-  const notesDir = projectRoot ? path.join(projectRoot, 'notes') : null
+function safeDatasetFilename(name) {
+  const base = path.basename(name || '')
+  if (!base || base.startsWith('.') || base.includes('/') || base.includes('\\')) {
+    throw new Error('invalid filename')
+  }
+  if (!/\.(csv|tsv|parquet|pq|json|jsonl|npy|npz|pt|pth|zip|tar|gz|tgz|pdb|sdf|smi|smiles|txt)$/i.test(base)) {
+    throw new Error('unsupported extension; allowed: csv, tsv, parquet, pq, json, jsonl, npy, npz, pt, pth, zip, tar(.gz), pdb, sdf, smi, txt')
+  }
+  return base
+}
+
+async function notesList(ws) {
+  if (ws.isRemote) {
+    const dir = `${ws.root}/notes`
+    const dirQ = shellQuotePath(dir)
+    const out = await runSsh(
+      ws.sshTarget,
+      `mkdir -p ${dirQ} && find ${dirQ} -mindepth 1 -maxdepth 1 -type f ` +
+      `\\( -name '*.md' -o -name '*.txt' \\) -printf '%f\\t%s\\n' 2>/dev/null`,
+    )
+    return out
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [name, size] = line.split('\t')
+        return { name, size: Number(size) || 0 }
+      })
+  }
+  const dir = path.join(ws.root, 'notes')
+  const items = await fs.readdir(dir).catch(() => [])
+  const filtered = items.filter((f) => /\.(md|txt)$/i.test(f) && !f.startsWith('.'))
+  const out = []
+  for (const f of filtered.sort()) {
+    try {
+      const st = await fs.stat(path.join(dir, f))
+      out.push({ name: f, size: st.size, mtime: new Date(st.mtimeMs).toISOString() })
+    } catch { out.push({ name: f, size: 0 }) }
+  }
+  return out
+}
+
+async function notesRead(ws, name) {
+  const safe = safeNoteFilename(name)
+  if (ws.isRemote) {
+    const p = `${ws.root}/notes/${safe}`
+    return await runSsh(ws.sshTarget, `cat ${shellQuotePath(p)}`)
+  }
+  return await fs.readFile(path.join(ws.root, 'notes', safe), 'utf8')
+}
+
+async function notesAppend(ws, name, body) {
+  const safe = safeNoteFilename(name)
+  const text = body.endsWith('\n') ? body : body + '\n'
+  if (ws.isRemote) {
+    const dir = `${ws.root}/notes`
+    const p = `${dir}/${safe}`
+    await runSsh(
+      ws.sshTarget,
+      `mkdir -p ${shellQuotePath(dir)} && cat >> ${shellQuotePath(p)}`,
+      text,
+    )
+  } else {
+    const dir = path.join(ws.root, 'notes')
+    await fs.mkdir(dir, { recursive: true })
+    await fs.appendFile(path.join(dir, safe), text, 'utf8')
+  }
+  return text.length
+}
+
+async function downloadToDatasets(ws, url, filename) {
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error('url must start with http:// or https://')
+  }
+  const safe = safeDatasetFilename(filename)
+  if (ws.isRemote) {
+    const dir = `${ws.root}/datasets`
+    const p = `${dir}/${safe}`
+    // -fsSL → fail on HTTP errors, silent progress, follow redirects.
+    // --max-time 300s keeps a hung download from hanging the chat turn.
+    const out = await runSsh(
+      ws.sshTarget,
+      `mkdir -p ${shellQuotePath(dir)} && \
+       curl -fsSL --max-time 300 ${shellQuote(url)} -o ${shellQuotePath(p)} && \
+       wc -c < ${shellQuotePath(p)}`,
+    )
+    const bytes = parseInt(out.trim(), 10) || 0
+    return { relpath: `datasets/${safe}`, bytes }
+  }
+  const dir = path.join(ws.root, 'datasets')
+  await fs.mkdir(dir, { recursive: true })
+  const dest = path.join(dir, safe)
+  const res = await fetch(url, { redirect: 'follow' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const buf = Buffer.from(await res.arrayBuffer())
+  await fs.writeFile(dest, buf)
+  return { relpath: `datasets/${safe}`, bytes: buf.length }
+}
+
+function buildMcpServer(ctx, actions, workspace) {
   const tools = [
     tool(
       'set_input_shape',
@@ -181,7 +345,7 @@ function buildMcpServer(ctx, actions, projectRoot) {
     ),
   ]
 
-  if (notesDir) {
+  if (workspace) {
     tools.push(
       tool(
         'list_notes',
@@ -189,17 +353,9 @@ function buildMcpServer(ctx, actions, projectRoot) {
         {},
         async () => {
           try {
-            const items = await fs.readdir(notesDir).catch(() => [])
-            const filtered = items.filter((f) => /\.(md|txt)$/i.test(f) && !f.startsWith('.'))
-            if (!filtered.length) return content('(no notes yet)')
-            const detail = []
-            for (const f of filtered.sort()) {
-              try {
-                const st = await fs.stat(path.join(notesDir, f))
-                detail.push(`${f} — ${st.size} bytes, modified ${new Date(st.mtimeMs).toISOString()}`)
-              } catch { detail.push(f) }
-            }
-            return content(detail.join('\n'))
+            const items = await notesList(workspace)
+            if (!items.length) return content('(no notes yet)')
+            return content(items.map((n) => `${n.name} — ${n.size} bytes`).join('\n'))
           } catch (e) {
             return content(`error: ${e.message}`, true)
           }
@@ -211,9 +367,7 @@ function buildMcpServer(ctx, actions, projectRoot) {
         { name: z.string() },
         async ({ name }) => {
           try {
-            const fname = safeNoteFilename(name)
-            const text = await fs.readFile(path.join(notesDir, fname), 'utf8')
-            return content(text)
+            return content(await notesRead(workspace, name))
           } catch (e) {
             return content(`error: ${e.message}`, true)
           }
@@ -225,12 +379,28 @@ function buildMcpServer(ctx, actions, projectRoot) {
         { name: z.string(), content: z.string() },
         async ({ name, content: body }) => {
           try {
-            const fname = safeNoteFilename(name)
-            await fs.mkdir(notesDir, { recursive: true })
-            await fs.appendFile(path.join(notesDir, fname), body.endsWith('\n') ? body : body + '\n', 'utf8')
-            return content(`appended ${body.length} chars to notes/${fname}`)
+            const written = await notesAppend(workspace, name, body)
+            return content(`appended ${written} chars to notes/${safeNoteFilename(name)}`)
           } catch (e) {
             return content(`error: ${e.message}`, true)
+          }
+        },
+      ),
+      tool(
+        'download_to_datasets',
+        'Download a URL into the project\'s datasets/ folder. Use this when the user asks for a standard dataset by name (iris, MNIST, california housing, fashion-mnist, etc.). Pick a known stable mirror — UCI archive raw, scikit-learn raw, sklearn-datasets GitHub, HuggingFace datasets resolve URLs, common tutorial GitHub repos — and a filename ending in .csv/.parquet/.npy/.json/.zip/etc. The dataset shows up live in MLForge\'s Datasets tab the moment the download finishes. For binary archives (tar.gz, zip), let the user know they\'ll need to unpack — you can do this with a follow-up shell tool if one exists, otherwise tell them to extract via the Terminal tab.',
+        {
+          url: z.string().url(),
+          filename: z.string().describe('Basename only (e.g. "iris.csv"), saved under datasets/'),
+        },
+        async ({ url, filename }) => {
+          try {
+            const r = await downloadToDatasets(workspace, url, filename)
+            actions.push({ op: 'dataset-added', payload: { relpath: r.relpath, bytes: r.bytes } })
+            const kb = (r.bytes / 1024).toFixed(1)
+            return content(`saved ${kb} KB to ${r.relpath}`)
+          } catch (e) {
+            return content(`download failed: ${e.message}`, true)
           }
         },
       ),
@@ -304,8 +474,26 @@ function buildSystemPrompt(snapshot, error, project) {
       'non-obvious decisions, dead ends, or hand-offs for the next session — e.g.',
       'append to "decisions.md" with a dated entry. Do this sparingly, only when the',
       'information is worth keeping across sessions.',
-      '═══════════════════════',
+      '',
+      'You also have download_to_datasets(url, filename). When the user asks for a',
+      'standard dataset by name (iris, MNIST, california housing, boston, wine, etc.)',
+      'pick a stable raw mirror and download it. Iris CSV with header is at',
+      'https://raw.githubusercontent.com/uiuc-cse/data-fa14/gh-pages/data/iris.csv',
+      'or https://archive.ics.uci.edu/ml/machine-learning-databases/iris/iris.data',
+      '(headerless). After download, mention the dataset appears in MLForge\'s Datasets',
+      'tab and suggest the next concrete step (e.g. "build an MLP with 4-input Input").',
     )
+    if (project.ssh_target) {
+      lines.push(
+        '',
+        `This workspace lives on REMOTE host \`${project.ssh_target}\` at \`${project.root}\`. All`,
+        'note + dataset operations route via ssh. File-system reads/writes you do',
+        'through other tools (Bash, Read, Edit, Write) hit your LAPTOP, NOT the HPC.',
+        'For HPC-side operations beyond notes/datasets, tell the user to use the',
+        'Terminal tab at the bottom — that\'s an ssh -tt session in the workspace.',
+      )
+    }
+    lines.push('═══════════════════════')
   }
   lines.push(
     '',
@@ -366,8 +554,8 @@ async function handleChat(req, res) {
     for await (const a of actions.drain()) emit({ type: 'action', op: a.op, payload: a.payload })
   })()
 
-  const projectRoot = project?.root || null
-  const mcp = buildMcpServer(ctx, actions, projectRoot)
+  const workspace = makeWorkspace(project)
+  const mcp = buildMcpServer(ctx, actions, workspace)
   const systemPrompt = buildSystemPrompt(ctx.snapshot(), error, project)
   const prompt = formatHistoryAsPrompt(messages, user)
 
@@ -385,10 +573,11 @@ async function handleChat(req, res) {
           'mcp__graph__connect',
           'mcp__graph__update_params',
           'mcp__graph__delete_node',
-          ...(projectRoot ? [
+          ...(workspace ? [
             'mcp__graph__list_notes',
             'mcp__graph__read_note',
             'mcp__graph__append_note',
+            'mcp__graph__download_to_datasets',
           ] : []),
         ],
         permissionMode: 'bypassPermissions',
