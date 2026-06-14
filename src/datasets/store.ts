@@ -7,7 +7,6 @@ import { generate } from '../codegen/generator'
 import { useProjectStore } from '../project/store'
 import { useWorkspaceStore } from '../workspace/store'
 import { datasets as datasetsBackend, experiments as experimentsBackend } from '../connections/backend'
-import { isRemoteActive } from '../connections/store'
 
 type Cached<T> = {
   loading: boolean
@@ -116,13 +115,6 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
   runSmoke: async (relpath, inputShape) => {
     const entry = entryByRel(get().entries, relpath)
     if (!entry) return
-    if (isRemoteActive()) {
-      set({ smoke: { ...get().smoke, [relpath]: {
-        loading: false, data: null,
-        error: 'Smoke-Tests gegen Remote-Datensätze brauchen einen Sidecar auf dem HPC (Phase 12b). Kopiere den Datensatz lokal um sofort zu testen.',
-      } } })
-      return
-    }
     const { nodes, edges } = useGraphStore.getState()
     const { code, inputs } = generate(nodes, edges)
     // Per-input dataset binding: if every Input node has a bound dataset (via

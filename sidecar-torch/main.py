@@ -17,6 +17,7 @@ to call it; the bind address is 127.0.0.1 so no external host can reach it.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import traceback
@@ -26,7 +27,10 @@ import torch
 
 import dataset_handlers as ds_mod
 
-PORT = 7421
+# Default 7421 keeps local-mode behaviour unchanged. Override via env so a
+# remote deploy (Phase 12b) can pick a free port on the HPC login node
+# without colliding with another user's sidecar.
+PORT = int(os.environ.get("MLFORGE_TORCH_PORT", "7421"))
 
 
 def infer(code: str, input_shapes: list[list[int]]) -> dict:

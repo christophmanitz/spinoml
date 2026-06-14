@@ -10,6 +10,7 @@ use tauri_plugin_dialog::DialogExt;
 
 mod ssh;
 mod pty;
+mod remote_sidecar;
 
 pub(crate) const PROJECT_FILE: &str = "mlforge.project.json";
 pub(crate) const SUBDIRS: &[&str] = &["models", "datasets", "notes", "experiments"];
@@ -30,6 +31,20 @@ fn sidecar_root(app: &tauri::App) -> PathBuf {
     // (mapped from ../sidecar-* by tauri.conf.json bundle.resources). During
     // dev there is no resource dir, so fall back to the project root which
     // is one level above CARGO_MANIFEST_DIR.
+    if !cfg!(debug_assertions) {
+        if let Ok(dir) = app.path().resource_dir() {
+            return dir;
+        }
+    }
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or(manifest)
+}
+
+// AppHandle variant — needed by remote_sidecar.rs which runs after setup.
+pub(crate) fn sidecar_root_pub(app: &tauri::AppHandle) -> PathBuf {
     if !cfg!(debug_assertions) {
         if let Ok(dir) = app.path().resource_dir() {
             return dir;
@@ -669,6 +684,7 @@ pub fn run() {
         .manage(Sidecars::default())
         .manage(ssh::RemoteWorkspaceState::default())
         .manage(pty::PtyState::default())
+        .manage(remote_sidecar::RemoteSidecarState::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -704,6 +720,8 @@ pub fn run() {
                 shutdown_sidecars(&sc);
                 let pty_state: State<pty::PtyState> = window.state();
                 pty::kill_all(&pty_state);
+                let rs_state: State<remote_sidecar::RemoteSidecarState> = window.state();
+                remote_sidecar::kill_all(&rs_state);
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -752,6 +770,9 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
+            remote_sidecar::ensure_remote_sidecar,
+            remote_sidecar::stop_remote_sidecar,
+            remote_sidecar::remote_sidecar_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

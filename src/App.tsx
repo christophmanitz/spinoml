@@ -17,6 +17,7 @@ import { isTauri } from './workspace/tauri-fs'
 import { useDatasetsStore } from './datasets/store'
 import DatasetDetail from './datasets/DatasetDetail'
 import { useConnectionsStore, getCurrentConnection } from './connections/store'
+import { useRemoteSidecarStore } from './sidecars/remoteSidecar'
 
 function InferenceBadge() {
   const status = useInferenceStore((s) => s.status)
@@ -40,6 +41,24 @@ function InferenceBadge() {
     : 'bg-[#1f2429] text-[#7a8088]'
 
   return <span className={`rounded px-2 py-0.5 ${color}`} title={error ?? ''}>{label}</span>
+}
+
+function RemoteSidecarBadge() {
+  const status = useRemoteSidecarStore((s) => s.status)
+  const conn = useConnectionsStore((s) => s.saved.find((c) => c.id === s.currentId))
+  if (!conn) return null  // only meaningful for remote workspaces
+  let label = ''
+  let color = 'bg-[#1f2429] text-[#7a8088]'
+  let title = ''
+  switch (status.kind) {
+    case 'idle':       label = 'hpc: idle'; break
+    case 'preparing':  label = `hpc: ${status.phase}…`; title = status.message; color = 'bg-violet-900/30 text-violet-300'; break
+    case 'starting':   label = 'hpc: starting…'; color = 'bg-violet-900/30 text-violet-300'; break
+    case 'running':    label = `hpc: ok · :${status.local_port}`; color = 'bg-emerald-900/40 text-emerald-300'; title = `${status.alias}:${status.root}`; break
+    case 'stopped':    label = 'hpc: stopped'; break
+    case 'error':      label = `hpc: ${status.message.split(':')[0]}`; color = 'bg-rose-900/40 text-rose-300'; title = status.message; break
+  }
+  return <span className={`rounded px-2 py-0.5 ${color}`} title={title}>{label}</span>
 }
 
 function LLMBadge() {
@@ -159,6 +178,7 @@ export default function App() {
           <Toolbar />
         </div>
         <div className="flex items-center gap-2 text-xs text-[#7a8088]">
+          <RemoteSidecarBadge />
           <InferenceBadge />
           <LLMBadge />
         </div>

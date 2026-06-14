@@ -1,10 +1,9 @@
 import type { InspectResult, StatsResult, SmokeResult } from './types'
-
-const SIDECAR_URL = 'http://127.0.0.1:7421'
+import { currentTorchUrl } from '../sidecars/torchUrl'
 
 async function post<T>(path: string, body: unknown): Promise<T | { ok: false; error: string; offline: true }> {
   try {
-    const res = await fetch(`${SIDECAR_URL}${path}`, {
+    const res = await fetch(`${currentTorchUrl()}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

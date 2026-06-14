@@ -9,6 +9,8 @@ import {
   useConnectionsStore,
 } from '../connections/store'
 import { tauriSsh } from '../connections/tauri-ssh'
+import { sshTarget } from '../connections/store'
+import { useRemoteSidecarStore } from '../sidecars/remoteSidecar'
 
 export type ProjectStatus =
   | { kind: 'none' }
@@ -45,6 +47,11 @@ export const useProjectStore = create<State>((set, get) => ({
         if (load.meta) {
           set({ status: { kind: 'loaded', root: load.root, meta: load.meta } })
           await bootstrapWorkspace(load.root)
+          // Fire-and-forget the remote-sidecar bootstrap so smoke tests and
+          // shape inference work against the HPC's filesystem. UI subscribes
+          // to remote-sidecar:status events for progress; we don't block the
+          // workspace load on it.
+          void useRemoteSidecarStore.getState().ensure(sshTarget(conn), load.root)
         } else if (!load.rootExists) {
           set({ status: { kind: 'remote-missing', root: load.root, alias: conn.alias } })
         } else {
@@ -80,6 +87,9 @@ export const useProjectStore = create<State>((set, get) => ({
     const root = conn.kind === 'remote-ssh' ? conn.root : (await tauriFs.currentDir())!
     set({ status: { kind: 'loaded', root, meta } })
     await bootstrapWorkspace(root)
+    if (conn.kind === 'remote-ssh') {
+      void useRemoteSidecarStore.getState().ensure(sshTarget(conn), root)
+    }
   },
 
   migrate: async (name, description, goal) => {
@@ -116,6 +126,7 @@ export const useProjectStore = create<State>((set, get) => ({
     const conn = getCurrentConnection()
     if (conn.kind === 'remote-ssh') {
       try { await tauriSsh.close() } catch { /* ignore */ }
+      try { await useRemoteSidecarStore.getState().stop() } catch { /* ignore */ }
     } else {
       try { await tauriFs.closeDir() } catch { /* ignore */ }
     }

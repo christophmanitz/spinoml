@@ -15,7 +15,7 @@ export type InferErr = {
 
 export type InferResult = InferOk | InferErr
 
-const SIDECAR_URL = 'http://127.0.0.1:7421'
+import { currentTorchUrl } from '../sidecars/torchUrl'
 
 export async function inferShapes(
   code: string,
@@ -23,7 +23,7 @@ export async function inferShapes(
   signal?: AbortSignal,
 ): Promise<InferResult | { ok: false; error: string; offline: true; shapes: Record<string, number[]> }> {
   try {
-    const res = await fetch(`${SIDECAR_URL}/infer`, {
+    const res = await fetch(`${currentTorchUrl()}/infer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code, input_shapes: inputShapes }),
@@ -42,7 +42,7 @@ export async function inferShapes(
 
 export async function sidecarHealth(): Promise<boolean> {
   try {
-    const res = await fetch(`${SIDECAR_URL}/health`)
+    const res = await fetch(`${currentTorchUrl()}/health`)
     return res.ok
   } catch {
     return false
