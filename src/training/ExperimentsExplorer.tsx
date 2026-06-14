@@ -1,9 +1,8 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 import { isTauri } from '../workspace/tauri-fs'
-import { useConnectionsStore } from '../connections/store'
+import { useConnectionsStore, remotePython, type RemoteSshConnection } from '../connections/store'
 import { useTrainingStore } from './store'
-import { remoteTrainingBlocked, REMOTE_TRAINING_MSG } from './backend'
 import StatusPill from './StatusPill'
 
 export default function ExperimentsExplorer() {
@@ -20,6 +19,8 @@ export default function ExperimentsExplorer() {
   const openNewRun = useTrainingStore((s) => s.openNewRun)
   // Re-refresh when the active connection changes (local↔remote).
   const currentId = useConnectionsStore((s) => s.currentId)
+  const saved = useConnectionsStore((s) => s.saved)
+  const remoteConn = saved.find((c) => c.id === currentId) ?? null
 
   useEffect(() => {
     if (isTauri()) void refresh()
@@ -46,19 +47,14 @@ export default function ExperimentsExplorer() {
         </button>
         <button
           onClick={openNewRun}
-          disabled={remoteTrainingBlocked()}
-          className="rounded bg-[#13344f] px-2 py-0.5 text-[11px] text-[#6ab7ff] hover:bg-[#184466] disabled:cursor-not-allowed disabled:opacity-40"
-          title={remoteTrainingBlocked() ? REMOTE_TRAINING_MSG : 'Neuen Trainings-Run starten'}
+          className="rounded bg-[#13344f] px-2 py-0.5 text-[11px] text-[#6ab7ff] hover:bg-[#184466]"
+          title="Neuen Trainings-Run starten"
         >
           + Run
         </button>
       </div>
 
-      {remoteTrainingBlocked() && (
-        <div className="border-b border-[#1f2429] bg-[#1a1410] px-3 py-2 text-[11px] text-[#e6c34a]">
-          {REMOTE_TRAINING_MSG}
-        </div>
-      )}
+      {remoteConn && <RemoteConfigStrip conn={remoteConn} />}
 
       {compareIds.length > 0 && (
         <div className="flex items-center gap-2 border-b border-[#1f2429] bg-[#0f1419] px-3 py-1.5 text-[11px]">
@@ -121,6 +117,44 @@ export default function ExperimentsExplorer() {
           )
         })}
       </div>
+    </div>
+  )
+}
+
+// Remote backend strip: confirms which host runs the training and lets the user
+// point the run at the right python env (the #1 remote-direct footgun). Edits
+// persist on the connection via updateRemote.
+function RemoteConfigStrip({ conn }: { conn: RemoteSshConnection }) {
+  const updateRemote = useConnectionsStore((s) => s.updateRemote)
+  const [draft, setDraft] = useState(remotePython(conn))
+
+  // resync when switching between remote connections
+  useEffect(() => { setDraft(remotePython(conn)) }, [conn.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const commit = () => {
+    const v = draft.trim()
+    if (v !== remotePython(conn)) updateRemote(conn.id, { python: v || undefined })
+  }
+
+  return (
+    <div className="flex flex-col gap-1 border-b border-[#1f2429] bg-[#0f1419] px-3 py-2 text-[11px]">
+      <div className="flex items-center gap-1.5 text-[#7a8088]">
+        <span className="text-[#6ab7ff]">remote</span>
+        <span className="truncate text-[#9aa1a8]">{conn.alias}:{conn.root}</span>
+      </div>
+      <label className="flex items-center gap-1.5">
+        <span className="shrink-0 text-[#7a8088]">Python</span>
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+          placeholder="python"
+          spellCheck={false}
+          className="min-w-0 flex-1 rounded border border-[#1f2429] bg-[#0b0e11] px-1.5 py-0.5 font-mono text-[10px] text-[#e6e8eb] focus:border-[#6ab7ff] focus:outline-none"
+          title="Pfad zum python mit torch (z.B. ~/miniconda3/envs/ml/bin/python)"
+        />
+      </label>
     </div>
   )
 }

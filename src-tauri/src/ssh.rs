@@ -20,8 +20,9 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, State};
 
+use crate::training;
 use crate::{now_iso, PROJECT_FILE, SUBDIRS};
 
 #[derive(Default)]
@@ -748,4 +749,290 @@ pub fn ssh_list_datasets(
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
     Ok(entries)
+}
+
+// ─── remote training executor (Phase 16: ssh-direct) ──────────────────────
+//
+// Mirrors src/training.rs over ssh. A run is the SAME self-contained directory
+// (experiments/runs/<run_id>/) on the remote host; we ship the frozen files in,
+// launch the trainer detached (`nohup setsid` → survives both the ssh session
+// AND the MLForge app), and afterwards only read files + `kill -0` over ssh.
+// No SLURM here — that's Phase 17.
+
+/// The python interpreter on the remote is user-configured per connection. Keep
+/// it a tame token (path or bare name) — it's pasted into a shell command.
+fn validate_python(p: &str) -> Result<(), String> {
+    if p.is_empty() || p.len() > 512 {
+        return Err("python path must be 1..512 chars".into());
+    }
+    if p.chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/' | '~'))
+    {
+        Ok(())
+    } else {
+        Err("python path may only contain [A-Za-z0-9._/~-] (no spaces/metachars)".into())
+    }
+}
+
+fn remote_runs_dir(root: &str) -> String {
+    join_remote(root, "experiments/runs")
+}
+fn remote_run_dir(root: &str, run_id: &str) -> String {
+    join_remote(root, &format!("experiments/runs/{run_id}"))
+}
+
+fn write_remote_run_file(alias: &str, dir: &str, name: &str, content: &[u8]) -> Result<(), String> {
+    let p_q = shell_quote_path(&format!("{dir}/{name}"));
+    ssh_exec(alias, &format!("cat > {p_q}"), Some(content)).map(|_| ())
+}
+
+#[tauri::command]
+pub fn ssh_start_training_run(
+    app: AppHandle,
+    alias: String,
+    root: String,
+    run_id: String,
+    python: String,
+    run_json: String,
+    model_mlforge: String,
+    model_py: String,
+) -> Result<(), String> {
+    validate_alias(&alias)?;
+    validate_remote_root(&root)?;
+    training::validate_run_id(&run_id)?;
+    let python = {
+        let t = python.trim();
+        if t.is_empty() { "python".to_string() } else { t.to_string() }
+    };
+    validate_python(&python)?;
+
+    let dir = remote_run_dir(&root, &run_id);
+    let dir_q = shell_quote_path(&dir);
+    let ckpt_q = shell_quote_path(&format!("{dir}/checkpoints"));
+    let python_q = shell_quote_path(&python);
+
+    // refuse to clobber an existing run
+    let exists = ssh_exec(&alias, &format!("if [ -d {dir_q} ]; then echo EXISTS; fi"), None)?;
+    if exists.contains("EXISTS") {
+        return Err(format!("run {run_id} already exists on {alias}"));
+    }
+    ssh_exec(&alias, &format!("mkdir -p {ckpt_q}"), None)?;
+
+    // frozen snapshots
+    write_remote_run_file(&alias, &dir, "run.json", run_json.as_bytes())?;
+    write_remote_run_file(&alias, &dir, "model.mlforge", model_mlforge.as_bytes())?;
+    write_remote_run_file(&alias, &dir, "model.py", model_py.as_bytes())?;
+
+    // ship the shared trainer in as train.py (read from the local bundle)
+    let template = crate::sidecar_root_pub(&app)
+        .join("sidecar-torch")
+        .join("training_template.py");
+    let trainer = std::fs::read_to_string(&template).map_err(|e| {
+        format!(
+            "training template missing at {} ({e}). MLForge bundle may be incomplete.",
+            template.display()
+        )
+    })?;
+    write_remote_run_file(&alias, &dir, "train.py", trainer.as_bytes())?;
+    write_remote_run_file(&alias, &dir, "status", b"queued\n")?;
+
+    // Detached launch. setsid → own session (immune to the ssh-channel HUP and
+    // app close); nohup → belt-and-suspenders; stdio to files; stdin /dev/null.
+    // The remote command shell has job control off, so setsid execs in place and
+    // $! is the python pid.
+    let launch = format!(
+        "cd {dir_q} && nohup setsid {python_q} -u train.py > stdout.log 2> stderr.log < /dev/null & echo $! > pid"
+    );
+    ssh_exec(&alias, &launch, None)?;
+    eprintln!("[mlforge] remote training run {run_id} launched on {alias} ({python})");
+    Ok(())
+}
+
+struct ParsedRun {
+    id: String,
+    alive: bool,
+    status: String,
+    run_json: String,
+    metrics: String,
+}
+
+#[tauri::command]
+pub fn ssh_list_training_runs(
+    alias: String,
+    root: String,
+) -> Result<Vec<training::RunSummary>, String> {
+    validate_alias(&alias)?;
+    validate_remote_root(&root)?;
+    let runs_q = shell_quote_path(&remote_runs_dir(&root));
+    // One round-trip: for each run dir emit liveness + status + run.json +
+    // metrics.json between line-delimited markers.
+    let cmd = format!(
+        "RUNS={runs_q}; \
+         if [ -d \"$RUNS\" ]; then \
+           for d in \"$RUNS\"/*/; do \
+             [ -d \"$d\" ] || continue; \
+             name=$(basename \"$d\"); \
+             case \"$name\" in .*) continue;; esac; \
+             echo \"MLF_RUN $name\"; \
+             pid=$(cat \"$d/pid\" 2>/dev/null); \
+             if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then echo 'MLF_ALIVE 1'; else echo 'MLF_ALIVE 0'; fi; \
+             echo MLF_STATUS_BEGIN; cat \"$d/status\" 2>/dev/null; echo; echo MLF_STATUS_END; \
+             echo MLF_RUNJSON_BEGIN; cat \"$d/run.json\" 2>/dev/null; echo; echo MLF_RUNJSON_END; \
+             echo MLF_METRICS_BEGIN; cat \"$d/metrics.json\" 2>/dev/null; echo; echo MLF_METRICS_END; \
+           done; \
+         fi"
+    );
+    let out = ssh_exec(&alias, &cmd, None)?;
+
+    let mut parsed: Vec<ParsedRun> = Vec::new();
+    let mut cur: Option<ParsedRun> = None;
+    let mut section = "";
+    for line in out.lines() {
+        if let Some(name) = line.strip_prefix("MLF_RUN ") {
+            if let Some(r) = cur.take() {
+                parsed.push(r);
+            }
+            cur = Some(ParsedRun {
+                id: name.to_string(),
+                alive: false,
+                status: String::new(),
+                run_json: String::new(),
+                metrics: String::new(),
+            });
+            section = "";
+            continue;
+        }
+        if let Some(a) = line.strip_prefix("MLF_ALIVE ") {
+            if let Some(r) = cur.as_mut() {
+                r.alive = a.trim() == "1";
+            }
+            continue;
+        }
+        match line {
+            "MLF_STATUS_BEGIN" => { section = "status"; continue; }
+            "MLF_RUNJSON_BEGIN" => { section = "runjson"; continue; }
+            "MLF_METRICS_BEGIN" => { section = "metrics"; continue; }
+            "MLF_STATUS_END" | "MLF_RUNJSON_END" | "MLF_METRICS_END" => { section = ""; continue; }
+            _ => {}
+        }
+        if let Some(r) = cur.as_mut() {
+            match section {
+                "status" => { r.status.push_str(line); r.status.push('\n'); }
+                "runjson" => { r.run_json.push_str(line); r.run_json.push('\n'); }
+                "metrics" => { r.metrics.push_str(line); r.metrics.push('\n'); }
+                _ => {}
+            }
+        }
+    }
+    if let Some(r) = cur.take() {
+        parsed.push(r);
+    }
+
+    // run_id is timestamp-prefixed → lexical-desc == newest-first.
+    parsed.sort_by(|a, b| b.id.cmp(&a.id));
+    Ok(parsed
+        .into_iter()
+        .map(|r| {
+            training::RunSummary::from_parts(
+                &r.id,
+                r.run_json.trim(),
+                r.metrics.trim(),
+                r.status.trim(),
+                r.alive,
+            )
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub fn ssh_training_run_status(
+    alias: String,
+    root: String,
+    run_id: String,
+) -> Result<training::RunStatus, String> {
+    validate_alias(&alias)?;
+    validate_remote_root(&root)?;
+    training::validate_run_id(&run_id)?;
+    let dir_q = shell_quote_path(&remote_run_dir(&root, &run_id));
+    let cmd = format!(
+        "d={dir_q}; pid=$(cat \"$d/pid\" 2>/dev/null); \
+         if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then echo 'MLF_ALIVE 1'; else echo 'MLF_ALIVE 0'; fi; \
+         echo \"MLF_PID $pid\"; \
+         echo MLF_STATUS_BEGIN; cat \"$d/status\" 2>/dev/null; echo; echo MLF_STATUS_END"
+    );
+    let out = ssh_exec(&alias, &cmd, None)?;
+    let mut alive = false;
+    let mut pid: Option<i32> = None;
+    let mut status = String::new();
+    let mut in_status = false;
+    for line in out.lines() {
+        if let Some(a) = line.strip_prefix("MLF_ALIVE ") {
+            alive = a.trim() == "1";
+        } else if let Some(p) = line.strip_prefix("MLF_PID ") {
+            pid = p.trim().parse::<i32>().ok();
+        } else if line == "MLF_STATUS_BEGIN" {
+            in_status = true;
+        } else if line == "MLF_STATUS_END" {
+            in_status = false;
+        } else if in_status {
+            status.push_str(line);
+            status.push('\n');
+        }
+    }
+    Ok(training::RunStatus::new(status.trim(), alive, pid))
+}
+
+#[tauri::command]
+pub fn ssh_read_training_run_file(
+    alias: String,
+    root: String,
+    run_id: String,
+    name: String,
+) -> Result<String, String> {
+    validate_alias(&alias)?;
+    validate_remote_root(&root)?;
+    training::validate_run_id(&run_id)?;
+    if !training::READABLE.contains(&name.as_str()) {
+        return Err(format!("file {name:?} is not readable from a run dir"));
+    }
+    let p_q = shell_quote_path(&format!("{}/{}", remote_run_dir(&root, &run_id), name));
+    ssh_exec(&alias, &format!("if [ -f {p_q} ]; then cat {p_q}; fi"), None)
+}
+
+#[tauri::command]
+pub fn ssh_stop_training_run(alias: String, root: String, run_id: String) -> Result<(), String> {
+    validate_alias(&alias)?;
+    validate_remote_root(&root)?;
+    training::validate_run_id(&run_id)?;
+    let dir_q = shell_quote_path(&remote_run_dir(&root, &run_id));
+    // Cooperative (status file, checked each epoch) + forceful (SIGTERM the whole
+    // process group via negative pid — setsid made python the group leader).
+    let cmd = format!(
+        "d={dir_q}; if [ -d \"$d\" ]; then \
+           printf 'cancelled\\n' > \"$d/status\"; \
+           pid=$(cat \"$d/pid\" 2>/dev/null); \
+           if [ -n \"$pid\" ]; then kill -TERM -\"$pid\" 2>/dev/null; kill -TERM \"$pid\" 2>/dev/null; fi; \
+         fi"
+    );
+    ssh_exec(&alias, &cmd, None).map(|_| ())
+}
+
+#[tauri::command]
+pub fn ssh_delete_training_run(alias: String, root: String, run_id: String) -> Result<(), String> {
+    validate_alias(&alias)?;
+    validate_remote_root(&root)?;
+    training::validate_run_id(&run_id)?;
+    let dir_q = shell_quote_path(&remote_run_dir(&root, &run_id));
+    let cmd = format!(
+        "d={dir_q}; if [ -d \"$d\" ]; then \
+           pid=$(cat \"$d/pid\" 2>/dev/null); \
+           if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then echo MLF_ALIVE; \
+           else rm -rf -- \"$d\"; echo MLF_DELETED; fi; \
+         else echo MLF_DELETED; fi"
+    );
+    let out = ssh_exec(&alias, &cmd, None)?;
+    if out.contains("MLF_ALIVE") {
+        return Err("run is still alive — stop it before deleting".into());
+    }
+    Ok(())
 }

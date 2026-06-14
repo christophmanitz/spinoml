@@ -48,7 +48,8 @@ serializeParam + an Inspector FixHint + verify:codegen/verify:sidecar cases).
 
 - [~] **Training** — siehe ausführlicher Plan unten in "Phase 13–18: Training-System".
       **Phase 13 (Foundation) + 14 (Trainings-Graph) + 15 (Live-Tracking-UI)
-      sind umgesetzt.** 16–18 offen (Remote-Direct, SLURM, Sweeps).
+      + 16 (Remote-Direct via ssh+nohup) sind umgesetzt.** 17–18 offen
+      (SLURM, Sweeps).
 
 # Phase 13–18: Training-System — ausführlicher Plan
 
@@ -414,7 +415,33 @@ Im Experiments-Tab: mehrere Runs auswählen → Compare-Modus:
 Best-of-N: schnellste Wahl welches Modell ins `models/best/`
 verlinkt wird.
 
-## Phase 16: Remote-Direct-Training (kein SLURM)
+## Phase 16: Remote-Direct-Training (kein SLURM)  ✅ ERLEDIGT (2026-06-14)
+
+**Umsetzung**:
+- `src-tauri/src/ssh.rs` — sechs `ssh_*`-Mirror der lokalen Training-Commands
+  (`ssh_start_training_run` / `ssh_list_training_runs` /
+  `ssh_training_run_status` / `ssh_read_training_run_file` /
+  `ssh_stop_training_run` / `ssh_delete_training_run`). Start schreibt das Run-
+  Dir auf den Host (run.json/model.mlforge/model.py + train.py aus dem lokalen
+  Bundle) und launcht detached via `nohup setsid <python> -u train.py
+  > stdout 2> stderr < /dev/null & echo $! > pid` — überlebt ssh-Session UND
+  App-Close. Status = `kill -0 <pid>` + status-File über ssh; Liste in EINEM
+  Round-Trip (marker-delimitierter Shell-Loop, in Rust geparst).
+- `src-tauri/src/training.rs` — `RunSummary::from_parts` / `RunStatus::new` /
+  `reconcile_status` / `validate_run_id` / `READABLE` als `pub(crate)`
+  herausgezogen, damit local + ssh exakt dieselbe Summarize-/Reconcile-Logik
+  teilen.
+- Frontend — `connections/store.ts` bekommt `python?` pro Remote-Connection
+  (+ `remotePython()`), `tauri-ssh.ts` die sechs Wrapper,
+  `training/backend.ts` dispatcht jetzt local↔remote (statt zu blocken),
+  `ExperimentsExplorer` zeigt einen Remote-Strip mit Host + Python-Pfad-Input
+  (persistiert via `updateRemote`).
+- Abweichung vom Plan: KEIN rsync — Run-Dateien gehen per `cat >`/stdin über
+  ssh (klein, kein extra Tool nötig); Dataset bleibt auf dem Host (abspath =
+  `<root>/datasets/...`). Backend-Detection (sbatch/nvidia-smi/module,
+  RemoteCapabilities) ist Vorbereitung für Phase 17 und hier noch NICHT dabei.
+  Remote-Python muss eine Umgebung mit torch (+ pandas für tabular) sein — der
+  Strip weist darauf hin; fehlende Deps landen sichtbar in stderr.log.
 
 Manche User wollen testweise auf dem Login-Knoten trainieren oder
 auf einem Compute-Knoten den sie sich vorher mit `salloc` geholt

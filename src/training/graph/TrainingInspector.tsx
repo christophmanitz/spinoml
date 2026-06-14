@@ -5,7 +5,6 @@ import { isTauri } from '../../workspace/tauri-fs'
 import { useDatasetsStore } from '../../datasets/store'
 import { compileTrainingGraph } from '../../codegen/trainingGenerator'
 import { useTrainingStore } from '../store'
-import { remoteTrainingBlocked, REMOTE_TRAINING_MSG } from '../backend'
 import { useTrainingGraphStore } from './store'
 import { TRAINING_NODES, type TrainingFieldSpec } from './registry'
 
@@ -75,7 +74,6 @@ function CompilePanel({ compile }: { compile: ReturnType<typeof compileTrainingG
   const startRun = useTrainingStore((s) => s.startRun)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const blocked = remoteTrainingBlocked()
 
   async function launch() {
     if (!compile.plan) return
@@ -115,8 +113,8 @@ function CompilePanel({ compile }: { compile: ReturnType<typeof compileTrainingG
       )}
       <button
         onClick={() => void launch()}
-        disabled={!compile.ok || busy || blocked}
-        title={blocked ? REMOTE_TRAINING_MSG : 'Run aus diesem Graph starten'}
+        disabled={!compile.ok || busy}
+        title="Run aus diesem Graph starten"
         className="w-full rounded bg-[#13344f] px-2 py-1 text-[11px] text-[#6ab7ff] hover:bg-[#184466] disabled:cursor-not-allowed disabled:opacity-40"
       >
         {busy ? 'starte…' : '▶ Run starten'}

@@ -28,7 +28,7 @@ use crate::{current_root, WorkspaceState};
 
 /// run_id is used as a path segment and embedded in a shell command, so it must
 /// be a tame slug. Our generated ids look like `2026-06-15T12-30-00_iris_a8f3`.
-fn validate_run_id(run_id: &str) -> Result<(), String> {
+pub(crate) fn validate_run_id(run_id: &str) -> Result<(), String> {
     if run_id.is_empty() || run_id.len() > 200 {
         return Err("run id must be 1..200 chars".into());
     }
@@ -50,8 +50,9 @@ fn run_dir(root: &Path, run_id: &str) -> PathBuf {
 }
 
 /// Files the UI is allowed to read back from a run dir. Keeps the read command
-/// from turning into an arbitrary-file-read primitive.
-const READABLE: &[&str] = &[
+/// from turning into an arbitrary-file-read primitive. Shared with the ssh
+/// mirror (ssh.rs) so local and remote expose exactly the same surface.
+pub(crate) const READABLE: &[&str] = &[
     "run.json",
     "events.jsonl",
     "metrics.json",
@@ -75,6 +76,55 @@ pub struct RunSummary {
     epochs: u32,
     best_val_loss: Option<f64>,
     alive: bool,
+}
+
+/// Reconcile a raw status string against process liveness. A "running" status
+/// whose process is gone (e.g. SIGKILL, node reboot) is reported as "failed" so
+/// the UI never shows a run as live when it isn't.
+pub(crate) fn reconcile_status(status_raw: &str, alive: bool) -> String {
+    let s = status_raw.trim();
+    let s = if s.is_empty() { "unknown" } else { s };
+    if s == "running" && !alive {
+        "failed".to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+impl RunSummary {
+    /// Build a summary from the raw file contents — used by the local executor
+    /// (read from disk) and the ssh mirror (read over one ssh round-trip).
+    pub(crate) fn from_parts(
+        run_id: &str,
+        run_json: &str,
+        metrics_json: &str,
+        status_raw: &str,
+        alive: bool,
+    ) -> RunSummary {
+        let cfg: Value = serde_json::from_str(run_json).unwrap_or(Value::Null);
+        let metrics: Value = serde_json::from_str(metrics_json).unwrap_or(Value::Null);
+        let s = |v: &Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        RunSummary {
+            run_id: run_id.to_string(),
+            run_label: s(&cfg, "run_label"),
+            model_path: s(&cfg, "model_path"),
+            dataset_path: cfg
+                .get("dataset")
+                .and_then(|d| d.get("path"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            created_at: s(&cfg, "created_at"),
+            status: reconcile_status(status_raw, alive),
+            epochs: cfg
+                .get("training")
+                .and_then(|t| t.get("epochs"))
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0) as u32,
+            best_val_loss: metrics.get("best_val_loss").and_then(|x| x.as_f64()),
+            alive,
+        }
+    }
 }
 
 fn pid_of(dir: &Path) -> Option<i32> {
@@ -102,45 +152,11 @@ fn read_status(dir: &Path) -> String {
 }
 
 fn summarize(dir: &Path, run_id: &str) -> RunSummary {
-    let cfg: Value = fs::read_to_string(dir.join("run.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(Value::Null);
-    let metrics: Value = fs::read_to_string(dir.join("metrics.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(Value::Null);
-
-    let s = |v: &Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-
-    let mut status = read_status(dir);
+    let run_json = fs::read_to_string(dir.join("run.json")).unwrap_or_default();
+    let metrics_json = fs::read_to_string(dir.join("metrics.json")).unwrap_or_default();
+    let status_raw = fs::read_to_string(dir.join("status")).unwrap_or_default();
     let alive = pid_of(dir).map(is_alive).unwrap_or(false);
-    // Reconcile a stale "running" status: if the process is gone but the file
-    // never got updated (e.g. SIGKILL), treat it as failed so the UI isn't lying.
-    if status == "running" && !alive {
-        status = "failed".into();
-    }
-
-    RunSummary {
-        run_id: run_id.to_string(),
-        run_label: s(&cfg, "run_label"),
-        model_path: s(&cfg, "model_path"),
-        dataset_path: cfg
-            .get("dataset")
-            .and_then(|d| d.get("path"))
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .to_string(),
-        created_at: s(&cfg, "created_at"),
-        status,
-        epochs: cfg
-            .get("training")
-            .and_then(|t| t.get("epochs"))
-            .and_then(|x| x.as_u64())
-            .unwrap_or(0) as u32,
-        best_val_loss: metrics.get("best_val_loss").and_then(|x| x.as_f64()),
-        alive,
-    }
+    RunSummary::from_parts(run_id, &run_json, &metrics_json, &status_raw, alive)
 }
 
 #[tauri::command]
@@ -172,6 +188,16 @@ pub struct RunStatus {
     status: String,
     alive: bool,
     pid: Option<i32>,
+}
+
+impl RunStatus {
+    pub(crate) fn new(status_raw: &str, alive: bool, pid: Option<i32>) -> RunStatus {
+        RunStatus {
+            status: reconcile_status(status_raw, alive),
+            alive,
+            pid,
+        }
+    }
 }
 
 #[tauri::command]

@@ -4,7 +4,7 @@ import { isTauri } from '../workspace/tauri-fs'
 import { parseFile } from '../persistence/file'
 import { generateFromSnapshot } from '../codegen/generator'
 import { fs } from '../connections/backend'
-import { training, remoteTrainingBlocked } from './backend'
+import { training } from './backend'
 import {
   type RunSummary,
   type RunConfig,
@@ -76,10 +76,6 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   refresh: async () => {
     if (!isTauri()) {
       set({ runs: [], listError: 'Training braucht Tauri (echtes Dateisystem).' })
-      return
-    }
-    if (remoteTrainingBlocked()) {
-      set({ runs: [], listError: null })
       return
     }
     set({ listLoading: true, listError: null })

@@ -1,43 +1,53 @@
 // Dispatch layer for training-run lifecycle calls, analogous to
 // connections/backend.ts. Components/stores MUST go through this, not through
-// tauri-training directly — that's where the local↔remote switch lives once
-// remote training lands (Phase 16/17). For now remote is explicitly blocked.
+// tauri-training / tauri-ssh directly — this is where the local↔remote switch
+// lives. Local = Phase 13 executor; remote-ssh = Phase 16 ssh-direct executor.
 
-import { getCurrentConnection } from '../connections/store'
+import { getCurrentConnection, sshTarget, remotePython, type RemoteSshConnection } from '../connections/store'
 import { tauriTraining } from './tauri-training'
+import { tauriSsh } from '../connections/tauri-ssh'
 import type { RunSummary, RunStatus } from './types'
 
 export const REMOTE_TRAINING_MSG =
-  'Remote-Training kommt in Phase 16 (ssh-direct) bzw. 17 (SLURM). ' +
-  'Wechsle auf die lokale Verbindung, um einen Run zu starten.'
+  'Remote-Training (ssh-direct) läuft detached auf dem Host. ' +
+  'Stelle sicher, dass der Python-Pfad unten auf eine Umgebung mit torch zeigt.'
 
+// Kept for callers that still want to know whether we're on a remote backend.
+// Remote training is supported since Phase 16, so this no longer blocks.
 export function remoteTrainingBlocked(): boolean {
-  return getCurrentConnection().kind === 'remote-ssh'
+  return false
+}
+
+function remote(): RemoteSshConnection | null {
+  const c = getCurrentConnection()
+  return c.kind === 'remote-ssh' ? c : null
 }
 
 export const training = {
   list: (): Promise<RunSummary[]> => {
-    if (remoteTrainingBlocked()) return Promise.resolve([])
-    return tauriTraining.list()
+    const r = remote()
+    return r ? tauriSsh.listTrainingRuns(sshTarget(r), r.root) : tauriTraining.list()
   },
   status: (runId: string): Promise<RunStatus> => {
-    if (remoteTrainingBlocked()) return Promise.reject(new Error(REMOTE_TRAINING_MSG))
-    return tauriTraining.status(runId)
+    const r = remote()
+    return r ? tauriSsh.trainingRunStatus(sshTarget(r), r.root, runId) : tauriTraining.status(runId)
   },
   readFile: (runId: string, name: string): Promise<string> => {
-    if (remoteTrainingBlocked()) return Promise.reject(new Error(REMOTE_TRAINING_MSG))
-    return tauriTraining.readFile(runId, name)
+    const r = remote()
+    return r ? tauriSsh.readTrainingRunFile(sshTarget(r), r.root, runId, name) : tauriTraining.readFile(runId, name)
   },
   start: (runId: string, runJson: string, modelMlforge: string, modelPy: string): Promise<void> => {
-    if (remoteTrainingBlocked()) return Promise.reject(new Error(REMOTE_TRAINING_MSG))
-    return tauriTraining.start(runId, runJson, modelMlforge, modelPy)
+    const r = remote()
+    return r
+      ? tauriSsh.startTrainingRun(sshTarget(r), r.root, runId, remotePython(r), runJson, modelMlforge, modelPy)
+      : tauriTraining.start(runId, runJson, modelMlforge, modelPy)
   },
   stop: (runId: string): Promise<void> => {
-    if (remoteTrainingBlocked()) return Promise.reject(new Error(REMOTE_TRAINING_MSG))
-    return tauriTraining.stop(runId)
+    const r = remote()
+    return r ? tauriSsh.stopTrainingRun(sshTarget(r), r.root, runId) : tauriTraining.stop(runId)
   },
   remove: (runId: string): Promise<void> => {
-    if (remoteTrainingBlocked()) return Promise.reject(new Error(REMOTE_TRAINING_MSG))
-    return tauriTraining.remove(runId)
+    const r = remote()
+    return r ? tauriSsh.deleteTrainingRun(sshTarget(r), r.root, runId) : tauriTraining.remove(runId)
   },
 }

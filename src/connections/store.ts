@@ -30,9 +30,20 @@ export type RemoteSshConnection = {
    */
   user?: string
   root: string
+  /**
+   * Remote python interpreter used to launch training runs (Phase 16). A path
+   * or bare name pointing at an env with torch (+ pandas for tabular). Defaults
+   * to `python` when unset — usually wrong on HPC, so the UI surfaces it.
+   */
+  python?: string
 }
 
 export type Connection = LocalConnection | RemoteSshConnection
+
+/** The remote python for training, with the same default the Rust side uses. */
+export function remotePython(c: RemoteSshConnection): string {
+  return c.python && c.python.trim() ? c.python.trim() : 'python'
+}
 
 export const LOCAL_CONNECTION: LocalConnection = {
   id: 'local',
@@ -90,7 +101,7 @@ type State = {
 
   setCurrent: (id: string) => void
   addRemote: (label: string, alias: string, root: string, user?: string) => RemoteSshConnection
-  updateRemote: (id: string, patch: Partial<Pick<RemoteSshConnection, 'label' | 'alias' | 'user' | 'root'>>) => void
+  updateRemote: (id: string, patch: Partial<Pick<RemoteSshConnection, 'label' | 'alias' | 'user' | 'root' | 'python'>>) => void
   removeRemote: (id: string) => void
 
   testConnection: (target: string) => Promise<SshTestResult>
