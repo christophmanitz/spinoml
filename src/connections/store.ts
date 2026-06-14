@@ -43,9 +43,15 @@ export type RemoteSshConnection = {
 
 export type Connection = LocalConnection | RemoteSshConnection
 
-/** The remote python for training, with the same default the Rust side uses. */
+/** The remote python used to launch training. Defaults to the torch-equipped
+ *  venv that the Phase-12b remote sidecar deploys under <root>/.mlforge/venv —
+ *  so remote training reuses the same env as shape-inference and works out of
+ *  the box once the sidecar has been set up. Override per connection if you'd
+ *  rather use a module-loaded / conda python. */
 export function remotePython(c: RemoteSshConnection): string {
-  return c.python && c.python.trim() ? c.python.trim() : 'python'
+  if (c.python && c.python.trim()) return c.python.trim()
+  const root = c.root.replace(/\/+$/, '')
+  return `${root}/.mlforge/venv/bin/python`
 }
 
 export const LOCAL_CONNECTION: LocalConnection = {

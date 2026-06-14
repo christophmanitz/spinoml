@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { fs, datasets as datasetsBackend } from '../connections/backend'
 import { useDatasetsStore } from '../datasets/store'
-import { useConnectionsStore } from '../connections/store'
+import { useConnectionsStore, remotePython } from '../connections/store'
 import { useTrainingStore } from './store'
 import { training } from './backend'
 import {
@@ -366,7 +366,7 @@ export default function NewRunModal() {
                       className={`${SELECT} font-mono`}
                     />
                   </Field>
-                  <Hint>Python: <code className="text-[#9aa1a8]">{remoteConn ? (remoteConn.python || 'python') : 'python'}</code> — im Runs-Tab editierbar. Muss torch (+pandas) haben (ggf. via module load).</Hint>
+                  <Hint>Python: <code className="text-[#9aa1a8]">{remoteConn ? remotePython(remoteConn) : 'python'}</code> — im Runs-Tab editierbar. Muss torch (+pandas) haben (Sidecar-venv passt; sonst via module load).</Hint>
                 </>
               )}
             </div>
