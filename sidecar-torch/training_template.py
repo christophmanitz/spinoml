@@ -170,6 +170,75 @@ def build_scheduler(cfg: dict, optimizer, epochs: int):
     raise ValueError(f"unknown scheduler kind: {kind}")
 
 
+def compute_metrics(task: str, out, y, kinds: list[str]) -> dict:
+    """Extra metrics over a full val pass. Pure torch, no sklearn dep."""
+    import torch
+
+    res: dict[str, float] = {}
+    if not kinds:
+        return res
+    with torch.no_grad():
+        if task == "regression":
+            pred = out.float().view(-1)
+            tgt = y.float().view(-1)
+            for k in kinds:
+                if k == "mse":
+                    res["mse"] = float(((pred - tgt) ** 2).mean())
+                elif k == "mae":
+                    res["mae"] = float((pred - tgt).abs().mean())
+                elif k == "r2":
+                    ss_res = float(((tgt - pred) ** 2).sum())
+                    ss_tot = float(((tgt - tgt.mean()) ** 2).sum()) or 1e-12
+                    res["r2"] = 1.0 - ss_res / ss_tot
+            return res
+        # classification / binary
+        if task == "binary":
+            pred = (out.view(-1) > 0).long()
+            n_classes = 2
+        else:
+            pred = out.argmax(dim=-1)
+            n_classes = int(out.shape[-1])
+        tgt = y.long().view(-1)
+        for k in kinds:
+            if k == "accuracy":
+                res["accuracy"] = float((pred == tgt).float().mean())
+            elif k in ("precision", "recall", "f1"):
+                precs, recs, f1s = [], [], []
+                for c in range(n_classes):
+                    tp = float(((pred == c) & (tgt == c)).sum())
+                    fp = float(((pred == c) & (tgt != c)).sum())
+                    fn = float(((pred != c) & (tgt == c)).sum())
+                    p = tp / (tp + fp) if (tp + fp) else 0.0
+                    r = tp / (tp + fn) if (tp + fn) else 0.0
+                    precs.append(p); recs.append(r)
+                    f1s.append(2 * p * r / (p + r) if (p + r) else 0.0)
+                if k == "precision":
+                    res["precision"] = sum(precs) / len(precs)
+                elif k == "recall":
+                    res["recall"] = sum(recs) / len(recs)
+                else:
+                    res["f1"] = sum(f1s) / len(f1s)
+    return res
+
+
+def parse_callbacks(callbacks: list[dict]) -> dict:
+    """Flatten the graph's callback list into the knobs the loop needs."""
+    out = {"early_stop": None, "grad_clip": None, "amp": None}
+    for cb in callbacks or []:
+        kind = cb.get("kind")
+        if kind == "EarlyStopping":
+            out["early_stop"] = {
+                "monitor": cb.get("monitor", "val_loss"),
+                "patience": int(cb.get("patience", 20)),
+                "mode": cb.get("mode", "min"),
+            }
+        elif kind == "GradientClipping":
+            out["grad_clip"] = float(cb.get("max_norm", 1.0))
+        elif kind == "MixedPrecision":
+            out["amp"] = cb.get("dtype", "bf16")
+    return out
+
+
 def main() -> None:
     set_status("running")
     t0 = time.time()
@@ -241,6 +310,22 @@ def main() -> None:
     except Exception as e:  # noqa: BLE001
         fail("model", str(e), traceback.format_exc())
 
+    # ── metrics + callbacks (Phase 14 training-graph) ──
+    metric_kinds = train_cfg.get("metrics") or []
+    cb = parse_callbacks(train_cfg.get("callbacks") or [])
+    grad_clip = cb["grad_clip"]
+    early = cb["early_stop"]
+    amp_dtype = None
+    if cb["amp"]:
+        amp_dtype = torch.bfloat16 if cb["amp"] == "bf16" else torch.float16
+    use_amp = amp_dtype is not None
+    device_type = "cuda" if torch.cuda.is_available() else "cpu"
+    if metric_kinds or grad_clip or early or use_amp:
+        emit("config.extras", metrics=metric_kinds, grad_clip=grad_clip,
+             early_stopping=early, amp=cb["amp"])
+    es_best = float("inf") if (early and early["mode"] == "min") else float("-inf")
+    es_wait = 0
+
     def prep_target(t):
         if task == "regression":
             return t.float()
@@ -274,8 +359,11 @@ def main() -> None:
             step = 0
             for xb, yb in train_loader:
                 optimizer.zero_grad()
-                _, loss = forward_loss(xb, yb)
+                with torch.autocast(device_type=device_type, dtype=amp_dtype, enabled=use_amp):
+                    _, loss = forward_loss(xb, yb)
                 loss.backward()
+                if grad_clip:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                 optimizer.step()
                 bs = xb.shape[0]
                 running += float(loss.item()) * bs
@@ -289,17 +377,23 @@ def main() -> None:
             # ── validation ──
             val_loss = None
             val_acc = None
+            extra: dict = {}
             if val_loader is not None:
                 model.eval()
                 vrun = 0.0
                 vseen = 0
                 correct = 0
+                outs = []
+                ys = []
                 with torch.no_grad():
                     for xb, yb in val_loader:
-                        out, loss = forward_loss(xb, yb)
+                        with torch.autocast(device_type=device_type, dtype=amp_dtype, enabled=use_amp):
+                            out, loss = forward_loss(xb, yb)
                         bs = xb.shape[0]
                         vrun += float(loss.item()) * bs
                         vseen += bs
+                        outs.append(out.float())
+                        ys.append(yb)
                         if task == "classification":
                             correct += int((out.argmax(dim=-1) == yb.long()).sum().item())
                         elif task == "binary":
@@ -307,6 +401,9 @@ def main() -> None:
                 val_loss = vrun / max(1, vseen)
                 if task in ("classification", "binary"):
                     val_acc = correct / max(1, vseen)
+                if outs and metric_kinds:
+                    extra = {k: round(v, 6) for k, v in
+                             compute_metrics(task, torch.cat(outs), torch.cat(ys), metric_kinds).items()}
 
             monitor = val_loss if val_loss is not None else train_loss
             if scheduler is not None:
@@ -318,6 +415,7 @@ def main() -> None:
             emit("epoch.end", epoch=epoch, train_loss=round(train_loss, 6),
                  val_loss=None if val_loss is None else round(val_loss, 6),
                  val_acc=None if val_acc is None else round(val_acc, 6),
+                 metrics=extra or None,
                  lr=optimizer.param_groups[0]["lr"])
 
             # ── checkpoint best ──
@@ -328,6 +426,20 @@ def main() -> None:
                            CKPT_DIR / "best.pt")
                 emit("checkpoint", epoch=epoch, path="checkpoints/best.pt",
                      val_loss=None if val_loss is None else round(val_loss, 6), is_best=True)
+
+            # ── early stopping ──
+            if early is not None:
+                cur = {"val_loss": val_loss, "val_acc": val_acc, "train_loss": train_loss}.get(early["monitor"])
+                if cur is not None:
+                    improved = cur < es_best - 1e-9 if early["mode"] == "min" else cur > es_best + 1e-9
+                    if improved:
+                        es_best = cur
+                        es_wait = 0
+                    else:
+                        es_wait += 1
+                        if es_wait >= early["patience"]:
+                            emit("run.earlystop", epoch=epoch, monitor=early["monitor"], best=round(es_best, 6))
+                            break
 
         torch.save({"epoch": epochs - 1, "model_state": model.state_dict(), "classes": classes},
                    CKPT_DIR / "last.pt")

@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "verify:codegen": "tsx scripts/verify-codegen.ts",
+    "verify:traingen": "tsx scripts/verify-traingen.ts",
     "verify:sidecar": "tsx scripts/verify-sidecar.ts",
     "sidecar:torch": "python sidecar-torch/main.py",
     "sidecar:llm": "node sidecar-llm/main.mjs"

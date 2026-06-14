@@ -13,6 +13,8 @@ export type OptimizerConfig = {
   momentum?: number
 }
 
+export type CallbackConfig = { kind: string } & Record<string, unknown>
+
 export type TrainingConfig = {
   epochs: number
   batch_size: number
@@ -22,6 +24,10 @@ export type TrainingConfig = {
   optimizer: OptimizerConfig
   loss: { kind: LossKind }
   scheduler: { kind: SchedulerKind } & Record<string, unknown>
+  /** Phase 14: extra metrics computed each val pass (accuracy/f1/mse/…). */
+  metrics?: string[]
+  /** Phase 14: early-stopping / grad-clip / AMP, emitted by the training graph. */
+  callbacks?: CallbackConfig[]
 }
 
 export type DatasetConfig = {
