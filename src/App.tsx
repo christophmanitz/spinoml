@@ -16,6 +16,9 @@ import Toolbar from './Toolbar'
 import { isTauri } from './workspace/tauri-fs'
 import { useDatasetsStore } from './datasets/store'
 import DatasetDetail from './datasets/DatasetDetail'
+import { useTrainingStore } from './training/store'
+import NewRunModal from './training/NewRunModal'
+import RunDetailModal from './training/RunDetailModal'
 import { useConnectionsStore, getCurrentConnection } from './connections/store'
 import { useRemoteSidecarStore } from './sidecars/remoteSidecar'
 
@@ -169,6 +172,8 @@ export default function App() {
 
   const showWelcome = isTauri() && status.kind !== 'loaded'
   const selectedDataset = useDatasetsStore((s) => s.selectedRel)
+  const selectedRun = useTrainingStore((s) => s.selectedRunId)
+  const newRunOpen = useTrainingStore((s) => s.newRunOpen)
 
   return (
     <div className="flex h-screen w-screen flex-col bg-[#0b0d10] text-[#e6e8eb]">
@@ -234,6 +239,8 @@ export default function App() {
       )}
 
       {selectedDataset && <DatasetDetail relpath={selectedDataset} />}
+      {newRunOpen && <NewRunModal />}
+      {selectedRun && <RunDetailModal runId={selectedRun} />}
     </div>
   )
 }

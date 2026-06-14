@@ -1,0 +1,102 @@
+// Shared types for the Phase 13 training-run system. These mirror the
+// run.json schema written into experiments/runs/<run_id>/ and the events.jsonl
+// stream (see TODO.md "Phase 13").
+
+export type OptimizerKind = 'Adam' | 'AdamW' | 'SGD' | 'RMSprop'
+export type LossKind = 'CrossEntropyLoss' | 'BCEWithLogitsLoss' | 'MSELoss' | 'L1Loss'
+export type SchedulerKind = 'none' | 'StepLR' | 'CosineAnnealingLR' | 'ReduceLROnPlateau'
+
+export type OptimizerConfig = {
+  kind: OptimizerKind
+  lr: number
+  weight_decay: number
+  momentum?: number
+}
+
+export type TrainingConfig = {
+  epochs: number
+  batch_size: number
+  val_split: number
+  seed: number
+  log_every_n_steps: number
+  optimizer: OptimizerConfig
+  loss: { kind: LossKind }
+  scheduler: { kind: SchedulerKind } & Record<string, unknown>
+}
+
+export type DatasetConfig = {
+  /** Absolute path on the executor host (Phase 13 = local). */
+  path: string
+  /** Workspace-relative path, kept for display + future remote rsync. */
+  relpath: string
+  kind: 'tabular'
+  feature_columns: string[] | null
+  target_column: string
+}
+
+export type RunConfig = {
+  run_id: string
+  run_label: string
+  created_at: string
+  status: 'queued'
+  model_path: string
+  backend: { kind: 'local' }
+  dataset: DatasetConfig
+  training: TrainingConfig
+}
+
+// ── Returned by the Rust executor ──
+
+export type RunSummary = {
+  run_id: string
+  run_label: string
+  model_path: string
+  dataset_path: string
+  created_at: string
+  status: string
+  epochs: number
+  best_val_loss: number | null
+  alive: boolean
+}
+
+export type RunStatus = {
+  status: string
+  alive: boolean
+  pid: number | null
+}
+
+export type TrainingEvent = {
+  t: string
+  kind: string
+} & Record<string, unknown>
+
+export const RUNNING_STATES = new Set(['queued', 'running'])
+
+export function isTerminal(status: string): boolean {
+  return !RUNNING_STATES.has(status)
+}
+
+export function defaultTrainingConfig(): TrainingConfig {
+  return {
+    epochs: 50,
+    batch_size: 32,
+    val_split: 0.2,
+    seed: 42,
+    log_every_n_steps: 10,
+    optimizer: { kind: 'Adam', lr: 1e-3, weight_decay: 0 },
+    loss: { kind: 'CrossEntropyLoss' },
+    scheduler: { kind: 'none' },
+  }
+}
+
+/** `<iso-compact>_<slug>_<short-rand>` so FS sort == chronological. */
+export function makeRunId(label: string): string {
+  const iso = new Date().toISOString().replace(/[:.]/g, '-').replace('Z', '').slice(0, 19)
+  const slug = (label || 'run')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32) || 'run'
+  const rand = Math.random().toString(36).slice(2, 6)
+  return `${iso}_${slug}_${rand}`
+}

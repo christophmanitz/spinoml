@@ -11,12 +11,13 @@ use tauri_plugin_dialog::DialogExt;
 mod ssh;
 mod pty;
 mod remote_sidecar;
+mod training;
 
 pub(crate) const PROJECT_FILE: &str = "mlforge.project.json";
 pub(crate) const SUBDIRS: &[&str] = &["models", "datasets", "notes", "experiments"];
 
 #[derive(Default)]
-struct WorkspaceState {
+pub(crate) struct WorkspaceState {
     root: Mutex<Option<PathBuf>>,
 }
 
@@ -134,7 +135,7 @@ fn resolve(root: &Path, relpath: &str) -> Result<PathBuf, String> {
     Ok(root.join(rel))
 }
 
-fn current_root(state: &State<WorkspaceState>) -> Result<PathBuf, String> {
+pub(crate) fn current_root(state: &State<WorkspaceState>) -> Result<PathBuf, String> {
     state
         .root
         .lock()
@@ -773,6 +774,12 @@ pub fn run() {
             remote_sidecar::ensure_remote_sidecar,
             remote_sidecar::stop_remote_sidecar,
             remote_sidecar::remote_sidecar_status,
+            training::list_training_runs,
+            training::training_run_status,
+            training::read_training_run_file,
+            training::start_training_run,
+            training::stop_training_run,
+            training::delete_training_run,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
