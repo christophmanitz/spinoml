@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { fs, datasets as datasetsBackend } from '../../connections/backend'
 import { isTauri } from '../../workspace/tauri-fs'
@@ -6,7 +6,7 @@ import { useDatasetsStore } from '../../datasets/store'
 import { compileTrainingGraph } from '../../codegen/trainingGenerator'
 import { useTrainingStore } from '../store'
 import { remoteTrainingBlocked, REMOTE_TRAINING_MSG } from '../backend'
-import { useTrainingGraphStore, captureTrainingSnapshot } from './store'
+import { useTrainingGraphStore } from './store'
 import { TRAINING_NODES, type TrainingFieldSpec } from './registry'
 
 const INPUT = 'w-full rounded border border-[#1f2429] bg-[#0b0e11] px-2 py-1 text-[12px] text-[#e6e8eb] focus:border-[#6ab7ff] focus:outline-none'
@@ -15,8 +15,18 @@ export default function TrainingInspector() {
   const node = useTrainingGraphStore((s) => s.nodes.find((n) => n.id === s.selectedNodeId) ?? null)
   const updateNodeParams = useTrainingGraphStore((s) => s.updateNodeParams)
   const deleteNode = useTrainingGraphStore((s) => s.deleteNode)
-  // recompute compile feedback whenever the graph changes
-  const compile = useTrainingGraphStore((s) => compileTrainingGraph(captureTrainingSnapshot(s)))
+  // Derive compile feedback via useMemo on the (stable) node/edge arrays.
+  // NOT inside the selector — a selector returning a fresh object every call
+  // trips useSyncExternalStore into an infinite re-render loop.
+  const nodes = useTrainingGraphStore((s) => s.nodes)
+  const edges = useTrainingGraphStore((s) => s.edges)
+  const compile = useMemo(
+    () => compileTrainingGraph({
+      nodes: nodes.map((n) => ({ id: n.id, trainingType: n.data.trainingType, params: n.data.params })),
+      edges: edges.map((e) => ({ source: e.source, target: e.target })),
+    }),
+    [nodes, edges],
+  )
 
   if (!node) {
     return (
