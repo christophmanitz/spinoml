@@ -14,6 +14,7 @@ import '@xyflow/react/dist/style.css'
 
 import { useTrainingGraphStore } from './store'
 import TrainingNode from './TrainingNode'
+import TrainingGraphBar from './TrainingGraphBar'
 import { TRAINING_NODES } from './registry'
 import { TRAINING_DRAG_MIME } from './TrainingPalette'
 
@@ -75,18 +76,9 @@ function TrainingCanvasInner() {
         <Background gap={16} size={1} />
         <Controls />
         <MiniMap pannable zoomable nodeColor="#3a4148" maskColor="#0b0d1099" />
-        {nodes.length === 0 && (
-          <Panel position="top-left" className="!m-3">
-            <div className="max-w-xs rounded border border-[#1f2429] bg-[#13171b] p-3 text-[11px] text-[#7a8088]">
-              Leerer Trainings-Graph. Ziehe Knoten aus der Palette: ein
-              <span className="text-[#6ab7ff]"> DatasetSource</span>,
-              <span className="text-[#b48ead]"> ModelSource</span>,
-              <span className="text-[#5fd39a]"> Loss</span> +
-              <span className="text-[#5fd39a]"> Optimizer</span> und einen
-              <span className="text-[#ff7a85]"> TrainLoop</span>.
-            </div>
-          </Panel>
-        )}
+        <Panel position="top-left" className="!m-2">
+          <TrainingGraphBar />
+        </Panel>
         <Panel position="top-right" className="!m-2">
           <button
             className="rounded border border-[#1f2429] bg-[#13171b] px-2 py-1 text-[11px] text-[#9aa1a8] hover:border-[#3a4148] hover:bg-[#1a1f24] hover:text-[#e6e8eb]"

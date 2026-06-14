@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 
-import { fs } from '../../connections/backend'
+import { fs, datasets as datasetsBackend } from '../../connections/backend'
 import { isTauri } from '../../workspace/tauri-fs'
 import { useDatasetsStore } from '../../datasets/store'
 import { compileTrainingGraph } from '../../codegen/trainingGenerator'
+import { useTrainingStore } from '../store'
+import { remoteTrainingBlocked, REMOTE_TRAINING_MSG } from '../backend'
 import { useTrainingGraphStore, captureTrainingSnapshot } from './store'
 import { TRAINING_NODES, type TrainingFieldSpec } from './registry'
 
@@ -60,8 +62,37 @@ export default function TrainingInspector() {
 }
 
 function CompilePanel({ compile }: { compile: ReturnType<typeof compileTrainingGraph> }) {
+  const startRun = useTrainingStore((s) => s.startRun)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const blocked = remoteTrainingBlocked()
+
+  async function launch() {
+    if (!compile.plan) return
+    setError(null)
+    setBusy(true)
+    try {
+      const plan = compile.plan
+      const abspath = await datasetsBackend.abspath(plan.datasetRelpath)
+      const label = plan.modelRelpath.split('/').pop()!.replace(/\.mlforge$/i, '')
+      await startRun({
+        label,
+        modelRelpath: plan.modelRelpath,
+        datasetRelpath: plan.datasetRelpath,
+        datasetAbspath: abspath,
+        targetColumn: plan.target,
+        featureColumns: plan.features,
+        training: plan.training,
+      })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
-    <div className="border-b border-[#1f2429] px-3 py-2 text-[11px]">
+    <div className="space-y-1.5 border-b border-[#1f2429] px-3 py-2 text-[11px]">
       {compile.ok ? (
         <span className="text-[#5fd39a]">✓ Graph ist startklar</span>
       ) : (
@@ -72,6 +103,15 @@ function CompilePanel({ compile }: { compile: ReturnType<typeof compileTrainingG
           </ul>
         </div>
       )}
+      <button
+        onClick={() => void launch()}
+        disabled={!compile.ok || busy || blocked}
+        title={blocked ? REMOTE_TRAINING_MSG : 'Run aus diesem Graph starten'}
+        className="w-full rounded bg-[#13344f] px-2 py-1 text-[11px] text-[#6ab7ff] hover:bg-[#184466] disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {busy ? 'starte…' : '▶ Run starten'}
+      </button>
+      {error && <div className="text-[#ff7a85]">{error}</div>}
     </div>
   )
 }

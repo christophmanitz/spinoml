@@ -47,8 +47,8 @@ serializeParam + an Inspector FixHint + verify:codegen/verify:sidecar cases).
 ## Beyond architecture (larger, separate decision)
 
 - [~] **Training** — siehe ausführlicher Plan unten in "Phase 13–18: Training-System".
-      **Phase 13 (Foundation) ist umgesetzt** (Run-Verzeichnis, detached
-      Local-Executor, Trainings-Template, Experiments-Tab). 14–18 offen.
+      **Phase 13 (Foundation) + 14 (visueller Trainings-Graph) sind umgesetzt.**
+      15–18 offen (Live-Charts, Remote-Direct, SLURM, Sweeps).
 
 # Phase 13–18: Training-System — ausführlicher Plan
 
@@ -192,11 +192,31 @@ In 13 noch **keine** Live-Charts, noch **kein** visueller
 Trainings-Graph. Nur „kann ich einen Run starten und ihn nach
 App-Restart wieder sehen".
 
-## Phase 14: Visueller Trainings-Graph (eigene Canvas-Ansicht)
+## Phase 14: Visueller Trainings-Graph (eigene Canvas-Ansicht)  ✅ ERLEDIGT (2026-06-14)
 
 Wenn Phase 13 steht, kommt die UX-Innovation: Training wird nicht
 über Formulare konfiguriert, sondern wie das Modell selbst als
 Graph geknüpft.
+
+**Umsetzung** (14a Engine / 14b Editor / 14c Wiring):
+- 14a — `src/training/graph/{registry,store,persist}.ts` +
+  `src/codegen/trainingGenerator.ts` (PURE Graph→run.json-Compiler) +
+  Template-Erweiterungen (Metrics, EarlyStopping, GradClip, AMP). Harness
+  `scripts/verify-traingen.ts` (`npm run verify:traingen`) — Compiler +
+  echtes Training der kompilierten Config.
+- 14b — Mode-Toggle Architektur↔Training (`viewMode` Store + `ModeToggle`),
+  `TrainingCanvas`/`TrainingPalette`/`TrainingNode`/`TrainingInspector`
+  parallel zur Architektur-Canvas; App.tsx swappt Palette/Canvas/Inspector.
+- 14c — „▶ Run starten" direkt aus dem Graph (Inspector-CompilePanel →
+  `useTrainingStore.startRun`), Save/Load `.mltrain` unter
+  `experiments/training-graphs/` (`TrainingGraphBar` + `graph/files.ts`).
+- Abweichung vom Plan: KEIN Rename `GraphStore`→`useArchitectureGraphStore`
+  (zu invasiv für den Nutzen); stattdessen ein parallel lebender
+  `useTrainingGraphStore`. Der Trainings-Graph kompiliert in die Phase-13
+  `run.json` (nicht in eine eigene `train.py`) — der konfig-getriebene
+  Trainer aus Phase 13 wird wiederverwendet statt ein zweiter Codepfad.
+- Offen: Edge-Validierung/Smoke-Test des Trainings-Graphs; `.mltrain` im
+  FileExplorer-Baum (aktuell eigener Save/Load-Bar).
 
 ### 14.1 Mode-Switch im Canvas
 
