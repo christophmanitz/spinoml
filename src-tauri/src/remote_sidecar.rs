@@ -179,7 +179,6 @@ fn cleanup_stale_remote(alias: &str, root: &str) -> Result<(), String> {
         "ROOT={root_q}; MLDIR=\"$ROOT/.mlforge\"
 fuser -k {port}/tcp 2>/dev/null || true
 pkill -9 -f \"$MLDIR/venv/bin/python.*sidecar-torch\" 2>/dev/null || true
-pkill -9 -f 'sidecar-torch/main.py' 2>/dev/null || true
 for i in 1 2 3 4 5 6 7 8 9 10; do
   if ss -ltn 2>/dev/null | awk '{{print $4}}' | grep -q ':{port}$'; then
     fuser -k {port}/tcp 2>/dev/null || true
