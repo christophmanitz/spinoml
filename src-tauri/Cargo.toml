@@ -33,3 +33,8 @@ portable-pty = "0.8"
 # Pin: time >=0.3.47 has a HourBase impl that conflicts with cookie 0.18's
 # blanket From<Into<Option<OffsetDateTime>>>. Downgrade resolves trait coherence.
 time = "=0.3.46"
+
+# Linux PR_SET_PDEATHSIG so spawned sidecars/tunnels die with the app even on
+# a hard kill (dev restart / crash), preventing orphaned port holders.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

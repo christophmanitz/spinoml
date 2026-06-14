@@ -243,6 +243,9 @@ fn build_run_command(alias: &str, root: &str) -> Command {
     );
     cmd.arg(remote);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
+    // Die with the app (SIGTERM on parent death) so the 7424 tunnel never
+    // orphans and blocks the next launch with "Address already in use".
+    crate::set_pdeathsig(&mut cmd);
     cmd
 }
 

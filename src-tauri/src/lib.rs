@@ -58,18 +58,36 @@ pub(crate) fn sidecar_root_pub(app: &tauri::AppHandle) -> PathBuf {
         .unwrap_or(manifest)
 }
 
+/// Ask the kernel to SIGTERM this child when its parent (mlforge) dies, no
+/// matter how the parent dies — graceful quit, crash, or `kill -9` from a dev
+/// restart. Without this, sidecars (and their ports) orphan and the next launch
+/// hits "Address already in use". Must run from a long-lived thread (we spawn
+/// from setup() on the main thread, which lives for the whole process).
+#[cfg(target_os = "linux")]
+pub(crate) fn set_pdeathsig(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM as libc::c_ulong, 0, 0, 0);
+            Ok(())
+        });
+    }
+}
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn set_pdeathsig(_cmd: &mut Command) {}
+
 fn spawn_managed(label: &str, prog: &str, arg: PathBuf, cwd: &Path) -> Option<Child> {
     if !arg.exists() {
         eprintln!("[mlforge] {label}: sidecar script not found at {}", arg.display());
         return None;
     }
-    match Command::new(prog)
-        .arg(&arg)
+    let mut cmd = Command::new(prog);
+    cmd.arg(&arg)
         .current_dir(cwd)
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-    {
+        .stderr(Stdio::inherit());
+    set_pdeathsig(&mut cmd);
+    match cmd.spawn() {
         Ok(child) => {
             eprintln!("[mlforge] {label}: spawned pid={} ({prog} {})", child.id(), arg.display());
             Some(child)
