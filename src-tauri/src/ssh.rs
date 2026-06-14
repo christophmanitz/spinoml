@@ -1190,8 +1190,12 @@ pub struct RemoteTrainingCapabilities {
 #[tauri::command]
 pub async fn ssh_remote_training_capabilities(
     alias: String,
-    _root: String,
+    // Must be named `root` to match the JS arg key — Tauri matches command args
+    // by exact name, and an underscore-prefixed name (`_root`) made every call
+    // fail, so the SLURM backend block never appeared in the new-run dialog.
+    root: String,
 ) -> Result<RemoteTrainingCapabilities, String> {
+    let _ = &root;
     validate_alias(&alias)?;
     let cmd = "if command -v sbatch >/dev/null 2>&1; then echo MLF_HAS_SLURM; fi; \
                if command -v nvidia-smi >/dev/null 2>&1; then echo MLF_HAS_GPU; \
