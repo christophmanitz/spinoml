@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useWorkspaceStore, ROOT_ID, type Entry } from './store'
 import { useDatasetsStore } from '../datasets/store'
 import PyCodeModal, { type PyPreview } from './PyCodeModal'
+import FileViewerModal from './FileViewerModal'
 
 const DRAG_MIME = 'application/mlforge-workspace-entry'
 
@@ -23,6 +24,7 @@ export default function FileExplorer() {
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [pyPreview, setPyPreview] = useState<PyPreview | null>(null)
+  const [fileView, setFileView] = useState<string | null>(null)
 
   useEffect(() => {
     if (!menu) return
@@ -130,6 +132,7 @@ export default function FileExplorer() {
             setDragOver={setDragOver}
             onContext={(id, x, y) => setMenu({ id, x, y })}
             openPy={setPyPreview}
+            openFileView={setFileView}
           />
         )}
       </div>
@@ -138,9 +141,11 @@ export default function FileExplorer() {
         setRename={setRename}
         importFile={importFile}
         openPy={setPyPreview}
+        openFileView={setFileView}
         close={() => setMenu(null)} />}
 
       {pyPreview && <PyCodeModal preview={pyPreview} onClose={() => setPyPreview(null)} />}
+      {fileView && <FileViewerModal fileId={fileView} onClose={() => setFileView(null)} />}
     </div>
   )
 }
@@ -157,7 +162,7 @@ function IconButton({ children, onClick, title }:
 }
 
 function Tree({
-  parentId, depth, rename, setRename, dragOver, setDragOver, onContext, openPy,
+  parentId, depth, rename, setRename, dragOver, setDragOver, onContext, openPy, openFileView,
 }: {
   parentId: string
   depth: number
@@ -167,6 +172,7 @@ function Tree({
   setDragOver: (id: string | null) => void
   onContext: (id: string, x: number, y: number) => void
   openPy: (p: PyPreview) => void
+  openFileView: (id: string) => void
 }) {
   const parent = useWorkspaceStore((s) => s.entries[parentId])
   const expanded = useWorkspaceStore((s) => s.expanded)
@@ -186,7 +192,7 @@ function Tree({
             parentId={id} depth={depth + 1}
             rename={rename} setRename={setRename}
             dragOver={dragOver} setDragOver={setDragOver}
-            onContext={onContext} openPy={openPy}
+            onContext={onContext} openPy={openPy} openFileView={openFileView}
           />
         ) : null
         return (
@@ -200,6 +206,7 @@ function Tree({
               setDragOver={setDragOver}
               onContext={onContext}
               openPy={openPy}
+              openFileView={openFileView}
               childTree={subTree}
             />
             {isFile && isExpanded && (e as Extract<Entry, { kind: 'file' }>).name.toLowerCase().endsWith('.mlforge') && (
@@ -244,7 +251,7 @@ function sortKey(aId: string, bId: string): number {
 }
 
 function Row({
-  id, depth, renaming, setRename, dragOver, setDragOver, onContext, openPy, childTree,
+  id, depth, renaming, setRename, dragOver, setDragOver, onContext, openPy, openFileView, childTree,
 }: {
   id: string
   depth: number
@@ -254,6 +261,7 @@ function Row({
   setDragOver: (id: string | null) => void
   onContext: (id: string, x: number, y: number) => void
   openPy: (p: PyPreview) => void
+  openFileView: (id: string) => void
   childTree: React.ReactNode
 }) {
   const entry = useWorkspaceStore((s) => s.entries[id]) as Entry | undefined
@@ -276,8 +284,10 @@ function Row({
     if (id.startsWith('datasets/')) {
       const datasetRel = 'datasets/' + id.slice('datasets/'.length).split('/')[0]
       useDatasetsStore.getState().select(datasetRel)
+      return
     }
-    // Other files: just selection-visible, no editor action.
+    // Any other file: open the generic read-only viewer.
+    openFileView(id)
   }
 
   const onContextMenu = (e: React.MouseEvent) => {
@@ -408,17 +418,19 @@ function RenameInput({ initial, commit, cancel }: {
 }
 
 function ContextMenu({
-  menu, setRename, importFile, openPy, close,
+  menu, setRename, importFile, openPy, openFileView, close,
 }: {
   menu: { id: string; x: number; y: number }
   setRename: (id: string | null) => void
   importFile: (parentId: string) => void
   openPy: (p: PyPreview) => void
+  openFileView: (id: string) => void
   close: () => void
 }) {
   const entry = useWorkspaceStore((s) => s.entries[menu.id])
   if (!entry) return null
   const isFolder = entry.kind === 'folder'
+  const isMlforge = entry.kind === 'file' && entry.name.toLowerCase().endsWith('.mlforge')
 
   return (
     <div
@@ -428,13 +440,18 @@ function ContextMenu({
     >
       {entry.kind === 'file' && (
         <>
-          <MenuItem onClick={() => { useWorkspaceStore.getState().openFile(menu.id); close() }}>
-            Open in canvas
-          </MenuItem>
-          <MenuItem onClick={() => {
-            openPy({ fileId: menu.id, pyName: pyNameFor(entry.name) })
-            close()
-          }}>View generated PyTorch…</MenuItem>
+          {isMlforge && (
+            <>
+              <MenuItem onClick={() => { useWorkspaceStore.getState().openFile(menu.id); close() }}>
+                Open in canvas
+              </MenuItem>
+              <MenuItem onClick={() => {
+                openPy({ fileId: menu.id, pyName: pyNameFor(entry.name) })
+                close()
+              }}>View generated PyTorch…</MenuItem>
+            </>
+          )}
+          <MenuItem onClick={() => { openFileView(menu.id); close() }}>View file…</MenuItem>
           <div className="my-1 h-px bg-[#1f2429]" />
         </>
       )}
