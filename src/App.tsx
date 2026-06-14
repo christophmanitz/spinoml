@@ -55,6 +55,7 @@ function InferenceBadge() {
 function RemoteSidecarBadge() {
   const status = useRemoteSidecarStore((s) => s.status)
   const conn = useConnectionsStore((s) => s.saved.find((c) => c.id === s.currentId))
+  const refresh = useProjectStore((s) => s.refresh)
   if (!conn) return null  // only meaningful for remote workspaces
   let label = ''
   let color = 'bg-[#1f2429] text-[#7a8088]'
@@ -67,7 +68,18 @@ function RemoteSidecarBadge() {
     case 'stopped':    label = 'hpc: stopped'; break
     case 'error':      label = `hpc: ${status.message.split(':')[0]}`; color = 'bg-rose-900/40 text-rose-300'; title = status.message; break
   }
-  return <span className={`rounded px-2 py-0.5 ${color}`} title={title}>{label}</span>
+  // Click to (re)connect the remote sidecar tunnel. refresh() reloads the
+  // remote project and re-fires the ensure() bootstrap. Disabled mid-bootstrap.
+  const busy = status.kind === 'preparing' || status.kind === 'starting'
+  const hint = busy ? title : `${title ? title + ' — ' : ''}Klicken: neu verbinden`
+  return (
+    <button
+      onClick={() => { if (!busy) void refresh() }}
+      disabled={busy}
+      className={`rounded px-2 py-0.5 ${color} ${busy ? '' : 'cursor-pointer hover:brightness-125'}`}
+      title={hint}
+    >{label}{busy ? '' : ' ↻'}</button>
+  )
 }
 
 function LLMBadge() {
