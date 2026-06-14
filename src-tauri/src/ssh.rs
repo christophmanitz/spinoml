@@ -164,7 +164,22 @@ pub(crate) const SSH_OPTS_INTERACTIVE: &[&str] = &[
     "-o", "ServerAliveCountMax=3",
 ];
 
-fn ssh_exec(alias: &str, remote_cmd: &str, stdin_data: Option<&[u8]>) -> Result<String, String> {
+/// Async wrapper: the ssh subprocess blocks (connect + remote exec can take
+/// seconds on an HPC login node), so it runs on tokio's blocking pool instead
+/// of the caller's thread. Combined with `async` commands this keeps the GTK
+/// main thread — and therefore the whole GUI — responsive while ssh is in
+/// flight. Without this, every ssh_* command froze the webview ("not
+/// responding") for the duration of the call.
+async fn ssh_exec(alias: &str, remote_cmd: &str, stdin_data: Option<&[u8]>) -> Result<String, String> {
+    let alias = alias.to_string();
+    let remote_cmd = remote_cmd.to_string();
+    let stdin_data = stdin_data.map(|d| d.to_vec());
+    tauri::async_runtime::spawn_blocking(move || ssh_exec_blocking(&alias, &remote_cmd, stdin_data.as_deref()))
+        .await
+        .map_err(|e| format!("ssh task join: {e}"))?
+}
+
+fn ssh_exec_blocking(alias: &str, remote_cmd: &str, stdin_data: Option<&[u8]>) -> Result<String, String> {
     let mut cmd = Command::new("ssh");
     for o in SSH_OPTS {
         cmd.arg(o);
@@ -213,13 +228,13 @@ pub struct SshTestResult {
 }
 
 #[tauri::command]
-pub fn ssh_test_connection(alias: String) -> Result<SshTestResult, String> {
+pub async fn ssh_test_connection(alias: String) -> Result<SshTestResult, String> {
     validate_alias(&alias)?;
     let out = ssh_exec(
         &alias,
         "echo MLFORGE_OK && uname -srm && echo \"HOME=$HOME\"",
         None,
-    )?;
+    ).await?;
     if !out.contains("MLFORGE_OK") {
         return Err(format!("unexpected reply (no MLFORGE_OK marker): {}", out.trim()));
     }
@@ -248,8 +263,8 @@ pub struct RemoteProjectLoad {
 }
 
 #[tauri::command]
-pub fn ssh_load_project(
-    state: State<RemoteWorkspaceState>,
+pub async fn ssh_load_project(
+    state: State<'_, RemoteWorkspaceState>,
     alias: String,
     root: String,
 ) -> Result<RemoteProjectLoad, String> {
@@ -266,7 +281,7 @@ pub fn ssh_load_project(
             if [ -f {proj_q} ]; then echo PROJECT_BEGIN; cat {proj_q}; echo; echo PROJECT_END; fi; \
          else echo ROOT_MISSING; fi"
     );
-    let out = ssh_exec(&alias, &cmd, None)?;
+    let out = ssh_exec(&alias, &cmd, None).await?;
     let mut root_exists = false;
     let mut legacy_count: usize = 0;
     let mut meta_lines: Vec<&str> = Vec::new();
@@ -312,8 +327,8 @@ pub fn ssh_load_project(
 }
 
 #[tauri::command]
-pub fn ssh_init_project(
-    state: State<RemoteWorkspaceState>,
+pub async fn ssh_init_project(
+    state: State<'_, RemoteWorkspaceState>,
     alias: String,
     root: String,
     name: String,
@@ -344,14 +359,14 @@ pub fn ssh_init_project(
         "mkdir -p {root_q} {subs} && if [ -f {proj_q} ]; then echo PROJECT_EXISTS >&2; exit 2; else cat > {proj_q}; fi",
         subs = subdir_qs.join(" "),
     );
-    ssh_exec(&alias, &cmd, Some(pretty.as_bytes()))?;
+    ssh_exec(&alias, &cmd, Some(pretty.as_bytes())).await?;
     *state.current.lock().map_err(|e| e.to_string())? =
         Some(RemoteWorkspace { alias: alias.clone(), root: root.clone() });
     Ok(meta)
 }
 
 #[tauri::command]
-pub fn ssh_update_project_meta(
+pub async fn ssh_update_project_meta(
     alias: String,
     root: String,
     patch: serde_json::Value,
@@ -359,7 +374,7 @@ pub fn ssh_update_project_meta(
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     let proj_q = shell_quote_path(&join_remote(&root, PROJECT_FILE));
-    let body = ssh_exec(&alias, &format!("cat {proj_q}"), None)?;
+    let body = ssh_exec(&alias, &format!("cat {proj_q}"), None).await?;
     let mut meta: serde_json::Value = serde_json::from_str(&body)
         .map_err(|e| format!("parse remote project.json: {e}"))?;
     let map = meta
@@ -372,10 +387,11 @@ pub fn ssh_update_project_meta(
     }
     map.insert("updated_at".into(), serde_json::Value::String(now_iso()));
     let pretty = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
-    ssh_exec(&alias, &format!("cat > {proj_q}"), Some(pretty.as_bytes()))?;
+    ssh_exec(&alias, &format!("cat > {proj_q}"), Some(pretty.as_bytes())).await?;
     Ok(meta)
 }
 
+// Sync: no ssh, just a mutex flip — stays off the async runtime.
 #[tauri::command]
 pub fn ssh_close(state: State<RemoteWorkspaceState>) -> Result<(), String> {
     *state.current.lock().map_err(|e| e.to_string())? = None;
@@ -388,6 +404,7 @@ pub struct CurrentRemote {
     pub root: String,
 }
 
+// Sync: no ssh, just reads the mutex.
 #[tauri::command]
 pub fn ssh_current(state: State<RemoteWorkspaceState>) -> Option<CurrentRemote> {
     let g = state.current.lock().ok()?;
@@ -405,7 +422,7 @@ pub struct RemoteFsEntry {
 }
 
 #[tauri::command]
-pub fn ssh_walk(alias: String, root: String) -> Result<Vec<RemoteFsEntry>, String> {
+pub async fn ssh_walk(alias: String, root: String) -> Result<Vec<RemoteFsEntry>, String> {
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     let root_q = shell_quote_path(&root);
@@ -417,7 +434,7 @@ pub fn ssh_walk(alias: String, root: String) -> Result<Vec<RemoteFsEntry>, Strin
               ! -path '*/.*' -printf '%y\\t%P\\n' 2>/dev/null; \
          fi"
     );
-    let out = ssh_exec(&alias, &cmd, None)?;
+    let out = ssh_exec(&alias, &cmd, None).await?;
     let mut entries: Vec<RemoteFsEntry> = Vec::new();
     for line in out.lines() {
         let mut it = line.splitn(2, '\t');
@@ -440,16 +457,16 @@ pub fn ssh_walk(alias: String, root: String) -> Result<Vec<RemoteFsEntry>, Strin
 }
 
 #[tauri::command]
-pub fn ssh_read_file(alias: String, root: String, relpath: String) -> Result<String, String> {
+pub async fn ssh_read_file(alias: String, root: String, relpath: String) -> Result<String, String> {
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     validate_relpath(&relpath)?;
     let p_q = shell_quote_path(&join_remote(&root, &relpath));
-    ssh_exec(&alias, &format!("cat {p_q}"), None)
+    ssh_exec(&alias, &format!("cat {p_q}"), None).await
 }
 
 #[tauri::command]
-pub fn ssh_write_file(
+pub async fn ssh_write_file(
     alias: String,
     root: String,
     relpath: String,
@@ -470,11 +487,12 @@ pub fn ssh_write_file(
         &format!("mkdir -p {parent_q} && cat > {p_q}"),
         Some(content.as_bytes()),
     )
+    .await
     .map(|_| ())
 }
 
 #[tauri::command]
-pub fn ssh_delete_path(alias: String, root: String, relpath: String) -> Result<(), String> {
+pub async fn ssh_delete_path(alias: String, root: String, relpath: String) -> Result<(), String> {
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     validate_relpath(&relpath)?;
@@ -482,20 +500,20 @@ pub fn ssh_delete_path(alias: String, root: String, relpath: String) -> Result<(
         return Err("refusing to delete workspace root".into());
     }
     let p_q = shell_quote_path(&join_remote(&root, &relpath));
-    ssh_exec(&alias, &format!("rm -rf -- {p_q}"), None).map(|_| ())
+    ssh_exec(&alias, &format!("rm -rf -- {p_q}"), None).await.map(|_| ())
 }
 
 #[tauri::command]
-pub fn ssh_mkdir(alias: String, root: String, relpath: String) -> Result<(), String> {
+pub async fn ssh_mkdir(alias: String, root: String, relpath: String) -> Result<(), String> {
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     validate_relpath(&relpath)?;
     let p_q = shell_quote_path(&join_remote(&root, &relpath));
-    ssh_exec(&alias, &format!("mkdir -p {p_q}"), None).map(|_| ())
+    ssh_exec(&alias, &format!("mkdir -p {p_q}"), None).await.map(|_| ())
 }
 
 #[tauri::command]
-pub fn ssh_rename(
+pub async fn ssh_rename(
     alias: String,
     root: String,
     from_rel: String,
@@ -518,6 +536,7 @@ pub fn ssh_rename(
         &format!("mkdir -p {to_parent_q} && mv -- {from_q} {to_q}"),
         None,
     )
+    .await
     .map(|_| ())
 }
 
@@ -550,7 +569,7 @@ fn strip_iso_nanos(s: &str) -> String {
 }
 
 #[tauri::command]
-pub fn ssh_list_notes(alias: String, root: String) -> Result<Vec<RemoteNoteEntry>, String> {
+pub async fn ssh_list_notes(alias: String, root: String) -> Result<Vec<RemoteNoteEntry>, String> {
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     let dir_q = shell_quote_path(&join_remote(&root, "notes"));
@@ -559,7 +578,7 @@ pub fn ssh_list_notes(alias: String, root: String) -> Result<Vec<RemoteNoteEntry
            \\( -name '*.md' -o -name '*.txt' \\) \
            -printf '%f\\t%s\\t%TY-%Tm-%TdT%TH:%TM:%TSZ\\n' 2>/dev/null"
     );
-    let out = ssh_exec(&alias, &cmd, None)?;
+    let out = ssh_exec(&alias, &cmd, None).await?;
     let mut entries: Vec<RemoteNoteEntry> = Vec::new();
     for line in out.lines() {
         let parts: Vec<&str> = line.splitn(3, '\t').collect();
@@ -584,16 +603,16 @@ pub fn ssh_list_notes(alias: String, root: String) -> Result<Vec<RemoteNoteEntry
 }
 
 #[tauri::command]
-pub fn ssh_read_note(alias: String, root: String, name: String) -> Result<String, String> {
+pub async fn ssh_read_note(alias: String, root: String, name: String) -> Result<String, String> {
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     validate_plain_filename(&name, "note")?;
     let p_q = shell_quote_path(&format!("{}/notes/{}", root.trim_end_matches('/'), name));
-    ssh_exec(&alias, &format!("cat {p_q}"), None)
+    ssh_exec(&alias, &format!("cat {p_q}"), None).await
 }
 
 #[tauri::command]
-pub fn ssh_write_note(
+pub async fn ssh_write_note(
     alias: String,
     root: String,
     name: String,
@@ -609,11 +628,12 @@ pub fn ssh_write_note(
         &format!("mkdir -p {dir_q} && cat > {p_q}"),
         Some(content.as_bytes()),
     )
+    .await
     .map(|_| ())
 }
 
 #[tauri::command]
-pub fn ssh_append_note(
+pub async fn ssh_append_note(
     alias: String,
     root: String,
     name: String,
@@ -629,13 +649,14 @@ pub fn ssh_append_note(
         &format!("mkdir -p {dir_q} && cat >> {p_q}"),
         Some(content.as_bytes()),
     )
+    .await
     .map(|_| ())
 }
 
 // ─── experiments ──────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn ssh_append_experiment(
+pub async fn ssh_append_experiment(
     alias: String,
     root: String,
     filename: String,
@@ -659,11 +680,12 @@ pub fn ssh_append_experiment(
         &format!("mkdir -p {dir_q} && cat >> {p_q}"),
         Some(&payload),
     )
+    .await
     .map(|_| ())
 }
 
 #[tauri::command]
-pub fn ssh_read_experiment(
+pub async fn ssh_read_experiment(
     alias: String,
     root: String,
     filename: String,
@@ -677,7 +699,7 @@ pub fn ssh_read_experiment(
         filename
     ));
     // Tolerate missing file: emit empty.
-    ssh_exec(&alias, &format!("if [ -f {p_q} ]; then cat {p_q}; fi"), None)
+    ssh_exec(&alias, &format!("if [ -f {p_q} ]; then cat {p_q}; fi"), None).await
 }
 
 // ─── datasets ─────────────────────────────────────────────────────────────
@@ -692,7 +714,7 @@ pub struct RemoteDatasetEntry {
 }
 
 #[tauri::command]
-pub fn ssh_list_datasets(
+pub async fn ssh_list_datasets(
     alias: String,
     root: String,
 ) -> Result<Vec<RemoteDatasetEntry>, String> {
@@ -713,7 +735,7 @@ pub fn ssh_list_datasets(
            printf 'D\\t%s\\t%s\\n' \"$bn\" \"$sz\"; \
          done"
     );
-    let out = ssh_exec(&alias, &cmd, None)?;
+    let out = ssh_exec(&alias, &cmd, None).await?;
     let mut entries: Vec<RemoteDatasetEntry> = Vec::new();
     // For abspath we need the *expanded* root if it was ~/-prefixed. The
     // shell did the expansion; we don't know HOME locally. Easiest: emit
@@ -782,13 +804,13 @@ fn remote_run_dir(root: &str, run_id: &str) -> String {
     join_remote(root, &format!("experiments/runs/{run_id}"))
 }
 
-fn write_remote_run_file(alias: &str, dir: &str, name: &str, content: &[u8]) -> Result<(), String> {
+async fn write_remote_run_file(alias: &str, dir: &str, name: &str, content: &[u8]) -> Result<(), String> {
     let p_q = shell_quote_path(&format!("{dir}/{name}"));
-    ssh_exec(alias, &format!("cat > {p_q}"), Some(content)).map(|_| ())
+    ssh_exec(alias, &format!("cat > {p_q}"), Some(content)).await.map(|_| ())
 }
 
 #[tauri::command]
-pub fn ssh_start_training_run(
+pub async fn ssh_start_training_run(
     app: AppHandle,
     alias: String,
     root: String,
@@ -813,16 +835,16 @@ pub fn ssh_start_training_run(
     let python_q = shell_quote_path(&python);
 
     // refuse to clobber an existing run
-    let exists = ssh_exec(&alias, &format!("if [ -d {dir_q} ]; then echo EXISTS; fi"), None)?;
+    let exists = ssh_exec(&alias, &format!("if [ -d {dir_q} ]; then echo EXISTS; fi"), None).await?;
     if exists.contains("EXISTS") {
         return Err(format!("run {run_id} already exists on {alias}"));
     }
-    ssh_exec(&alias, &format!("mkdir -p {ckpt_q}"), None)?;
+    ssh_exec(&alias, &format!("mkdir -p {ckpt_q}"), None).await?;
 
     // frozen snapshots
-    write_remote_run_file(&alias, &dir, "run.json", run_json.as_bytes())?;
-    write_remote_run_file(&alias, &dir, "model.mlforge", model_mlforge.as_bytes())?;
-    write_remote_run_file(&alias, &dir, "model.py", model_py.as_bytes())?;
+    write_remote_run_file(&alias, &dir, "run.json", run_json.as_bytes()).await?;
+    write_remote_run_file(&alias, &dir, "model.mlforge", model_mlforge.as_bytes()).await?;
+    write_remote_run_file(&alias, &dir, "model.py", model_py.as_bytes()).await?;
 
     // ship the shared trainer in as train.py (read from the local bundle)
     let template = crate::sidecar_root_pub(&app)
@@ -834,8 +856,8 @@ pub fn ssh_start_training_run(
             template.display()
         )
     })?;
-    write_remote_run_file(&alias, &dir, "train.py", trainer.as_bytes())?;
-    write_remote_run_file(&alias, &dir, "status", b"queued\n")?;
+    write_remote_run_file(&alias, &dir, "train.py", trainer.as_bytes()).await?;
+    write_remote_run_file(&alias, &dir, "status", b"queued\n").await?;
 
     // Pick the launch path from the frozen backend in run.json: SLURM → sbatch,
     // anything else → direct detached process (Phase 16).
@@ -849,7 +871,7 @@ pub fn ssh_start_training_run(
     if backend_kind == "slurm" {
         let slurm = cfg.get("backend").and_then(|b| b.get("slurm"));
         let sbatch = build_sbatch(&run_id, &python_q, slurm);
-        write_remote_run_file(&alias, &dir, "train.sbatch", sbatch.as_bytes())?;
+        write_remote_run_file(&alias, &dir, "train.sbatch", sbatch.as_bytes()).await?;
         // Submit; parse "Submitted batch job <id>"; freeze pid as slurm:<id>.
         let submit = format!(
             "cd {dir_q} && out=$(sbatch train.sbatch 2>&1); echo \"$out\"; \
@@ -857,7 +879,7 @@ pub fn ssh_start_training_run(
              if [ -n \"$jid\" ]; then printf 'slurm:%s\\n' \"$jid\" > pid; echo \"MLF_JOBID $jid\"; \
              else echo MLF_SUBMIT_FAILED; fi"
         );
-        let out = ssh_exec(&alias, &submit, None)?;
+        let out = ssh_exec(&alias, &submit, None).await?;
         if !out.contains("MLF_JOBID") {
             // surface sbatch's own error text (everything before our markers)
             let msg: String = out
@@ -876,7 +898,7 @@ pub fn ssh_start_training_run(
         let launch = format!(
             "cd {dir_q} && nohup setsid {python_q} -u train.py > stdout.log 2> stderr.log < /dev/null & echo $! > pid"
         );
-        ssh_exec(&alias, &launch, None)?;
+        ssh_exec(&alias, &launch, None).await?;
         eprintln!("[mlforge] remote training run {run_id} launched on {alias} ({python})");
     }
     Ok(())
@@ -958,7 +980,7 @@ struct ParsedRun {
 }
 
 #[tauri::command]
-pub fn ssh_list_training_runs(
+pub async fn ssh_list_training_runs(
     alias: String,
     root: String,
 ) -> Result<Vec<training::RunSummary>, String> {
@@ -987,7 +1009,7 @@ pub fn ssh_list_training_runs(
            done; \
          fi"
     );
-    let out = ssh_exec(&alias, &cmd, None)?;
+    let out = ssh_exec(&alias, &cmd, None).await?;
 
     let mut parsed: Vec<ParsedRun> = Vec::new();
     let mut cur: Option<ParsedRun> = None;
@@ -1050,7 +1072,7 @@ pub fn ssh_list_training_runs(
 }
 
 #[tauri::command]
-pub fn ssh_training_run_status(
+pub async fn ssh_training_run_status(
     alias: String,
     root: String,
     run_id: String,
@@ -1069,7 +1091,7 @@ pub fn ssh_training_run_status(
          echo \"MLF_PID $pid\"; \
          echo MLF_STATUS_BEGIN; cat \"$d/status\" 2>/dev/null; echo; echo MLF_STATUS_END"
     );
-    let out = ssh_exec(&alias, &cmd, None)?;
+    let out = ssh_exec(&alias, &cmd, None).await?;
     let mut alive = false;
     let mut pid: Option<i32> = None;
     let mut status = String::new();
@@ -1092,7 +1114,7 @@ pub fn ssh_training_run_status(
 }
 
 #[tauri::command]
-pub fn ssh_read_training_run_file(
+pub async fn ssh_read_training_run_file(
     alias: String,
     root: String,
     run_id: String,
@@ -1105,11 +1127,11 @@ pub fn ssh_read_training_run_file(
         return Err(format!("file {name:?} is not readable from a run dir"));
     }
     let p_q = shell_quote_path(&format!("{}/{}", remote_run_dir(&root, &run_id), name));
-    ssh_exec(&alias, &format!("if [ -f {p_q} ]; then cat {p_q}; fi"), None)
+    ssh_exec(&alias, &format!("if [ -f {p_q} ]; then cat {p_q}; fi"), None).await
 }
 
 #[tauri::command]
-pub fn ssh_stop_training_run(alias: String, root: String, run_id: String) -> Result<(), String> {
+pub async fn ssh_stop_training_run(alias: String, root: String, run_id: String) -> Result<(), String> {
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     training::validate_run_id(&run_id)?;
@@ -1127,11 +1149,11 @@ pub fn ssh_stop_training_run(alias: String, root: String, run_id: String) -> Res
            esac; \
          fi"
     );
-    ssh_exec(&alias, &cmd, None).map(|_| ())
+    ssh_exec(&alias, &cmd, None).await.map(|_| ())
 }
 
 #[tauri::command]
-pub fn ssh_delete_training_run(alias: String, root: String, run_id: String) -> Result<(), String> {
+pub async fn ssh_delete_training_run(alias: String, root: String, run_id: String) -> Result<(), String> {
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     training::validate_run_id(&run_id)?;
@@ -1147,7 +1169,7 @@ pub fn ssh_delete_training_run(alias: String, root: String, run_id: String) -> R
            if [ \"$alive\" = 1 ]; then echo MLF_ALIVE; else rm -rf -- \"$d\"; echo MLF_DELETED; fi; \
          else echo MLF_DELETED; fi"
     );
-    let out = ssh_exec(&alias, &cmd, None)?;
+    let out = ssh_exec(&alias, &cmd, None).await?;
     if out.contains("MLF_ALIVE") {
         return Err("run is still alive — stop it before deleting".into());
     }
@@ -1166,7 +1188,7 @@ pub struct RemoteTrainingCapabilities {
 /// round-trip; the UI calls it once per remote connection to decide whether to
 /// offer the SLURM backend and to populate the partition dropdown.
 #[tauri::command]
-pub fn ssh_remote_training_capabilities(
+pub async fn ssh_remote_training_capabilities(
     alias: String,
     _root: String,
 ) -> Result<RemoteTrainingCapabilities, String> {
@@ -1176,7 +1198,7 @@ pub fn ssh_remote_training_capabilities(
                  echo MLF_GPU_BEGIN; nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null; echo MLF_GPU_END; fi; \
                if command -v sinfo >/dev/null 2>&1; then \
                  echo MLF_PART_BEGIN; sinfo -h -o '%P' 2>/dev/null | sort -u; echo MLF_PART_END; fi";
-    let out = ssh_exec(&alias, cmd, None)?;
+    let out = ssh_exec(&alias, cmd, None).await?;
 
     let mut has_slurm = false;
     let mut has_gpu = false;
