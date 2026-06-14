@@ -250,9 +250,13 @@ fn build_run_command(alias: &str, root: &str) -> Command {
     );
     cmd.arg(remote);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
-    // Die with the app (SIGTERM on parent death) so the 7424 tunnel never
-    // orphans and blocks the next launch with "Address already in use".
-    crate::set_pdeathsig(&mut cmd);
+    // NOTE: deliberately NO PR_SET_PDEATHSIG here. The tunnel is spawned from a
+    // tokio blocking-pool thread (run_bootstrap runs under spawn_blocking), and
+    // PDEATHSIG fires on the death of the SPAWNING THREAD, not the process — so
+    // when that pool thread is reaped (~10s idle) the kernel would SIGTERM the
+    // tunnel and it would "stop after a few seconds". The tunnel is tracked in
+    // `current.child` (killed on app close) and any orphan is cleared by
+    // free_local_tunnel_port() on the next connect, so PDEATHSIG isn't needed.
     cmd
 }
 
