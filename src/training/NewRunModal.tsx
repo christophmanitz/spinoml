@@ -21,6 +21,52 @@ const OPTIMIZERS: OptimizerKind[] = ['Adam', 'AdamW', 'SGD', 'RMSprop']
 const LOSSES: LossKind[] = ['CrossEntropyLoss', 'BCEWithLogitsLoss', 'MSELoss', 'L1Loss']
 const SCHEDULERS: SchedulerKind[] = ['none', 'StepLR', 'CosineAnnealingLR', 'ReduceLROnPlateau']
 
+// ── hyperparameter sweep (Phase 18) ──
+type SweepKey = 'lr' | 'batch_size' | 'weight_decay' | 'epochs' | 'seed'
+const SWEEP_FIELDS: { key: SweepKey; label: string }[] = [
+  { key: 'lr', label: 'Learning rate' },
+  { key: 'batch_size', label: 'Batch size' },
+  { key: 'weight_decay', label: 'Weight decay' },
+  { key: 'epochs', label: 'Epochs' },
+  { key: 'seed', label: 'Seed' },
+]
+const SWEEP_SHORT: Record<SweepKey, string> = { lr: 'lr', batch_size: 'bs', weight_decay: 'wd', epochs: 'ep', seed: 'seed' }
+
+function parseValues(raw: string): number[] {
+  return raw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n))
+}
+
+function cartesian(axes: { key: SweepKey; values: number[] }[]): Partial<Record<SweepKey, number>>[] {
+  let combos: Partial<Record<SweepKey, number>>[] = [{}]
+  for (const ax of axes) {
+    const next: Partial<Record<SweepKey, number>>[] = []
+    for (const c of combos) for (const v of ax.values) next.push({ ...c, [ax.key]: v })
+    combos = next
+  }
+  return combos
+}
+
+function applyCombo(base: TrainingConfig, combo: Partial<Record<SweepKey, number>>): TrainingConfig {
+  const t: TrainingConfig = { ...base, optimizer: { ...base.optimizer } }
+  if (combo.lr != null) t.optimizer.lr = combo.lr
+  if (combo.weight_decay != null) t.optimizer.weight_decay = combo.weight_decay
+  if (combo.batch_size != null) t.batch_size = combo.batch_size
+  if (combo.epochs != null) t.epochs = combo.epochs
+  if (combo.seed != null) t.seed = combo.seed
+  return t
+}
+
+function comboLabel(combo: Partial<Record<SweepKey, number>>): string {
+  return (Object.entries(combo) as [SweepKey, number][])
+    .map(([k, v]) => `${SWEEP_SHORT[k]}=${v}`)
+    .join(' ')
+}
+
+function nextSweepKey(existing: { key: SweepKey }[]): SweepKey {
+  const used = new Set(existing.map((s) => s.key))
+  return SWEEP_FIELDS.find((f) => !used.has(f.key))?.key ?? 'lr'
+}
+
 export default function NewRunModal() {
   const close = useTrainingStore((s) => s.closeNewRun)
   const startRun = useTrainingStore((s) => s.startRun)
@@ -34,6 +80,10 @@ export default function NewRunModal() {
   const [caps, setCaps] = useState<RemoteTrainingCapabilities | null>(null)
   const [backendKind, setBackendKind] = useState<'local' | 'slurm'>('local')
   const [slurm, setSlurm] = useState<SlurmConfig>(remoteConn?.slurm ?? defaultSlurmConfig())
+
+  // Phase 18 — hyperparameter sweep: each axis is a comma-separated value list;
+  // the grid (cartesian product) launches one run per combination.
+  const [sweeps, setSweeps] = useState<{ key: SweepKey; raw: string }[]>([])
 
   const [models, setModels] = useState<string[]>([])
   const [dsList, setDsList] = useState<{ relpath: string; name: string; is_dir: boolean }[]>([])
@@ -101,8 +151,14 @@ export default function NewRunModal() {
   // default label from model name when nothing typed yet
   const effectiveLabel = label || (modelRelpath ? modelRelpath.split('/').pop()!.replace(/\.mlforge$/i, '') : '')
 
+  const axes = sweeps
+    .map((s) => ({ key: s.key, values: parseValues(s.raw) }))
+    .filter((a) => a.values.length > 0)
+  const combos = cartesian(axes)
+  const sweepCount = combos.length
+
   const canSubmit =
-    !!modelRelpath && !!datasetRelpath && !!targetColumn && !submitting
+    !!modelRelpath && !!datasetRelpath && !!targetColumn && !submitting && sweepCount <= 64
 
   async function submit() {
     setError(null)
@@ -112,16 +168,27 @@ export default function NewRunModal() {
       const backend: RunBackend = backendKind === 'slurm' ? { kind: 'slurm', slurm } : { kind: 'local' }
       // Remember the SLURM config on the connection for next time.
       if (backendKind === 'slurm' && remoteConn) updateRemote(remoteConn.id, { slurm })
-      await startRun({
-        label: effectiveLabel || 'run',
+      const base = {
         modelRelpath,
         datasetRelpath,
         datasetAbspath: abspath,
         targetColumn,
         featureColumns: null, // null = all numeric cols except target
-        training: cfg,
         backend,
-      })
+      }
+      if (axes.length === 0) {
+        await startRun({ ...base, label: effectiveLabel || 'run', training: cfg })
+      } else {
+        // One run per grid point, started sequentially so run dirs / ssh don't
+        // collide. Distinct labels make them legible in the list + compare view.
+        for (const combo of combos) {
+          await startRun({
+            ...base,
+            label: `${effectiveLabel || 'run'} [${comboLabel(combo)}]`,
+            training: applyCombo(cfg, combo),
+          })
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setSubmitting(false)
@@ -205,6 +272,43 @@ export default function NewRunModal() {
             <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={effectiveLabel || 'run'} className={SELECT} />
           </Field>
 
+          <div className="space-y-2 rounded border border-[#1f2429] bg-[#0a0d10] p-3">
+            <div className="flex items-center">
+              <span className="text-[11px] text-[#9aa1a8]">Sweep (optional)</span>
+              {sweepCount > 1 && (
+                <span className={`ml-auto text-[10px] ${sweepCount > 64 ? 'text-[#ff7a85]' : 'text-[#6ab7ff]'}`}>
+                  {sweepCount} Runs{sweepCount > 64 ? ' — zu viele (max 64)' : ''}
+                </span>
+              )}
+            </div>
+            {sweeps.map((s, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <select
+                  value={s.key}
+                  onChange={(e) => setSweeps(sweeps.map((x, j) => j === i ? { ...x, key: e.target.value as SweepKey } : x))}
+                  className={`${SELECT} w-36 shrink-0`}
+                >
+                  {SWEEP_FIELDS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+                </select>
+                <input
+                  value={s.raw}
+                  onChange={(e) => setSweeps(sweeps.map((x, j) => j === i ? { ...x, raw: e.target.value } : x))}
+                  placeholder="z.B. 0.01, 0.001, 0.0001"
+                  className={`${SELECT} flex-1 font-mono`}
+                />
+                <button onClick={() => setSweeps(sweeps.filter((_, j) => j !== i))} className="rounded px-1.5 py-0.5 text-[11px] text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#ff7a85]">×</button>
+              </div>
+            ))}
+            <button
+              onClick={() => setSweeps([...sweeps, { key: nextSweepKey(sweeps), raw: '' }])}
+              disabled={sweeps.length >= SWEEP_FIELDS.length}
+              className="rounded border border-[#1f2429] px-2 py-0.5 text-[10px] text-[#9aa1a8] hover:border-[#3a4148] hover:text-[#e6e8eb] disabled:opacity-40"
+            >
+              + Sweep-Achse
+            </button>
+            {sweeps.length > 0 && <Hint>Komma-getrennte Werte je Achse. Gitter = ein Run pro Kombination; überschreibt die Einzelwerte oben.</Hint>}
+          </div>
+
           {caps?.has_slurm && (
             <div className="space-y-3 rounded border border-[#1f2429] bg-[#0a0d10] p-3">
               <Field label="Backend">
@@ -278,7 +382,7 @@ export default function NewRunModal() {
             disabled={!canSubmit}
             className="rounded bg-[#13344f] px-3 py-1 text-[12px] text-[#6ab7ff] hover:bg-[#184466] disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {submitting ? 'starte…' : 'Run starten'}
+            {submitting ? 'starte…' : sweepCount > 1 ? `${sweepCount} Runs starten` : 'Run starten'}
           </button>
         </div>
       </div>

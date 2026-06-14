@@ -94,7 +94,15 @@ export default function CompareModal() {
       <div className="flex h-full max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-[#1f2429] bg-[#0e1115] shadow-2xl">
         <div className="flex items-center gap-2 border-b border-[#1f2429] px-4 py-3">
           <span className="text-sm text-[#e6e8eb]">Vergleich · {loaded.length} Runs</span>
-          <button onClick={close} className="ml-auto rounded px-2 py-0.5 text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#e6e8eb]">×</button>
+          <button
+            onClick={() => exportCsv(loaded, diff)}
+            disabled={loaded.length === 0}
+            className="ml-auto rounded border border-[#1f2429] bg-[#13171b] px-2 py-0.5 text-[11px] text-[#9aa1a8] hover:border-[#3a4148] hover:text-[#e6e8eb] disabled:opacity-40"
+            title="Metriken + Config-Diff als CSV exportieren"
+          >
+            CSV
+          </button>
+          <button onClick={close} className="rounded px-2 py-0.5 text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#e6e8eb]">×</button>
         </div>
 
         <div className="min-h-0 flex-1 space-y-5 overflow-auto p-4 text-[12px] text-[#cfd3d8]">
@@ -178,6 +186,33 @@ export default function CompareModal() {
 
 function fmtNum(v: number | null, digits: number): string {
   return v == null ? '—' : Number(v.toFixed(digits)).toString()
+}
+
+function csvCell(v: string | number | null): string {
+  const s = v == null ? '' : String(v)
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
+
+/** One row per run: fixed metric columns + every differing config field. */
+function exportCsv(loaded: Loaded[], diff: DiffRow[]) {
+  const metricCols = ['best_val_loss', 'val_acc', 'train_loss', 'n_params', 'seconds'] as const
+  const header = ['run_id', 'label', ...metricCols, ...diff.map((d) => d.key)]
+  const rows = loaded.map((l, i) => [
+    l.runId,
+    l.label,
+    l.final.val_loss, l.final.val_acc, l.final.train_loss, l.final.n_params, l.final.seconds,
+    ...diff.map((d) => d.values[i]),
+  ])
+  const csv = [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'mlforge-compare.csv'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 /** Flatten the training section of run.json into dotted scalar keys. */

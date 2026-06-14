@@ -47,9 +47,9 @@ serializeParam + an Inspector FixHint + verify:codegen/verify:sidecar cases).
 ## Beyond architecture (larger, separate decision)
 
 - [~] **Training** — siehe ausführlicher Plan unten in "Phase 13–18: Training-System".
-      **Phase 13 (Foundation) + 14 (Trainings-Graph) + 15 (Live-Tracking-UI)
-      + 16 (Remote-Direct via ssh+nohup) + 17 (SLURM-Submit) sind umgesetzt.**
-      18 offen (Sweeps + Compare-Polish + Export).
+      **Alle Phasen 13–18 sind umgesetzt** (13 Foundation, 14 Trainings-Graph,
+      15 Live-Tracking-UI, 16 Remote-Direct via ssh+nohup, 17 SLURM-Submit,
+      18 Sweeps + CSV-Export). Reste je Phase als „Offen/Abweichung" notiert.
 
 # Phase 13–18: Training-System — ausführlicher Plan
 
@@ -585,7 +585,21 @@ existiert sobald Python startet → tail via ssh wie in 15.2.
 bis Job-Ende kaum sichtbar). Deshalb verlassen wir uns auf
 `events.jsonl` + `print(..., flush=True)` im Training-Skript.
 
-## Phase 18: Polish + Multi-Run
+## Phase 18: Polish + Multi-Run  ✅ ERLEDIGT (2026-06-14, MVP)
+
+**Umsetzung**:
+- Hyperparameter-Sweep im `NewRunModal`: beliebig viele Achsen
+  (lr/batch_size/weight_decay/epochs/seed), je eine komma-getrennte Werteliste.
+  Das Gitter (cartesian product) startet einen Run pro Kombination (sequentiell,
+  damit Run-Dirs/ssh nicht kollidieren), mit lesbaren Labels `… [lr=0.01 bs=32]`.
+  Cap bei 64 Runs. Die Runs landen in der Liste und sind direkt über den
+  Phase-15b-Compare vergleichbar.
+- CSV-Export im `CompareModal` („CSV"-Button): eine Zeile pro Run mit
+  finalen Metriken + allen abweichenden Config-Feldern (aus dem Config-Diff).
+- Abweichung/Offen: SLURM-Array-Jobs für Sweeps (aktuell N Einzel-Runs),
+  W&B/TensorBoard-Export, `best.pt`-Promotion nach `models/best/`, und der
+  Chat-Auto-Tag („warum ist Run #47 schlechter als #46") sind NICHT dabei —
+  brauchen externe Deps bzw. LLM-Tool-Surface; bewusst verschoben.
 
 Letzte Phase macht's komfortabel:
 
