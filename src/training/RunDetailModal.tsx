@@ -1,21 +1,13 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import { training } from './backend'
 import { useTrainingStore } from './store'
 import { type TrainingEvent, RUNNING_STATES } from './types'
 import StatusPill from './StatusPill'
+import LineChart from './charts/LineChart'
+import { parseEventLines, lossSeries, lrSeries, metricSeries } from './charts/series'
 
-type Tab = 'overview' | 'events' | 'logs' | 'script'
-
-function parseEvents(text: string): TrainingEvent[] {
-  const out: TrainingEvent[] = []
-  for (const line of text.split('\n')) {
-    const s = line.trim()
-    if (!s) continue
-    try { out.push(JSON.parse(s)) } catch { /* skip partial line */ }
-  }
-  return out
-}
+type Tab = 'overview' | 'charts' | 'events' | 'logs' | 'script'
 
 export default function RunDetailModal({ runId }: { runId: string }) {
   const close = useTrainingStore((s) => s.select)
@@ -30,6 +22,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   const [stdout, setStdout] = useState('')
   const [stderr, setStderr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [lossLog, setLossLog] = useState(false)
 
   const status = summary?.status ?? 'unknown'
   const active = RUNNING_STATES.has(status) || (summary?.alive ?? false)
@@ -43,7 +36,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
         training.readFile(runId, 'stdout.log'),
         training.readFile(runId, 'stderr.log'),
       ])
-      setEvents(parseEvents(ev))
+      setEvents(parseEventLines(ev))
       setRunJson(rj)
       setTrainPy(tp)
       setStdout(so)
@@ -72,6 +65,21 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   const last = epochEvents[epochEvents.length - 1]
   const failed = events.find((e) => e.kind === 'run.failed')
   const done = events.find((e) => e.kind === 'run.done')
+
+  const totalEpochs = summary?.epochs ?? 0
+  const curEpoch = last ? (last.epoch as number) + 1 : 0
+  const progress = totalEpochs > 0 ? Math.min(1, curEpoch / totalEpochs) : 0
+  // ETA from observed epoch cadence: mean wall-clock gap between epoch.end events.
+  let etaSec: number | null = null
+  let perEpochSec: number | null = null
+  if (active && epochEvents.length >= 2 && curEpoch < totalEpochs) {
+    const first = Date.parse(epochEvents[0].t)
+    const lastT = Date.parse(epochEvents[epochEvents.length - 1].t)
+    if (isFinite(first) && isFinite(lastT) && lastT > first) {
+      perEpochSec = (lastT - first) / 1000 / (epochEvents.length - 1)
+      etaSec = perEpochSec * (totalEpochs - curEpoch)
+    }
+  }
 
   return (
     <div
@@ -105,7 +113,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
         </div>
 
         <div className="flex border-b border-[#1f2429] text-xs">
-          {(['overview', 'events', 'logs', 'script'] as Tab[]).map((t) => (
+          {(['overview', 'charts', 'events', 'logs', 'script'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -119,6 +127,20 @@ export default function RunDetailModal({ runId }: { runId: string }) {
         <div className="min-h-0 flex-1 overflow-auto p-4 text-[12px] text-[#cfd3d8]">
           {tab === 'overview' && (
             <div className="space-y-4">
+              {active && totalEpochs > 0 && (
+                <div className="rounded border border-[#1f2429] bg-[#0a0d10] p-3">
+                  <div className="mb-1.5 flex items-center text-[11px] text-[#9aa1a8]">
+                    <span>epoch {curEpoch}/{totalEpochs}</span>
+                    <span className="ml-auto font-mono text-[#7a8088]">
+                      {etaSec != null ? `ETA ${fmtDuration(etaSec)}` : 'ETA …'}
+                      {perEpochSec != null && <span className="ml-2">{perEpochSec.toFixed(1)}s/epoch</span>}
+                    </span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded bg-[#1a1e22]">
+                    <div className="h-full rounded bg-[#6ab7ff] transition-all" style={{ width: `${(progress * 100).toFixed(1)}%` }} />
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <Stat label="Status" value={status} />
                 <Stat label="Epoch" value={last ? `${(last.epoch as number) + 1}/${summary?.epochs ?? '?'}` : '—'} />
@@ -142,6 +164,38 @@ export default function RunDetailModal({ runId }: { runId: string }) {
                 <pre className="max-h-64 overflow-auto rounded border border-[#1f2429] bg-[#0a0d10] p-2 text-[10px] text-[#9aa1a8]">{runJson || '—'}</pre>
               </div>
             </div>
+          )}
+
+          {tab === 'charts' && (
+            epochEvents.length === 0 ? (
+              <div className="text-[11px] text-[#7a8088]">Noch keine Epoch-Daten zum Plotten.</div>
+            ) : (
+              <div className="space-y-5">
+                <ChartCard
+                  title="Loss"
+                  right={
+                    <button
+                      onClick={() => setLossLog((v) => !v)}
+                      className={`rounded px-1.5 py-0.5 text-[10px] ${lossLog ? 'bg-[#13344f] text-[#6ab7ff]' : 'text-[#7a8088] hover:bg-[#1a1e22]'}`}
+                    >
+                      log
+                    </button>
+                  }
+                >
+                  <LineChart series={lossSeries(events)} yLog={lossLog} xLabel="epoch" />
+                </ChartCard>
+
+                {metricSeries(events).length > 0 && (
+                  <ChartCard title="Metriken">
+                    <LineChart series={metricSeries(events)} xLabel="epoch" />
+                  </ChartCard>
+                )}
+
+                <ChartCard title="Learning rate">
+                  <LineChart series={lrSeries(events)} xLabel="epoch" yFormat={(v) => v.toExponential(1)} />
+                </ChartCard>
+              </div>
+            )
           )}
 
           {tab === 'events' && (
@@ -182,6 +236,24 @@ export default function RunDetailModal({ runId }: { runId: string }) {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+function fmtDuration(sec: number): string {
+  if (sec < 60) return `${Math.round(sec)}s`
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`
+  return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`
+}
+
+function ChartCard({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="rounded border border-[#1f2429] bg-[#0a0d10] p-3">
+      <div className="mb-2 flex items-center">
+        <span className="text-[11px] text-[#9aa1a8]">{title}</span>
+        {right && <span className="ml-auto">{right}</span>}
+      </div>
+      {children}
     </div>
   )
 }
