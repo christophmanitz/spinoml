@@ -48,8 +48,8 @@ serializeParam + an Inspector FixHint + verify:codegen/verify:sidecar cases).
 
 - [~] **Training** — siehe ausführlicher Plan unten in "Phase 13–18: Training-System".
       **Phase 13 (Foundation) + 14 (Trainings-Graph) + 15 (Live-Tracking-UI)
-      + 16 (Remote-Direct via ssh+nohup) sind umgesetzt.** 17–18 offen
-      (SLURM, Sweeps).
+      + 16 (Remote-Direct via ssh+nohup) + 17 (SLURM-Submit) sind umgesetzt.**
+      18 offen (Sweeps + Compare-Polish + Export).
 
 # Phase 13–18: Training-System — ausführlicher Plan
 
@@ -488,7 +488,28 @@ Cleanup-Lesson aus Phase 12b: systemd-logind reapt User-Prozesse
 funktioniert nohup+setsid hier zuverlässig — das war beim
 sidecar-torch der bug, hier wird es zum Feature.
 
-## Phase 17: SLURM-Integration
+## Phase 17: SLURM-Integration  ✅ ERLEDIGT (2026-06-14)
+
+**Umsetzung**:
+- `src-tauri/src/ssh.rs` — `ssh_start_training_run` verzweigt nach
+  `backend.kind` aus run.json: `slurm` → `build_sbatch()` schreibt
+  `train.sbatch` (#SBATCH-Header aus partition/time/mem/cpus/gres/account/qos
+  + `module load`-Zeilen + pre_run_script + `python -u train.py`), submittet
+  via `sbatch`, parsed die Jobid und friert sie als `pid = slurm:<jobid>`
+  ein. Liveness/Status/Stop/Delete sind slurm-aware: `slurm:`-pids gehen über
+  `squeue`/`scancel` statt `kill -0`/`kill`. Neuer Probe-Command
+  `ssh_remote_training_capabilities` (sbatch? nvidia-smi? `sinfo`-Partitionen).
+- Frontend — `RunBackend`/`SlurmConfig` in types; `NewRunModal` zeigt einen
+  Backend-Block (Direkt ↔ SLURM) NUR wenn die Probe `has_slurm` meldet, mit
+  Partition-Dropdown (aus `sinfo`), time/mem/cpus/gres/account, module-Liste,
+  pre-run-script. SlurmConfig wird auf der Connection gemerkt (`slurm?`).
+- Abweichung vom Plan: KEIN `SlurmConfig`-Graph-Node (17.1) — SLURM wird beim
+  Run-Start gewählt statt als Trainings-Graph-Knoten (deutlich weniger
+  invasiv, gleiche Capability). KEIN rsync (wie Phase 16). Resume aus
+  Checkpoint (17.3) + sacct-Final-State-Parsing (17.2) noch offen: Status
+  kommt aus dem status-File des Trainers + squeue-Liveness; ein per SLURM
+  gekillter Job (OOM/Timeout) wird über `reconcile_status` als failed
+  angezeigt, sobald er aus squeue fällt.
 
 Der eigentliche HPC-Use-Case. Voraussetzung: Phase 16.
 

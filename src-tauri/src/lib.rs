@@ -773,6 +773,7 @@ pub fn run() {
             ssh::ssh_read_training_run_file,
             ssh::ssh_stop_training_run,
             ssh::ssh_delete_training_run,
+            ssh::ssh_remote_training_capabilities,
             pty::pty_spawn,
             pty::pty_write,
             pty::pty_resize,

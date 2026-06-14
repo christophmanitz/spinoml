@@ -6,7 +6,9 @@
 import { getCurrentConnection, sshTarget, remotePython, type RemoteSshConnection } from '../connections/store'
 import { tauriTraining } from './tauri-training'
 import { tauriSsh } from '../connections/tauri-ssh'
-import type { RunSummary, RunStatus } from './types'
+import type { RunSummary, RunStatus, RemoteTrainingCapabilities } from './types'
+
+const NO_CAPS: RemoteTrainingCapabilities = { has_slurm: false, has_gpu: false, partitions: [], gpu_names: [] }
 
 export const REMOTE_TRAINING_MSG =
   'Remote-Training (ssh-direct) läuft detached auf dem Host. ' +
@@ -49,5 +51,10 @@ export const training = {
   remove: (runId: string): Promise<void> => {
     const r = remote()
     return r ? tauriSsh.deleteTrainingRun(sshTarget(r), r.root, runId) : tauriTraining.remove(runId)
+  },
+  capabilities: (): Promise<RemoteTrainingCapabilities> => {
+    const r = remote()
+    // Local backend has no SLURM; only remote hosts are probed.
+    return r ? tauriSsh.remoteTrainingCapabilities(sshTarget(r), r.root) : Promise.resolve(NO_CAPS)
   },
 }

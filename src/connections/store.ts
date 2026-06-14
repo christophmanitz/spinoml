@@ -36,6 +36,9 @@ export type RemoteSshConnection = {
    * to `python` when unset — usually wrong on HPC, so the UI surfaces it.
    */
   python?: string
+  /** Last-used SLURM batch config for this host (Phase 17), reused as the
+   *  prefill when starting a new sbatch run. */
+  slurm?: import('../training/types').SlurmConfig
 }
 
 export type Connection = LocalConnection | RemoteSshConnection
@@ -101,7 +104,7 @@ type State = {
 
   setCurrent: (id: string) => void
   addRemote: (label: string, alias: string, root: string, user?: string) => RemoteSshConnection
-  updateRemote: (id: string, patch: Partial<Pick<RemoteSshConnection, 'label' | 'alias' | 'user' | 'root' | 'python'>>) => void
+  updateRemote: (id: string, patch: Partial<Pick<RemoteSshConnection, 'label' | 'alias' | 'user' | 'root' | 'python' | 'slurm'>>) => void
   removeRemote: (id: string) => void
 
   testConnection: (target: string) => Promise<SshTestResult>

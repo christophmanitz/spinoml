@@ -30,6 +30,31 @@ export type TrainingConfig = {
   callbacks?: CallbackConfig[]
 }
 
+/** Phase 17 — SLURM batch parameters, frozen into run.json + emitted as the
+ *  #SBATCH header of train.sbatch on the remote. */
+export type SlurmConfig = {
+  partition: string
+  /** wall-clock limit, HH:MM:SS */
+  time: string
+  /** e.g. "32G" */
+  mem: string
+  cpus_per_task: number
+  /** e.g. "gpu:1" or "gpu:a100:1"; empty = no gres line */
+  gres?: string
+  account?: string
+  qos?: string
+  /** `module load …` lines run before python */
+  modules: string[]
+  /** free-text bash run before python (exports etc.) */
+  pre_run_script?: string
+}
+
+/** How a run is launched. 'local' = direct (nohup setsid), whether the
+ *  connection is local or remote-ssh. 'slurm' = sbatch on a remote cluster. */
+export type RunBackend =
+  | { kind: 'local' }
+  | { kind: 'slurm'; slurm: SlurmConfig }
+
 export type DatasetConfig = {
   /** Absolute path on the executor host (Phase 13 = local). */
   path: string
@@ -46,9 +71,23 @@ export type RunConfig = {
   created_at: string
   status: 'queued'
   model_path: string
-  backend: { kind: 'local' }
+  backend: RunBackend
   dataset: DatasetConfig
   training: TrainingConfig
+}
+
+export function defaultSlurmConfig(): SlurmConfig {
+  return {
+    partition: '',
+    time: '04:00:00',
+    mem: '32G',
+    cpus_per_task: 8,
+    gres: '',
+    account: '',
+    qos: '',
+    modules: [],
+    pre_run_script: '',
+  }
 }
 
 // ── Returned by the Rust executor ──
@@ -69,6 +108,14 @@ export type RunStatus = {
   status: string
   alive: boolean
   pid: number | null
+}
+
+/** Phase 17 — what the remote host can do, probed once per connection. */
+export type RemoteTrainingCapabilities = {
+  has_slurm: boolean
+  has_gpu: boolean
+  partitions: string[]
+  gpu_names: string[]
 }
 
 export type TrainingEvent = {

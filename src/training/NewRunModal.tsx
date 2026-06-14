@@ -2,13 +2,19 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { fs, datasets as datasetsBackend } from '../connections/backend'
 import { useDatasetsStore } from '../datasets/store'
+import { useConnectionsStore } from '../connections/store'
 import { useTrainingStore } from './store'
+import { training } from './backend'
 import {
   type LossKind,
   type OptimizerKind,
   type SchedulerKind,
   type TrainingConfig,
+  type SlurmConfig,
+  type RemoteTrainingCapabilities,
+  type RunBackend,
   defaultTrainingConfig,
+  defaultSlurmConfig,
 } from './types'
 
 const OPTIMIZERS: OptimizerKind[] = ['Adam', 'AdamW', 'SGD', 'RMSprop']
@@ -19,6 +25,15 @@ export default function NewRunModal() {
   const close = useTrainingStore((s) => s.closeNewRun)
   const startRun = useTrainingStore((s) => s.startRun)
   const inspectDataset = useDatasetsStore((s) => s.inspect)
+
+  // Current remote connection (for SLURM backend + persisting its config).
+  const currentId = useConnectionsStore((s) => s.currentId)
+  const remoteConn = useConnectionsStore((s) => s.saved.find((c) => c.id === s.currentId)) ?? null
+  const updateRemote = useConnectionsStore((s) => s.updateRemote)
+
+  const [caps, setCaps] = useState<RemoteTrainingCapabilities | null>(null)
+  const [backendKind, setBackendKind] = useState<'local' | 'slurm'>('local')
+  const [slurm, setSlurm] = useState<SlurmConfig>(remoteConn?.slurm ?? defaultSlurmConfig())
 
   const [models, setModels] = useState<string[]>([])
   const [dsList, setDsList] = useState<{ relpath: string; name: string; is_dir: boolean }[]>([])
@@ -65,6 +80,18 @@ export default function NewRunModal() {
     return () => document.removeEventListener('keydown', onKey)
   }, [close])
 
+  // Probe the remote host once (sbatch? partitions? gpus?) so we only offer
+  // SLURM where it exists and can prefill the partition.
+  useEffect(() => {
+    let cancelled = false
+    void training.capabilities().then((c) => {
+      if (cancelled) return
+      setCaps(c)
+      setSlurm((prev) => (prev.partition || !c.partitions.length ? prev : { ...prev, partition: c.partitions[0] }))
+    }).catch(() => { if (!cancelled) setCaps(null) })
+    return () => { cancelled = true }
+  }, [currentId])
+
   function onPickDataset(rel: string) {
     setDatasetRelpath(rel)
     setTargetColumn('')
@@ -82,6 +109,9 @@ export default function NewRunModal() {
     setSubmitting(true)
     try {
       const abspath = await datasetsBackend.abspath(datasetRelpath)
+      const backend: RunBackend = backendKind === 'slurm' ? { kind: 'slurm', slurm } : { kind: 'local' }
+      // Remember the SLURM config on the connection for next time.
+      if (backendKind === 'slurm' && remoteConn) updateRemote(remoteConn.id, { slurm })
       await startRun({
         label: effectiveLabel || 'run',
         modelRelpath,
@@ -90,6 +120,7 @@ export default function NewRunModal() {
         targetColumn,
         featureColumns: null, // null = all numeric cols except target
         training: cfg,
+        backend,
       })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -173,6 +204,69 @@ export default function NewRunModal() {
           <Field label="Label (optional)">
             <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={effectiveLabel || 'run'} className={SELECT} />
           </Field>
+
+          {caps?.has_slurm && (
+            <div className="space-y-3 rounded border border-[#1f2429] bg-[#0a0d10] p-3">
+              <Field label="Backend">
+                <select value={backendKind} onChange={(e) => setBackendKind(e.target.value as 'local' | 'slurm')} className={SELECT}>
+                  <option value="local">Direkt (ssh, nohup setsid)</option>
+                  <option value="slurm">SLURM (sbatch)</option>
+                </select>
+                {caps.gpu_names.length > 0 && <Hint>GPUs erkannt: {caps.gpu_names.slice(0, 4).join(', ')}</Hint>}
+              </Field>
+
+              {backendKind === 'slurm' && (
+                <>
+                  <div className="grid grid-cols-3 gap-3">
+                    <Field label="Partition">
+                      {caps.partitions.length ? (
+                        <select value={slurm.partition} onChange={(e) => setSlurm({ ...slurm, partition: e.target.value })} className={SELECT}>
+                          <option value="">— wählen —</option>
+                          {caps.partitions.map((p) => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                      ) : (
+                        <input value={slurm.partition} onChange={(e) => setSlurm({ ...slurm, partition: e.target.value })} className={SELECT} />
+                      )}
+                    </Field>
+                    <Field label="Time (HH:MM:SS)">
+                      <input value={slurm.time} onChange={(e) => setSlurm({ ...slurm, time: e.target.value })} className={SELECT} />
+                    </Field>
+                    <Field label="Memory">
+                      <input value={slurm.mem} onChange={(e) => setSlurm({ ...slurm, mem: e.target.value })} className={SELECT} />
+                    </Field>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <NumField label="CPUs/task" value={slurm.cpus_per_task} onChange={(v) => setSlurm({ ...slurm, cpus_per_task: v })} />
+                    <Field label="GRES (z.B. gpu:1)">
+                      <input value={slurm.gres ?? ''} onChange={(e) => setSlurm({ ...slurm, gres: e.target.value })} className={SELECT} />
+                    </Field>
+                    <Field label="Account">
+                      <input value={slurm.account ?? ''} onChange={(e) => setSlurm({ ...slurm, account: e.target.value })} className={SELECT} />
+                    </Field>
+                  </div>
+                  <Field label="module load (eine pro Zeile)">
+                    <textarea
+                      value={slurm.modules.join('\n')}
+                      onChange={(e) => setSlurm({ ...slurm, modules: e.target.value.split('\n').map((l) => l.trim()).filter(Boolean) })}
+                      rows={2}
+                      placeholder={'Python/3.11.5\nCUDA/12.4.0'}
+                      className={`${SELECT} font-mono`}
+                    />
+                  </Field>
+                  <Field label="Pre-Run-Script (bash, optional)">
+                    <textarea
+                      value={slurm.pre_run_script ?? ''}
+                      onChange={(e) => setSlurm({ ...slurm, pre_run_script: e.target.value })}
+                      rows={2}
+                      placeholder={'export OMP_NUM_THREADS=8'}
+                      className={`${SELECT} font-mono`}
+                    />
+                  </Field>
+                  <Hint>Python: <code className="text-[#9aa1a8]">{remoteConn ? (remoteConn.python || 'python') : 'python'}</code> — im Runs-Tab editierbar. Muss torch (+pandas) haben (ggf. via module load).</Hint>
+                </>
+              )}
+            </div>
+          )}
 
           {error && <div className="text-[#ff7a85]">{error}</div>}
         </div>

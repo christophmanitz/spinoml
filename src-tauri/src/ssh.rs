@@ -20,6 +20,7 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 
 use serde::Serialize;
+use serde_json::Value;
 use tauri::{AppHandle, State};
 
 use crate::training;
@@ -836,16 +837,116 @@ pub fn ssh_start_training_run(
     write_remote_run_file(&alias, &dir, "train.py", trainer.as_bytes())?;
     write_remote_run_file(&alias, &dir, "status", b"queued\n")?;
 
-    // Detached launch. setsid → own session (immune to the ssh-channel HUP and
-    // app close); nohup → belt-and-suspenders; stdio to files; stdin /dev/null.
-    // The remote command shell has job control off, so setsid execs in place and
-    // $! is the python pid.
-    let launch = format!(
-        "cd {dir_q} && nohup setsid {python_q} -u train.py > stdout.log 2> stderr.log < /dev/null & echo $! > pid"
-    );
-    ssh_exec(&alias, &launch, None)?;
-    eprintln!("[mlforge] remote training run {run_id} launched on {alias} ({python})");
+    // Pick the launch path from the frozen backend in run.json: SLURM → sbatch,
+    // anything else → direct detached process (Phase 16).
+    let cfg: Value = serde_json::from_str(&run_json).unwrap_or(Value::Null);
+    let backend_kind = cfg
+        .get("backend")
+        .and_then(|b| b.get("kind"))
+        .and_then(|k| k.as_str())
+        .unwrap_or("local");
+
+    if backend_kind == "slurm" {
+        let slurm = cfg.get("backend").and_then(|b| b.get("slurm"));
+        let sbatch = build_sbatch(&run_id, &python_q, slurm);
+        write_remote_run_file(&alias, &dir, "train.sbatch", sbatch.as_bytes())?;
+        // Submit; parse "Submitted batch job <id>"; freeze pid as slurm:<id>.
+        let submit = format!(
+            "cd {dir_q} && out=$(sbatch train.sbatch 2>&1); echo \"$out\"; \
+             jid=$(printf '%s' \"$out\" | grep -oE 'job [0-9]+' | grep -oE '[0-9]+' | tail -1); \
+             if [ -n \"$jid\" ]; then printf 'slurm:%s\\n' \"$jid\" > pid; echo \"MLF_JOBID $jid\"; \
+             else echo MLF_SUBMIT_FAILED; fi"
+        );
+        let out = ssh_exec(&alias, &submit, None)?;
+        if !out.contains("MLF_JOBID") {
+            // surface sbatch's own error text (everything before our markers)
+            let msg: String = out
+                .lines()
+                .filter(|l| !l.starts_with("MLF_"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(format!("sbatch failed: {}", msg.trim()));
+        }
+        eprintln!("[mlforge] slurm run {run_id} submitted on {alias}");
+    } else {
+        // Detached launch. setsid → own session (immune to the ssh-channel HUP
+        // and app close); nohup → belt-and-suspenders; stdio to files; stdin
+        // /dev/null. The remote command shell has job control off, so setsid
+        // execs in place and $! is the python pid.
+        let launch = format!(
+            "cd {dir_q} && nohup setsid {python_q} -u train.py > stdout.log 2> stderr.log < /dev/null & echo $! > pid"
+        );
+        ssh_exec(&alias, &launch, None)?;
+        eprintln!("[mlforge] remote training run {run_id} launched on {alias} ({python})");
+    }
     Ok(())
+}
+
+/// Emit a train.sbatch from the SLURM config (a serde_json object). Values are
+/// written into a file (not pasted into our shell command), and run on the
+/// user's own cluster — so simple fields are lightly sanitised and the module
+/// list / pre_run_script are free-form by design (the plan calls for it).
+fn build_sbatch(run_id: &str, python_q: &str, slurm: Option<&Value>) -> String {
+    let s = |k: &str| slurm.and_then(|v| v.get(k)).and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    let n = |k: &str| slurm.and_then(|v| v.get(k)).and_then(|x| x.as_u64());
+
+    // job name: a short, tame slug from the run id
+    let job: String = run_id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .take(64)
+        .collect();
+
+    let mut out = String::from("#!/bin/bash\n");
+    out.push_str(&format!("#SBATCH --job-name=mlforge-{job}\n"));
+    let partition = s("partition");
+    if !partition.is_empty() {
+        out.push_str(&format!("#SBATCH --partition={partition}\n"));
+    }
+    let time = s("time");
+    out.push_str(&format!("#SBATCH --time={}\n", if time.is_empty() { "04:00:00".into() } else { time }));
+    let mem = s("mem");
+    if !mem.is_empty() {
+        out.push_str(&format!("#SBATCH --mem={mem}\n"));
+    }
+    let cpus = n("cpus_per_task").unwrap_or(8);
+    out.push_str(&format!("#SBATCH --cpus-per-task={cpus}\n"));
+    let gres = s("gres");
+    if !gres.is_empty() {
+        out.push_str(&format!("#SBATCH --gres={gres}\n"));
+    }
+    let account = s("account");
+    if !account.is_empty() {
+        out.push_str(&format!("#SBATCH --account={account}\n"));
+    }
+    let qos = s("qos");
+    if !qos.is_empty() {
+        out.push_str(&format!("#SBATCH --qos={qos}\n"));
+    }
+    out.push_str("#SBATCH --output=slurm-%j.out\n");
+    out.push_str("#SBATCH --error=slurm-%j.err\n\n");
+
+    if let Some(mods) = slurm.and_then(|v| v.get("modules")).and_then(|x| x.as_array()) {
+        for m in mods {
+            if let Some(name) = m.as_str() {
+                let name = name.trim();
+                if !name.is_empty() {
+                    out.push_str(&format!("module load {name}\n"));
+                }
+            }
+        }
+    }
+    let pre = s("pre_run_script");
+    if !pre.is_empty() {
+        out.push_str(&pre);
+        out.push('\n');
+    }
+    out.push('\n');
+    // train.py writes events.jsonl/status itself; -u so SLURM's buffered stdout
+    // isn't the only signal. We still cd via SLURM_SUBMIT_DIR for safety.
+    out.push_str("cd \"$SLURM_SUBMIT_DIR\"\n");
+    out.push_str(&format!("{python_q} -u train.py\n"));
+    out
 }
 
 struct ParsedRun {
@@ -875,7 +976,11 @@ pub fn ssh_list_training_runs(
              case \"$name\" in .*) continue;; esac; \
              echo \"MLF_RUN $name\"; \
              pid=$(cat \"$d/pid\" 2>/dev/null); \
-             if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then echo 'MLF_ALIVE 1'; else echo 'MLF_ALIVE 0'; fi; \
+             case \"$pid\" in \
+               slurm:*) jid=${{pid#slurm:}}; if squeue -j \"$jid\" -h -o '%T' 2>/dev/null | grep -q .; then echo 'MLF_ALIVE 1'; else echo 'MLF_ALIVE 0'; fi ;; \
+               '') echo 'MLF_ALIVE 0' ;; \
+               *) if kill -0 \"$pid\" 2>/dev/null; then echo 'MLF_ALIVE 1'; else echo 'MLF_ALIVE 0'; fi ;; \
+             esac; \
              echo MLF_STATUS_BEGIN; cat \"$d/status\" 2>/dev/null; echo; echo MLF_STATUS_END; \
              echo MLF_RUNJSON_BEGIN; cat \"$d/run.json\" 2>/dev/null; echo; echo MLF_RUNJSON_END; \
              echo MLF_METRICS_BEGIN; cat \"$d/metrics.json\" 2>/dev/null; echo; echo MLF_METRICS_END; \
@@ -956,7 +1061,11 @@ pub fn ssh_training_run_status(
     let dir_q = shell_quote_path(&remote_run_dir(&root, &run_id));
     let cmd = format!(
         "d={dir_q}; pid=$(cat \"$d/pid\" 2>/dev/null); \
-         if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then echo 'MLF_ALIVE 1'; else echo 'MLF_ALIVE 0'; fi; \
+         case \"$pid\" in \
+           slurm:*) jid=${{pid#slurm:}}; if squeue -j \"$jid\" -h -o '%T' 2>/dev/null | grep -q .; then echo 'MLF_ALIVE 1'; else echo 'MLF_ALIVE 0'; fi ;; \
+           '') echo 'MLF_ALIVE 0' ;; \
+           *) if kill -0 \"$pid\" 2>/dev/null; then echo 'MLF_ALIVE 1'; else echo 'MLF_ALIVE 0'; fi ;; \
+         esac; \
          echo \"MLF_PID $pid\"; \
          echo MLF_STATUS_BEGIN; cat \"$d/status\" 2>/dev/null; echo; echo MLF_STATUS_END"
     );
@@ -1011,7 +1120,11 @@ pub fn ssh_stop_training_run(alias: String, root: String, run_id: String) -> Res
         "d={dir_q}; if [ -d \"$d\" ]; then \
            printf 'cancelled\\n' > \"$d/status\"; \
            pid=$(cat \"$d/pid\" 2>/dev/null); \
-           if [ -n \"$pid\" ]; then kill -TERM -\"$pid\" 2>/dev/null; kill -TERM \"$pid\" 2>/dev/null; fi; \
+           case \"$pid\" in \
+             slurm:*) scancel \"${{pid#slurm:}}\" 2>/dev/null ;; \
+             '') : ;; \
+             *) kill -TERM -\"$pid\" 2>/dev/null; kill -TERM \"$pid\" 2>/dev/null ;; \
+           esac; \
          fi"
     );
     ssh_exec(&alias, &cmd, None).map(|_| ())
@@ -1025,9 +1138,13 @@ pub fn ssh_delete_training_run(alias: String, root: String, run_id: String) -> R
     let dir_q = shell_quote_path(&remote_run_dir(&root, &run_id));
     let cmd = format!(
         "d={dir_q}; if [ -d \"$d\" ]; then \
-           pid=$(cat \"$d/pid\" 2>/dev/null); \
-           if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then echo MLF_ALIVE; \
-           else rm -rf -- \"$d\"; echo MLF_DELETED; fi; \
+           pid=$(cat \"$d/pid\" 2>/dev/null); alive=0; \
+           case \"$pid\" in \
+             slurm:*) jid=${{pid#slurm:}}; if squeue -j \"$jid\" -h -o '%T' 2>/dev/null | grep -q .; then alive=1; fi ;; \
+             '') : ;; \
+             *) if kill -0 \"$pid\" 2>/dev/null; then alive=1; fi ;; \
+           esac; \
+           if [ \"$alive\" = 1 ]; then echo MLF_ALIVE; else rm -rf -- \"$d\"; echo MLF_DELETED; fi; \
          else echo MLF_DELETED; fi"
     );
     let out = ssh_exec(&alias, &cmd, None)?;
@@ -1035,4 +1152,63 @@ pub fn ssh_delete_training_run(alias: String, root: String, run_id: String) -> R
         return Err("run is still alive — stop it before deleting".into());
     }
     Ok(())
+}
+
+#[derive(Serialize)]
+pub struct RemoteTrainingCapabilities {
+    has_slurm: bool,
+    has_gpu: bool,
+    partitions: Vec<String>,
+    gpu_names: Vec<String>,
+}
+
+/// Probe what the remote host offers for training (Phase 17). Cheap, one
+/// round-trip; the UI calls it once per remote connection to decide whether to
+/// offer the SLURM backend and to populate the partition dropdown.
+#[tauri::command]
+pub fn ssh_remote_training_capabilities(
+    alias: String,
+    _root: String,
+) -> Result<RemoteTrainingCapabilities, String> {
+    validate_alias(&alias)?;
+    let cmd = "if command -v sbatch >/dev/null 2>&1; then echo MLF_HAS_SLURM; fi; \
+               if command -v nvidia-smi >/dev/null 2>&1; then echo MLF_HAS_GPU; \
+                 echo MLF_GPU_BEGIN; nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null; echo MLF_GPU_END; fi; \
+               if command -v sinfo >/dev/null 2>&1; then \
+                 echo MLF_PART_BEGIN; sinfo -h -o '%P' 2>/dev/null | sort -u; echo MLF_PART_END; fi";
+    let out = ssh_exec(&alias, cmd, None)?;
+
+    let mut has_slurm = false;
+    let mut has_gpu = false;
+    let mut partitions: Vec<String> = Vec::new();
+    let mut gpu_names: Vec<String> = Vec::new();
+    let mut section = "";
+    for line in out.lines() {
+        match line {
+            "MLF_HAS_SLURM" => has_slurm = true,
+            "MLF_HAS_GPU" => has_gpu = true,
+            "MLF_PART_BEGIN" => section = "part",
+            "MLF_GPU_BEGIN" => section = "gpu",
+            "MLF_PART_END" | "MLF_GPU_END" => section = "",
+            _ => {
+                let v = line.trim();
+                if v.is_empty() {
+                    continue;
+                }
+                match section {
+                    // sinfo marks the default partition with a trailing '*'
+                    "part" => partitions.push(v.trim_end_matches('*').to_string()),
+                    "gpu" => gpu_names.push(v.to_string()),
+                    _ => {}
+                }
+            }
+        }
+    }
+    partitions.dedup();
+    Ok(RemoteTrainingCapabilities {
+        has_slurm,
+        has_gpu,
+        partitions,
+        gpu_names,
+    })
 }

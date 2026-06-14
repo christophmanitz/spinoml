@@ -4,7 +4,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import type { ProjectMeta, NoteEntry, DatasetEntry, FsEntry } from '../workspace/tauri-fs'
-import type { RunSummary, RunStatus } from '../training/types'
+import type { RunSummary, RunStatus, RemoteTrainingCapabilities } from '../training/types'
 
 export type SshTestResult = {
   ok: boolean
@@ -103,4 +103,7 @@ export const tauriSsh = {
 
   deleteTrainingRun: (alias: string, root: string, runId: string) =>
     invoke<void>('ssh_delete_training_run', { alias, root, runId }),
+
+  remoteTrainingCapabilities: (alias: string, root: string) =>
+    invoke<RemoteTrainingCapabilities>('ssh_remote_training_capabilities', { alias, root }),
 }

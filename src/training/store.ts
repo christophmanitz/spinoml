@@ -8,6 +8,7 @@ import { training } from './backend'
 import {
   type RunSummary,
   type RunConfig,
+  type RunBackend,
   type DatasetConfig,
   type TrainingConfig,
   makeRunId,
@@ -25,6 +26,8 @@ export type NewRunInput = {
   targetColumn: string
   featureColumns: string[] | null
   training: TrainingConfig
+  /** Launch backend; defaults to direct ({kind:'local'}). */
+  backend?: RunBackend
 }
 
 type TrainingState = {
@@ -119,7 +122,7 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       created_at: new Date().toISOString(),
       status: 'queued',
       model_path: input.modelRelpath,
-      backend: { kind: 'local' },
+      backend: input.backend ?? { kind: 'local' },
       dataset,
       training: input.training,
     }
