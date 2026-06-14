@@ -477,11 +477,27 @@ pub fn stop_remote_sidecar(app: AppHandle) -> Result<(), String> {
 /// only our own `-L 127.0.0.1:7424:127.0.0.1:7421` signature, so it won't touch
 /// unrelated ssh sessions. Best-effort.
 fn free_local_tunnel_port() {
+    // Primary: kill whatever holds the local forward port. Only an ssh -L
+    // listener binds 127.0.0.1:7424 (clients use ephemeral ports), so this is
+    // precise. fuser is the reliable way to free a port.
+    let _ = Command::new("fuser")
+        .arg("-k")
+        .arg(format!("{}/tcp", REMOTE_LOCAL_PORT))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    // Fallback by command-line signature. The pattern must NOT start with '-'
+    // or pkill parses it as an option (and silently frees nothing).
     let pat = format!(
-        "-L 127.0.0.1:{}:127.0.0.1:{}",
+        "127.0.0.1:{}:127.0.0.1:{}",
         REMOTE_LOCAL_PORT, REMOTE_REMOTE_PORT
     );
-    let _ = Command::new("pkill").arg("-f").arg(&pat).status();
+    let _ = Command::new("pkill")
+        .arg("-f")
+        .arg(&pat)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 fn stop_remote_sidecar_internal(app: &AppHandle) -> Result<(), String> {
