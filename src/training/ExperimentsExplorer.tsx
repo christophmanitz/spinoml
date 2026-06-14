@@ -11,8 +11,12 @@ export default function ExperimentsExplorer() {
   const loading = useTrainingStore((s) => s.listLoading)
   const error = useTrainingStore((s) => s.listError)
   const selectedRunId = useTrainingStore((s) => s.selectedRunId)
+  const compareIds = useTrainingStore((s) => s.compareIds)
   const refresh = useTrainingStore((s) => s.refresh)
   const select = useTrainingStore((s) => s.select)
+  const toggleCompare = useTrainingStore((s) => s.toggleCompare)
+  const clearCompare = useTrainingStore((s) => s.clearCompare)
+  const openCompare = useTrainingStore((s) => s.openCompare)
   const openNewRun = useTrainingStore((s) => s.openNewRun)
   // Re-refresh when the active connection changes (local↔remote).
   const currentId = useConnectionsStore((s) => s.currentId)
@@ -56,6 +60,22 @@ export default function ExperimentsExplorer() {
         </div>
       )}
 
+      {compareIds.length > 0 && (
+        <div className="flex items-center gap-2 border-b border-[#1f2429] bg-[#0f1419] px-3 py-1.5 text-[11px]">
+          <span className="text-[#9aa1a8]">{compareIds.length} ausgewählt</span>
+          <button
+            onClick={openCompare}
+            disabled={compareIds.length < 2}
+            className="ml-auto rounded bg-[#13344f] px-2 py-0.5 text-[#6ab7ff] hover:bg-[#184466] disabled:opacity-40"
+          >
+            Vergleichen
+          </button>
+          <button onClick={clearCompare} className="rounded px-1.5 py-0.5 text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#e6e8eb]">
+            ×
+          </button>
+        </div>
+      )}
+
       <div className="min-h-0 flex-1 overflow-auto">
         {error && <div className="px-3 py-2 text-[11px] text-[#ff7a85]">{error}</div>}
         {!error && runs.length === 0 && (
@@ -65,27 +85,39 @@ export default function ExperimentsExplorer() {
         )}
         {runs.map((r) => {
           const model = r.model_path.split('/').pop() ?? r.model_path
+          const checked = compareIds.includes(r.run_id)
           return (
-            <button
+            <div
               key={r.run_id}
-              onClick={() => select(r.run_id)}
-              className={`flex w-full flex-col gap-0.5 border-b border-[#171b1f] px-3 py-2 text-left hover:bg-[#14181c] ${
+              className={`flex items-center gap-2 border-b border-[#171b1f] pl-2 pr-3 hover:bg-[#14181c] ${
                 selectedRunId === r.run_id ? 'bg-[#14181c]' : ''
               }`}
             >
-              <div className="flex items-center gap-2">
-                <StatusPill status={r.status} alive={r.alive} />
-                <span className="flex-1 truncate text-[12px] text-[#e6e8eb]">
-                  {r.run_label || r.run_id}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 text-[10px] text-[#7a8088]">
-                <span className="truncate">{model}</span>
-                {r.best_val_loss != null && (
-                  <span className="ml-auto shrink-0 text-[#5fd39a]">val {r.best_val_loss.toFixed(4)}</span>
-                )}
-              </div>
-            </button>
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => toggleCompare(r.run_id)}
+                title="Für Vergleich auswählen"
+                className="shrink-0 accent-[#6ab7ff]"
+              />
+              <button
+                onClick={() => select(r.run_id)}
+                className="flex min-w-0 flex-1 flex-col gap-0.5 py-2 text-left"
+              >
+                <div className="flex items-center gap-2">
+                  <StatusPill status={r.status} alive={r.alive} />
+                  <span className="flex-1 truncate text-[12px] text-[#e6e8eb]">
+                    {r.run_label || r.run_id}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-[10px] text-[#7a8088]">
+                  <span className="truncate">{model}</span>
+                  {r.best_val_loss != null && (
+                    <span className="ml-auto shrink-0 text-[#5fd39a]">val {r.best_val_loss.toFixed(4)}</span>
+                  )}
+                </div>
+              </button>
+            </div>
           )
         })}
       </div>

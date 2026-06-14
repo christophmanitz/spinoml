@@ -47,8 +47,8 @@ serializeParam + an Inspector FixHint + verify:codegen/verify:sidecar cases).
 ## Beyond architecture (larger, separate decision)
 
 - [~] **Training** — siehe ausführlicher Plan unten in "Phase 13–18: Training-System".
-      **Phase 13 (Foundation) + 14 (visueller Trainings-Graph) sind umgesetzt.**
-      15–18 offen (Live-Charts, Remote-Direct, SLURM, Sweeps).
+      **Phase 13 (Foundation) + 14 (Trainings-Graph) + 15 (Live-Tracking-UI)
+      sind umgesetzt.** 16–18 offen (Remote-Direct, SLURM, Sweeps).
 
 # Phase 13–18: Training-System — ausführlicher Plan
 
@@ -351,7 +351,25 @@ Smoke-Test-Modus für den Trainings-Graph: gleicher Trick wie heute
 beim Modell-Smoke-Test — 1 Batch durchschicken, prüfen ob Loss
 endlich ist, ohne den ganzen Run zu starten.
 
-## Phase 15: Live-Tracking-UI
+## Phase 15: Live-Tracking-UI  ✅ ERLEDIGT (2026-06-14)
+
+**Umsetzung** (15a Charts / 15b Compare):
+- 15a — `src/training/charts/LineChart.tsx` (pure-SVG Multi-Series-Chart,
+  keine Lib, log-Y, Crosshair + Hover-Readout, Gaps bei null-y) +
+  `charts/series.ts` (leitet loss/lr/metric-Serien aus events.jsonl ab,
+  stabile Palette). `RunDetailModal` bekommt Tab „charts" (Loss mit
+  log-Toggle, Metriken, LR) + Live-Progress-Bar in Overview mit
+  epoch x/N + ETA (aus beobachteter Epoch-Kadenz).
+- 15b — Multi-Run-Compare: Checkboxen pro Run in `ExperimentsExplorer`,
+  „Vergleichen"-Bar, `CompareModal` (Loss-Overlay aller gewählten Runs,
+  finale-Metriken-Tabelle, Config-Diff der training-Sektionen). Compare-
+  State (`compareIds`/`compareOpen`) im `useTrainingStore`.
+- Abweichung vom Plan: Tailing bleibt Polling (alle 2s solange ein Run
+  lebt), KEIN `fs::watch`/Tauri-`training:event` — für Epoch-Granularität
+  ausreichend; fs-watch verschoben (relevant erst bei Batch-Live-Charts).
+  Kein eigener Bottom-Panel-Tab „Training" — Charts leben im Run-Detail-
+  Modal (weniger invasiv, gleiche Daten). Hardware-Strip + Sample-Preds
+  noch offen (brauchen optionale Sidecar-Polls bzw. sample-Callback).
 
 Sobald Phase 13+14 stehen, baue Live-Visualisierung:
 

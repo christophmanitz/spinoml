@@ -33,9 +33,16 @@ type TrainingState = {
   listError: string | null
   selectedRunId: string | null
   newRunOpen: boolean
+  /** Run ids selected for multi-run compare (Phase 15.3). */
+  compareIds: string[]
+  compareOpen: boolean
 
   refresh: () => Promise<void>
   select: (runId: string | null) => void
+  toggleCompare: (runId: string) => void
+  clearCompare: () => void
+  openCompare: () => void
+  closeCompare: () => void
   openNewRun: () => void
   closeNewRun: () => void
   startRun: (input: NewRunInput) => Promise<string>
@@ -63,6 +70,8 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   listError: null,
   selectedRunId: null,
   newRunOpen: false,
+  compareIds: [],
+  compareOpen: false,
 
   refresh: async () => {
     if (!isTauri()) {
@@ -84,6 +93,14 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   },
 
   select: (runId) => set({ selectedRunId: runId }),
+  toggleCompare: (runId) => set((s) => ({
+    compareIds: s.compareIds.includes(runId)
+      ? s.compareIds.filter((id) => id !== runId)
+      : [...s.compareIds, runId],
+  })),
+  clearCompare: () => set({ compareIds: [] }),
+  openCompare: () => set({ compareOpen: true }),
+  closeCompare: () => set({ compareOpen: false }),
   openNewRun: () => set({ newRunOpen: true }),
   closeNewRun: () => set({ newRunOpen: false }),
 
@@ -123,7 +140,10 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
 
   deleteRun: async (runId) => {
     await training.remove(runId)
-    if (get().selectedRunId === runId) set({ selectedRunId: null })
+    set((s) => ({
+      selectedRunId: s.selectedRunId === runId ? null : s.selectedRunId,
+      compareIds: s.compareIds.filter((id) => id !== runId),
+    }))
     await get().refresh()
   },
 }))

@@ -19,6 +19,7 @@ import DatasetDetail from './datasets/DatasetDetail'
 import { useTrainingStore } from './training/store'
 import NewRunModal from './training/NewRunModal'
 import RunDetailModal from './training/RunDetailModal'
+import CompareModal from './training/CompareModal'
 import { useViewModeStore } from './training/graph/viewMode'
 import ModeToggle from './training/graph/ModeToggle'
 import TrainingPalette from './training/graph/TrainingPalette'
@@ -179,6 +180,7 @@ export default function App() {
   const selectedDataset = useDatasetsStore((s) => s.selectedRel)
   const selectedRun = useTrainingStore((s) => s.selectedRunId)
   const newRunOpen = useTrainingStore((s) => s.newRunOpen)
+  const compareOpen = useTrainingStore((s) => s.compareOpen)
   const viewMode = useViewModeStore((s) => s.mode)
 
   return (
@@ -248,6 +250,7 @@ export default function App() {
       {selectedDataset && <DatasetDetail relpath={selectedDataset} />}
       {newRunOpen && <NewRunModal />}
       {selectedRun && <RunDetailModal runId={selectedRun} />}
+      {compareOpen && <CompareModal />}
     </div>
   )
 }
