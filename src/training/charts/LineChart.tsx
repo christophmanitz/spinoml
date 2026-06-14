@@ -13,6 +13,9 @@ type Props = {
   yLog?: boolean
   xLabel?: string
   yFormat?: (v: number) => string
+  /** Fix the x-axis to this range (e.g. [1, totalEpochs]) so the line fills
+   *  left→right as data arrives instead of the axis rescaling each epoch. */
+  xDomain?: [number, number]
 }
 
 // Fixed viewBox; the SVG scales to its container width via w-full, so we get a
@@ -37,7 +40,7 @@ function niceTicks(min: number, max: number, count = 4): number[] {
   return out
 }
 
-export default function LineChart({ series, height = 220, yLog = false, xLabel, yFormat }: Props) {
+export default function LineChart({ series, height = 220, yLog = false, xLabel, yFormat, xDomain }: Props) {
   const [hoverX, setHoverX] = useState<number | null>(null)
   const VB_H = height
 
@@ -56,13 +59,14 @@ export default function LineChart({ series, height = 220, yLog = false, xLabel, 
         if (yv > yMax) yMax = yv
       }
     }
+    if (xDomain) { xMin = xDomain[0]; xMax = xDomain[1] }
     if (!isFinite(xMin)) { xMin = 0; xMax = 1 }
     if (!isFinite(yMin)) { yMin = 0; yMax = 1 }
     if (xMin === xMax) xMax = xMin + 1
     if (yMin === yMax) { yMin -= 0.5; yMax += 0.5 }
     else { const pad = (yMax - yMin) * 0.06; yMin -= pad; yMax += pad }
     return { xMin, xMax, yMin, yMax }
-  }, [series, yLog])
+  }, [series, yLog, xDomain])
 
   const sx = (x: number) => PAD_L + ((x - stats.xMin) / (stats.xMax - stats.xMin)) * (VB_W - PAD_L - PAD_R)
   const sy = (y: number) => {

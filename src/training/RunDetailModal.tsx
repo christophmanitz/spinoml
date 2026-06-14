@@ -67,6 +67,10 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   const done = events.find((e) => e.kind === 'run.done')
 
   const totalEpochs = summary?.epochs ?? 0
+  // Fix the chart x-axis to the planned epoch count so the curve fills
+  // left→right; fall back to observed range if we don't know the total.
+  const epochDomain: [number, number] | undefined =
+    totalEpochs > 0 ? [1, totalEpochs] : undefined
   const curEpoch = last ? (last.epoch as number) + 1 : 0
   const progress = totalEpochs > 0 ? Math.min(1, curEpoch / totalEpochs) : 0
   // ETA from observed epoch cadence: mean wall-clock gap between epoch.end events.
@@ -182,17 +186,17 @@ export default function RunDetailModal({ runId }: { runId: string }) {
                     </button>
                   }
                 >
-                  <LineChart series={lossSeries(events)} yLog={lossLog} xLabel="epoch" />
+                  <LineChart series={lossSeries(events)} yLog={lossLog} xLabel="epoch" xDomain={epochDomain} />
                 </ChartCard>
 
                 {metricSeries(events).length > 0 && (
                   <ChartCard title="Metriken">
-                    <LineChart series={metricSeries(events)} xLabel="epoch" />
+                    <LineChart series={metricSeries(events)} xLabel="epoch" xDomain={epochDomain} />
                   </ChartCard>
                 )}
 
                 <ChartCard title="Learning rate">
-                  <LineChart series={lrSeries(events)} xLabel="epoch" yFormat={(v) => v.toExponential(1)} />
+                  <LineChart series={lrSeries(events)} xLabel="epoch" xDomain={epochDomain} yFormat={(v) => v.toExponential(1)} />
                 </ChartCard>
               </div>
             )
