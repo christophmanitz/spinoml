@@ -33,7 +33,11 @@ import dataset_handlers as ds_mod
 PORT = int(os.environ.get("MLFORGE_TORCH_PORT", "7421"))
 
 
-def infer(code: str, input_shapes: list[list[int]]) -> dict:
+def infer(
+    code: str,
+    input_shapes: list[list[int]],
+    input_dtypes: list[str] | None = None,
+) -> dict:
     shapes: dict[str, list[int]] = {}
     ns: dict = {"__name__": "<mlforge-model>"}
     try:
@@ -83,7 +87,14 @@ def infer(code: str, input_shapes: list[list[int]]) -> dict:
         n_params = 0
 
     try:
-        xs = [torch.zeros(s) for s in input_shapes]
+        dtypes = input_dtypes or []
+        xs = []
+        for i, s in enumerate(input_shapes):
+            dt = dtypes[i] if i < len(dtypes) else "float32"
+            if dt in ("int64", "long"):
+                xs.append(torch.zeros(s, dtype=torch.long))
+            else:
+                xs.append(torch.zeros(s))
     except Exception as e:
         return {
             "ok": False,
@@ -325,9 +336,11 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(code, str) or not isinstance(shapes_in, list) or not all(isinstance(s, list) for s in shapes_in):
             self._json(400, {"ok": False, "error": "expected {code: str, input_shapes: int[][]} or {input_shape: int[]}"})
             return
+        dtypes_in = payload.get("input_dtypes")
+        dtypes = [str(d) for d in dtypes_in] if isinstance(dtypes_in, list) else None
         try:
             normalized = [[int(v) for v in s] for s in shapes_in]
-            result = infer(code, normalized)
+            result = infer(code, normalized, dtypes)
         except Exception as e:
             result = {
                 "ok": False, "stage": "sidecar",

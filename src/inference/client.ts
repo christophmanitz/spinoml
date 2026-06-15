@@ -20,13 +20,14 @@ import { currentTorchUrl } from '../sidecars/torchUrl'
 export async function inferShapes(
   code: string,
   inputShapes: number[][],
+  inputDtypes?: string[],
   signal?: AbortSignal,
 ): Promise<InferResult | { ok: false; error: string; offline: true; shapes: Record<string, number[]> }> {
   try {
     const res = await fetch(`${currentTorchUrl()}/infer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, input_shapes: inputShapes }),
+      body: JSON.stringify({ code, input_shapes: inputShapes, input_dtypes: inputDtypes }),
       signal,
     })
     if (!res.ok) {

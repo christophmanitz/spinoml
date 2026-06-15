@@ -167,7 +167,7 @@ function FixHints({
       })
     }
   }
-  if (layerType === 'Conv2d' || layerType === 'Conv1d') {
+  if (layerType === 'Conv2d' || layerType === 'Conv1d' || layerType === 'Conv3d') {
     const c = inShape[1]
     const current = params.in_channels as number | undefined
     if (typeof c === 'number' && current !== c) {
@@ -178,14 +178,14 @@ function FixHints({
       })
     }
   }
-  if (layerType === 'BatchNorm2d') {
+  if (layerType === 'BatchNorm2d' || layerType === 'BatchNorm1d') {
     const c = inShape[1]
     const current = params.num_features as number | undefined
     if (typeof c === 'number' && current !== c) {
       hints.push({
         label: `set num_features = ${c}`,
         patch: { num_features: c },
-        rationale: 'BatchNorm2d num_features = channel dim',
+        rationale: 'BatchNorm num_features = channel dim',
       })
     }
   }
@@ -323,6 +323,8 @@ function FieldInput({
       )
     case 'tuple-int':
       return <TupleIntInput field={field} value={value} onChange={onChange} baseClass={baseClass} />
+    case 'int-list':
+      return <IntListInput value={value} onChange={onChange} baseClass={baseClass} />
     case 'shape':
       return <ShapeInput value={value} onChange={onChange} baseClass={baseClass} />
     case 'dataset-ref':
@@ -727,6 +729,60 @@ function parseShape(s: string): number[] | null {
   for (const p of parts) {
     const n = parseInt(p, 10)
     if (!Number.isFinite(n) || n <= 0 || String(n) !== p) return null
+    out.push(n)
+  }
+  return out
+}
+
+// Like ShapeInput, but allows negatives (e.g. -1 for reshape) and zero (dim
+// indices for permute/transpose). Used by 'int-list' fields.
+function IntListInput({
+  value, onChange, baseClass,
+}: { value: unknown; onChange: (v: unknown) => void; baseClass: string }) {
+  const arr = (Array.isArray(value) ? value : []) as number[]
+  const canonical = arr.join(', ')
+  const [draft, setDraft] = useState(canonical)
+  useEffect(() => { setDraft(canonical) }, [canonical])
+
+  const parsed = parseIntList(draft)
+  const valid = parsed !== null && parsed.length > 0
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <input
+        type="text"
+        className={`${baseClass} ${valid ? '' : 'border-amber-700/60'}`}
+        value={draft}
+        placeholder="e.g. -1, 256"
+        onChange={(e) => {
+          setDraft(e.target.value)
+          const p = parseIntList(e.target.value)
+          if (p && p.length > 0) onChange(p)
+        }}
+        onBlur={() => {
+          const p = parseIntList(draft)
+          if (p && p.length > 0) {
+            onChange(p)
+            setDraft(p.join(', '))
+          } else {
+            setDraft(canonical)
+          }
+        }}
+      />
+      {!valid && draft.trim() !== '' && (
+        <span className="text-[10px] text-amber-400">comma-separated ints (-1 allowed)</span>
+      )}
+    </div>
+  )
+}
+
+function parseIntList(s: string): number[] | null {
+  const parts = s.split(/[,\s]+/).map((p) => p.trim()).filter(Boolean)
+  if (parts.length === 0) return null
+  const out: number[] = []
+  for (const p of parts) {
+    const n = parseInt(p, 10)
+    if (!Number.isFinite(n) || String(n) !== p) return null
     out.push(n)
   }
   return out

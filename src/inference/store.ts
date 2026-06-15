@@ -47,6 +47,7 @@ export const useInferenceStore = create<InferenceState>((set) => ({
       const { nodes, edges } = useGraphStore.getState()
       const { code, issues, attrMap, inputs, order } = generate(nodes, edges)
       const inputShapes = inputs.map((i) => i.shape)
+      const inputDtypes = inputs.map((i) => i.dtype)
 
       const hasInput = nodes.some((n) => n.data.layerType === 'Input')
       if (!hasInput || issues.some((i) => i.startsWith('Cycle'))) {
@@ -67,7 +68,7 @@ export const useInferenceStore = create<InferenceState>((set) => ({
 
       let result: InferResult | { ok: false; error: string; offline: true; shapes: Record<string, number[]> }
       try {
-        result = await inferShapes(code, inputShapes, ctrl.signal)
+        result = await inferShapes(code, inputShapes, inputDtypes, ctrl.signal)
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return
         throw e

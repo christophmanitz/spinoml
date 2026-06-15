@@ -4,6 +4,9 @@ export type FieldSpec =
   | { name: string; type: 'bool'; default: boolean }
   | { name: string; type: 'select'; options: string[]; default: string }
   | { name: string; type: 'tuple-int'; arity: 2 | 3; default: number[] }
+  /** Comma-separated list of ints; negatives allowed (e.g. -1 for reshape).
+   *  Used by functional reshape/permute nodes via forwardExpr. */
+  | { name: string; type: 'int-list'; default: number[] }
   | { name: string; type: 'shape'; default: number[] }
   /** Runtime-populated dropdown of dataset relpaths from datasetsStore. Stored as string. */
   | { name: string; type: 'dataset-ref'; default: string }
@@ -13,18 +16,27 @@ export type FieldSpec =
   /** Single-select column. Same lookup as columns-multi, single string. */
   | { name: string; type: 'column-single'; default: string }
 
-export type LayerKind = 'module' | 'input' | 'output' | 'merge'
+export type LayerKind = 'module' | 'input' | 'output' | 'merge' | 'function'
 
 export type LayerSpec = {
   type: string
   category: string
   /** PyTorch nn.Module path (e.g. "nn.Conv2d"). Empty for non-module kinds. */
   pytorchModule: string
-  /** What kind of node this is. Controls codegen. Defaults to 'module' if absent. */
+  /** What kind of node this is. Controls codegen. Defaults to 'module' if absent.
+   *  'merge'    — N→1 functional join (≥2 inputs), emits forwardExpr.
+   *  'function' — 1→1 functional transform (reshape/permute), emits forwardExpr. */
   kind?: LayerKind
-  /** For kind='merge': how to emit the forward expression given input variable names.
-   *  e.g. (xs) => `torch.cat([${xs.join(', ')}], dim=${dim})`. */
+  /** For kind='merge'/'function': how to emit the forward expression given input
+   *  variable names. e.g. (xs) => `torch.cat([${xs.join(', ')}], dim=${dim})`. */
   forwardExpr?: (inputVars: string[], params: Record<string, unknown>) => string
+  /** For module kinds whose constructor can't be expressed as flat kwargs
+   *  (e.g. nn.TransformerEncoder wrapping a layer). Returns the full RHS of
+   *  `self.attr = <expr>`. When present, the default kwargs emit is skipped. */
+  initExpr?: (params: Record<string, unknown>) => string
+  /** Module returns a tuple (output, state); codegen unpacks `var, _ = ...` and
+   *  the sidecar forward-hook reads element 0. e.g. nn.LSTM/GRU/RNN. */
+  tupleOutput?: boolean
   fields: FieldSpec[]
   summary: (params: Record<string, unknown>) => string
 }
@@ -41,6 +53,8 @@ const f = {
     name, type: 'select', options, default: def,
   }),
   tuple2: (name: string, def: number[]): FieldSpec => ({ name, type: 'tuple-int', arity: 2, default: def }),
+  tuple3: (name: string, def: number[]): FieldSpec => ({ name, type: 'tuple-int', arity: 3, default: def }),
+  intList: (name: string, def: number[]): FieldSpec => ({ name, type: 'int-list', default: def }),
   shape: (name: string, def: number[]): FieldSpec => ({ name, type: 'shape', default: def }),
 }
 
@@ -53,6 +67,8 @@ export const LAYERS: Record<string, LayerSpec> = {
     fields: [
       { name: 'name', type: 'select', options: ['x', 'x1', 'x2', 'x3', 'q', 'k', 'v', 'cond'], default: 'x' } as FieldSpec,
       f.shape('shape', [1, 3, 224, 224]),
+      // 'int64' makes the sample input a LongTensor — required by Embedding (token ids).
+      { name: 'dtype', type: 'select', options: ['float32', 'int64'], default: 'float32' } as FieldSpec,
       { name: 'dataset', type: 'dataset-ref', default: '' } as FieldSpec,
       { name: 'features', type: 'columns-multi', default: [] } as FieldSpec,
       { name: 'target', type: 'column-single', default: '' } as FieldSpec,
@@ -108,6 +124,18 @@ export const LAYERS: Record<string, LayerSpec> = {
     ],
     summary: (p) => `${get(p, 'in_channels', 64)}→${get(p, 'out_channels', 32)} k${(get(p, 'kernel_size', [3, 3]) as number[]).join('x')} ↑`,
   },
+  Conv3d: {
+    type: 'Conv3d', category: 'Conv', pytorchModule: 'nn.Conv3d',
+    fields: [
+      f.int('in_channels', 3, { min: 1 }),
+      f.int('out_channels', 16, { min: 1 }),
+      f.tuple3('kernel_size', [3, 3, 3]),
+      f.tuple3('stride', [1, 1, 1]),
+      f.tuple3('padding', [1, 1, 1]),
+      f.bool('bias', true),
+    ],
+    summary: (p) => `${get(p, 'in_channels', 3)}→${get(p, 'out_channels', 16)} k${(get(p, 'kernel_size', [3, 3, 3]) as number[]).join('x')}`,
+  },
 
   Linear: {
     type: 'Linear', category: 'Linear', pytorchModule: 'nn.Linear',
@@ -126,6 +154,16 @@ export const LAYERS: Record<string, LayerSpec> = {
     ],
     summary: (p) => `dims ${get(p, 'start_dim', 1)}…${get(p, 'end_dim', -1)}`,
   },
+  Embedding: {
+    // Maps integer token ids → dense vectors. Feed it from an Input whose
+    // dtype is 'int64' (a LongTensor); a float Input will raise at forward.
+    type: 'Embedding', category: 'Linear', pytorchModule: 'nn.Embedding',
+    fields: [
+      f.int('num_embeddings', 1000, { min: 1 }),
+      f.int('embedding_dim', 128, { min: 1 }),
+    ],
+    summary: (p) => `emb ${get(p, 'num_embeddings', 1000)}×${get(p, 'embedding_dim', 128)}`,
+  },
 
   BatchNorm2d: {
     type: 'BatchNorm2d', category: 'Norm', pytorchModule: 'nn.BatchNorm2d',
@@ -135,6 +173,15 @@ export const LAYERS: Record<string, LayerSpec> = {
       f.float('momentum', 0.1, { min: 0, max: 1, step: 0.01 }),
     ],
     summary: (p) => `bn ${get(p, 'num_features', 64)}`,
+  },
+  BatchNorm1d: {
+    type: 'BatchNorm1d', category: 'Norm', pytorchModule: 'nn.BatchNorm1d',
+    fields: [
+      f.int('num_features', 64, { min: 1 }),
+      f.float('eps', 1e-5, { step: 1e-6 }),
+      f.float('momentum', 0.1, { min: 0, max: 1, step: 0.01 }),
+    ],
+    summary: (p) => `bn1d ${get(p, 'num_features', 64)}`,
   },
   LayerNorm: {
     type: 'LayerNorm', category: 'Norm', pytorchModule: 'nn.LayerNorm',
@@ -158,6 +205,16 @@ export const LAYERS: Record<string, LayerSpec> = {
   SiLU: { type: 'SiLU', category: 'Activation', pytorchModule: 'nn.SiLU', fields: [f.bool('inplace', false)], summary: () => 'silu' },
   Sigmoid: { type: 'Sigmoid', category: 'Activation', pytorchModule: 'nn.Sigmoid', fields: [], summary: () => 'sigmoid' },
   Tanh: { type: 'Tanh', category: 'Activation', pytorchModule: 'nn.Tanh', fields: [], summary: () => 'tanh' },
+  Softmax: {
+    type: 'Softmax', category: 'Activation', pytorchModule: 'nn.Softmax',
+    fields: [f.int('dim', -1)],
+    summary: (p) => `softmax dim=${get(p, 'dim', -1)}`,
+  },
+  LogSoftmax: {
+    type: 'LogSoftmax', category: 'Activation', pytorchModule: 'nn.LogSoftmax',
+    fields: [f.int('dim', -1)],
+    summary: (p) => `log_softmax dim=${get(p, 'dim', -1)}`,
+  },
 
   MaxPool2d: {
     type: 'MaxPool2d', category: 'Pool', pytorchModule: 'nn.MaxPool2d',
@@ -215,6 +272,96 @@ export const LAYERS: Record<string, LayerSpec> = {
       f.bool('batch_first', true),
     ],
     summary: (p) => `enc d=${get(p, 'd_model', 512)} h=${get(p, 'nhead', 8)}`,
+  },
+  TransformerEncoder: {
+    // A stack of num_layers identical encoder blocks. The constructor wraps a
+    // freshly-built TransformerEncoderLayer, so it needs a custom initExpr.
+    type: 'TransformerEncoder', category: 'Attention', pytorchModule: 'nn.TransformerEncoder',
+    fields: [
+      f.int('d_model', 512, { min: 1 }),
+      f.int('nhead', 8, { min: 1 }),
+      f.int('num_layers', 6, { min: 1 }),
+      f.int('dim_feedforward', 2048, { min: 1 }),
+      f.float('dropout', 0.1, { min: 0, max: 1, step: 0.05 }),
+      f.select('activation', ['relu', 'gelu'], 'gelu'),
+      f.bool('batch_first', true),
+    ],
+    initExpr: (p) =>
+      `nn.TransformerEncoder(nn.TransformerEncoderLayer(` +
+      `d_model=${get(p, 'd_model', 512)}, nhead=${get(p, 'nhead', 8)}, ` +
+      `dim_feedforward=${get(p, 'dim_feedforward', 2048)}, dropout=${get(p, 'dropout', 0.1)}, ` +
+      `activation='${get(p, 'activation', 'gelu')}', batch_first=${get(p, 'batch_first', true) ? 'True' : 'False'}), ` +
+      `num_layers=${get(p, 'num_layers', 6)})`,
+    summary: (p) => `enc×${get(p, 'num_layers', 6)} d=${get(p, 'd_model', 512)}`,
+  },
+
+  // ─── Recurrent (return (output, state); codegen unpacks output) ─────────
+  LSTM: {
+    type: 'LSTM', category: 'Recurrent', pytorchModule: 'nn.LSTM', tupleOutput: true,
+    fields: [
+      f.int('input_size', 64, { min: 1 }),
+      f.int('hidden_size', 128, { min: 1 }),
+      f.int('num_layers', 1, { min: 1 }),
+      f.bool('batch_first', true),
+      f.bool('bidirectional', false),
+      f.float('dropout', 0.0, { min: 0, max: 1, step: 0.05 }),
+    ],
+    summary: (p) => `lstm ${get(p, 'input_size', 64)}→${get(p, 'hidden_size', 128)}${get(p, 'bidirectional', false) ? ' ↔' : ''}`,
+  },
+  GRU: {
+    type: 'GRU', category: 'Recurrent', pytorchModule: 'nn.GRU', tupleOutput: true,
+    fields: [
+      f.int('input_size', 64, { min: 1 }),
+      f.int('hidden_size', 128, { min: 1 }),
+      f.int('num_layers', 1, { min: 1 }),
+      f.bool('batch_first', true),
+      f.bool('bidirectional', false),
+      f.float('dropout', 0.0, { min: 0, max: 1, step: 0.05 }),
+    ],
+    summary: (p) => `gru ${get(p, 'input_size', 64)}→${get(p, 'hidden_size', 128)}${get(p, 'bidirectional', false) ? ' ↔' : ''}`,
+  },
+  RNN: {
+    type: 'RNN', category: 'Recurrent', pytorchModule: 'nn.RNN', tupleOutput: true,
+    fields: [
+      f.int('input_size', 64, { min: 1 }),
+      f.int('hidden_size', 128, { min: 1 }),
+      f.int('num_layers', 1, { min: 1 }),
+      f.select('nonlinearity', ['tanh', 'relu'], 'tanh'),
+      f.bool('batch_first', true),
+      f.bool('bidirectional', false),
+    ],
+    summary: (p) => `rnn ${get(p, 'input_size', 64)}→${get(p, 'hidden_size', 128)}`,
+  },
+
+  // ─── Reshape (functional 1→1, no nn.Module) ────────────────────────────
+  Reshape: {
+    // Batch dim is preserved automatically; `shape` is the per-sample target
+    // (use -1 to infer). e.g. shape=[16, -1] → x.reshape(x.shape[0], 16, -1).
+    type: 'Reshape', category: 'Reshape', pytorchModule: '', kind: 'function',
+    fields: [f.intList('shape', [-1])],
+    forwardExpr: (xs, p) =>
+      `${xs[0]}.reshape(${xs[0]}.shape[0], ${(get(p, 'shape', [-1]) as number[]).join(', ')})`,
+    summary: (p) => `reshape [B, ${(get(p, 'shape', [-1]) as number[]).join(', ')}]`,
+  },
+  View: {
+    type: 'View', category: 'Reshape', pytorchModule: '', kind: 'function',
+    fields: [f.intList('shape', [-1])],
+    forwardExpr: (xs, p) =>
+      `${xs[0]}.reshape(${xs[0]}.shape[0], ${(get(p, 'shape', [-1]) as number[]).join(', ')}).contiguous()`,
+    summary: (p) => `view [B, ${(get(p, 'shape', [-1]) as number[]).join(', ')}]`,
+  },
+  Permute: {
+    // dims are the full permutation INCLUDING the batch dim, e.g. [0, 2, 1].
+    type: 'Permute', category: 'Reshape', pytorchModule: '', kind: 'function',
+    fields: [f.intList('dims', [0, 2, 1])],
+    forwardExpr: (xs, p) => `${xs[0]}.permute(${(get(p, 'dims', [0, 2, 1]) as number[]).join(', ')})`,
+    summary: (p) => `permute (${(get(p, 'dims', [0, 2, 1]) as number[]).join(', ')})`,
+  },
+  Transpose: {
+    type: 'Transpose', category: 'Reshape', pytorchModule: '', kind: 'function',
+    fields: [f.int('dim0', 1), f.int('dim1', 2)],
+    forwardExpr: (xs, p) => `${xs[0]}.transpose(${get(p, 'dim0', 1)}, ${get(p, 'dim1', 2)})`,
+    summary: (p) => `transpose ${get(p, 'dim0', 1)}↔${get(p, 'dim1', 2)}`,
   },
 
   // ─── Merge (functional, no nn.Module) ──────────────────────────────────
@@ -306,6 +453,10 @@ function coerceField(field: FieldSpec, value: unknown): unknown {
       while (padded.length < field.arity) padded.push(arr[arr.length - 1])
       return padded
     }
+    case 'int-list': {
+      const arr = toIntArray(value)
+      return arr.length ? arr : field.default
+    }
     case 'shape': {
       const arr = toIntArray(value)
       return arr.length ? arr : field.default
@@ -344,6 +495,6 @@ export const LAYER_GROUPS: { name: string; layers: string[] }[] = (() => {
     if (!byCategory[spec.category]) byCategory[spec.category] = []
     byCategory[spec.category].push(spec.type)
   }
-  const order = ['IO', 'Conv', 'Linear', 'Norm', 'Activation', 'Pool', 'Regularize', 'Attention', 'Merge']
+  const order = ['IO', 'Conv', 'Linear', 'Recurrent', 'Norm', 'Activation', 'Pool', 'Regularize', 'Attention', 'Reshape', 'Merge']
   return order.filter((c) => byCategory[c]).map((c) => ({ name: c, layers: byCategory[c] }))
 })()

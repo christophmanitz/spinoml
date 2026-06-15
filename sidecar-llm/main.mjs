@@ -311,7 +311,7 @@ function buildMcpServer(ctx, trainingCtx, actions, workspace) {
     ),
     tool(
       'add_layer',
-      'Add a new layer to the architecture. Use "after" to wire it after an existing node id. Supported layer_type values are: Conv2d, Conv1d, ConvTranspose2d, Linear, Flatten, BatchNorm2d, LayerNorm, GroupNorm, ReLU, GELU, SiLU, Sigmoid, Tanh, MaxPool2d, AvgPool2d, AdaptiveAvgPool2d, Dropout, Dropout2d, MultiheadAttention, TransformerEncoderLayer, Output. Pass params as a JSON object of layer-specific fields (e.g. {in_channels: 3, out_channels: 64} for Conv2d).',
+      'Add a new layer to the architecture. Use "after" to wire it after an existing node id. Supported layer_type values are: Conv1d, Conv2d, Conv3d, ConvTranspose2d, Linear, Flatten, Embedding, BatchNorm1d, BatchNorm2d, LayerNorm, GroupNorm, ReLU, GELU, SiLU, Sigmoid, Tanh, Softmax, LogSoftmax, MaxPool2d, AvgPool2d, AdaptiveAvgPool2d, Dropout, Dropout2d, MultiheadAttention, TransformerEncoderLayer, TransformerEncoder, LSTM, GRU, RNN, Reshape, View, Permute, Transpose, Concat, Add, Multiply, Stack, Output. Pass params as a JSON object of layer-specific fields (e.g. {in_channels: 3, out_channels: 64} for Conv2d). Notes: Embedding needs an Input with dtype \'int64\' (token ids). LSTM/GRU/RNN take {input_size, hidden_size} and emit the sequence output (state is dropped). TransformerEncoder stacks num_layers encoder blocks. Reshape preserves the batch dim — its shape param is per-sample (use -1 to infer), e.g. {shape: [16, -1]}. Permute dims include the batch dim, e.g. {dims: [0, 2, 1]}.',
       {
         layer_type: z.string(),
         after: z.string().optional().describe('Optional source node id to connect from'),
@@ -550,7 +550,7 @@ function buildSystemPrompt(snapshot, error, project, trainingSnapshot) {
     ' - "fix the failing layer" → inspect the error + shapes shown below, then update_params (or delete_node + add_layer when the layer choice itself is wrong, e.g. LayerNorm on a CNN body → swap to GroupNorm or BatchNorm2d).',
     ' - "give me a classification head" → add_layer(AdaptiveAvgPool2d) + add_layer(Flatten) + add_layer(Linear, params={in_features: <channels>, out_features: <num_classes>}).',
     '',
-    'Layer params must match the input shape: Conv2d.in_channels = channel dim of input, BatchNorm2d.num_features = channel dim, Linear.in_features = last dim, LayerNorm.normalized_shape = trailing dims. Inspect the shapes shown for each node before choosing parameters.',
+    'Layer params must match the input shape: Conv1d/2d/3d.in_channels = channel dim of input, BatchNorm1d/2d.num_features = channel dim, Linear.in_features = last dim, LayerNorm.normalized_shape = trailing dims, LSTM/GRU/RNN.input_size = last dim of a [N,L,C] sequence (batch_first), Embedding.embedding_dim becomes the new last dim. Inspect the shapes shown for each node before choosing parameters.',
     '',
     'After tool calls, briefly tell the user what you changed (one short sentence) — they can see the result on the canvas.',
   ]
