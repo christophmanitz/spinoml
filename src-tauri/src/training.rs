@@ -80,13 +80,17 @@ pub struct RunSummary {
     has_checkpoint: bool,
 }
 
-/// Reconcile a raw status string against process liveness. A "running" status
-/// whose process is gone (e.g. SIGKILL, node reboot) is reported as "failed" so
-/// the UI never shows a run as live when it isn't.
+/// Reconcile a raw status string against process liveness. A run that claims to
+/// be "running" OR "queued" but has no live process/job will never make progress
+/// — the launch died, a SLURM job was cancelled while pending, or it was
+/// orphaned by an old bug — so it's reported as "failed". That keeps the UI from
+/// showing a dead run as live/pending forever and makes it terminal (deletable).
+/// A genuinely starting/pending run still has a live process (local) or sits in
+/// the queue (SLURM, alive via squeue), so it stays queued.
 pub(crate) fn reconcile_status(status_raw: &str, alive: bool) -> String {
     let s = status_raw.trim();
     let s = if s.is_empty() { "unknown" } else { s };
-    if s == "running" && !alive {
+    if (s == "running" || s == "queued") && !alive {
         "failed".to_string()
     } else {
         s.to_string()
@@ -318,10 +322,7 @@ pub fn training_run_status(
     let dir = run_dir(&root, &run_id);
     let pid = pid_of(&dir);
     let alive = pid.map(is_alive).unwrap_or(false);
-    let mut status = read_status(&dir);
-    if status == "running" && !alive {
-        status = "failed".into();
-    }
+    let status = reconcile_status(&read_status(&dir), alive);
     Ok(RunStatus { status, alive, pid })
 }
 

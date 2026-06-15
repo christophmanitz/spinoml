@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react'
 import { isTauri } from '../workspace/tauri-fs'
 import { useConnectionsStore, remotePython, type RemoteSshConnection } from '../connections/store'
 import { useTrainingStore } from './store'
+import { isTerminal } from './types'
+import { confirmDialog } from '../ui/confirm'
 import StatusPill from './StatusPill'
 
 export default function ExperimentsExplorer() {
@@ -17,6 +19,7 @@ export default function ExperimentsExplorer() {
   const clearCompare = useTrainingStore((s) => s.clearCompare)
   const openCompare = useTrainingStore((s) => s.openCompare)
   const openNewRun = useTrainingStore((s) => s.openNewRun)
+  const deleteRun = useTrainingStore((s) => s.deleteRun)
   // Re-refresh when the active connection changes (local↔remote).
   const currentId = useConnectionsStore((s) => s.currentId)
   const saved = useConnectionsStore((s) => s.saved)
@@ -85,7 +88,7 @@ export default function ExperimentsExplorer() {
           return (
             <div
               key={r.run_id}
-              className={`flex items-center gap-2 border-b border-[#171b1f] pl-2 pr-3 hover:bg-[#14181c] ${
+              className={`group flex items-center gap-2 border-b border-[#171b1f] pl-2 pr-3 hover:bg-[#14181c] ${
                 selectedRunId === r.run_id ? 'bg-[#14181c]' : ''
               }`}
             >
@@ -113,6 +116,18 @@ export default function ExperimentsExplorer() {
                   )}
                 </div>
               </button>
+              {isTerminal(r.status) && (
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    if (await confirmDialog(`Run „${r.run_label || r.run_id}" löschen?`)) await deleteRun(r.run_id)
+                  }}
+                  title="Run löschen"
+                  className="shrink-0 rounded px-1 py-0.5 text-[#7a8088] opacity-0 hover:bg-[#1a1e22] hover:text-[#ff7a85] group-hover:opacity-100"
+                >
+                  ×
+                </button>
+              )}
             </div>
           )
         })}
