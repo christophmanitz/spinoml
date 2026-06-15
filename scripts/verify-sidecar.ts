@@ -60,9 +60,55 @@ const cases: Case[] = [
     expectOk: false,
     expectErrorContains: 'channels',
   },
+  {
+    name: 'lstm sequence (tuple output unpacked)',
+    nodes: [
+      mkNode('input', 'Input', { shape: [1, 16, 32] }),
+      mkNode('n1', 'LSTM', { input_size: 32, hidden_size: 64, num_layers: 1, batch_first: true }),
+      mkNode('n2', 'Linear', { in_features: 64, out_features: 5 }),
+    ],
+    edges: [
+      { id: 'e1', source: 'input', target: 'n1' },
+      { id: 'e2', source: 'n1', target: 'n2' },
+    ],
+    expectOk: true,
+    expectShapeFor: { id: 'n2', shape: [1, 16, 5] },
+  },
+  {
+    name: 'embedding from int64 token ids',
+    nodes: [
+      mkNode('input', 'Input', { shape: [1, 16], dtype: 'int64' }),
+      mkNode('n1', 'Embedding', { num_embeddings: 1000, embedding_dim: 64 }),
+    ],
+    edges: [
+      { id: 'e1', source: 'input', target: 'n1' },
+    ],
+    expectOk: true,
+    expectShapeFor: { id: 'n1', shape: [1, 16, 64] },
+  },
+  {
+    name: 'gcn node classification (int64 edge_index)',
+    nodes: [
+      mkNode('x', 'Input', { name: 'x', shape: [10, 16] }),
+      mkNode('ei', 'Input', { name: 'edge_index', dtype: 'int64', shape: [2, 20] }),
+      mkNode('n1', 'GCNConv', { in_channels: 16, out_channels: 32 }),
+      mkNode('n2', 'ReLU'),
+      mkNode('n3', 'GCNConv', { in_channels: 32, out_channels: 7 }),
+    ],
+    edges: [
+      { id: 'e1', source: 'x', target: 'n1' },
+      { id: 'e2', source: 'n1', target: 'n2' },
+      { id: 'e3', source: 'n2', target: 'n3' },
+    ],
+    expectOk: true,
+    expectShapeFor: { id: 'n3', shape: [10, 7] },
+  },
 ]
 
-const SIDECAR = 'http://127.0.0.1:7421'
+// Port-configurable so this can run against a private sidecar instance while
+// another (e.g. a parallel `tauri dev`) holds the default 7421.
+const PORT = process.env.MLFORGE_TORCH_PORT ?? '7421'
+const SIDECAR = `http://127.0.0.1:${PORT}`
 
 async function isUp(): Promise<boolean> {
   try {
@@ -73,11 +119,11 @@ async function isUp(): Promise<boolean> {
   }
 }
 
-async function infer(code: string, inputShape: number[]) {
+async function infer(code: string, inputShapes: number[][], inputDtypes: string[]) {
   const r = await fetch(`${SIDECAR}/infer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code, input_shape: inputShape }),
+    body: JSON.stringify({ code, input_shapes: inputShapes, input_dtypes: inputDtypes }),
   })
   return r.json() as Promise<{
     ok: boolean
@@ -114,13 +160,13 @@ async function main() {
 
   let failed = 0
   for (const c of cases) {
-    const { code, attrMap, inputShape, issues } = generate(c.nodes, c.edges)
+    const { code, attrMap, inputs, issues } = generate(c.nodes, c.edges)
     if (issues.length) {
       console.log(`  ✗ ${c.name}: codegen issues: ${JSON.stringify(issues)}`)
       failed++
       continue
     }
-    const res = await infer(code, inputShape)
+    const res = await infer(code, inputs.map((i) => i.shape), inputs.map((i) => i.dtype))
     console.log(`\n=== ${c.name} ===`)
     console.log(`  ok=${res.ok}  stage=${res.stage ?? '-'}  n_params=${res.n_params ?? '-'}`)
     if (Object.keys(res.shapes).length) console.log('  shapes:', res.shapes)

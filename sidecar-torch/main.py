@@ -8,6 +8,8 @@ Endpoints:
   POST /dataset/inspect  { abspath }                       → kind + cheap metadata
   POST /dataset/stats    { abspath }                       → stats/histograms (heavier)
   POST /dataset/smoke    { code, abspath, input_shape? }   → run sample through generated model
+  POST /deps/check       { specs: str[] }                   → pip dry-run resolve (compat smoke test)
+  POST /deps/install     { specs: str[] }                   → pip install into the sidecar env
 
 Safety: this exec's code from the local frontend only. CORS is permissive
 because the dev server (Vite, port 5173) and the Tauri webview both need
@@ -18,6 +20,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 import traceback
@@ -33,16 +37,24 @@ import dataset_handlers as ds_mod
 PORT = int(os.environ.get("MLFORGE_TORCH_PORT", "7421"))
 
 
-def infer(code: str, input_shapes: list[list[int]]) -> dict:
+def infer(
+    code: str,
+    input_shapes: list[list[int]],
+    input_dtypes: list[str] | None = None,
+) -> dict:
     shapes: dict[str, list[int]] = {}
     ns: dict = {"__name__": "<mlforge-model>"}
     try:
         exec(compile(code, "<mlforge-model>", "exec"), ns)
     except Exception as e:
+        msg = f"{type(e).__name__}: {e}"
+        # Graceful hint for the optional GNN dependency.
+        if isinstance(e, ModuleNotFoundError) and "torch_geometric" in str(e):
+            msg += " — GNN layers need PyTorch Geometric. Install it with: pip install torch_geometric"
         return {
             "ok": False,
             "stage": "compile",
-            "error": f"{type(e).__name__}: {e}",
+            "error": msg,
             "trace": traceback.format_exc(limit=4),
             "shapes": shapes,
         }
@@ -83,7 +95,14 @@ def infer(code: str, input_shapes: list[list[int]]) -> dict:
         n_params = 0
 
     try:
-        xs = [torch.zeros(s) for s in input_shapes]
+        dtypes = input_dtypes or []
+        xs = []
+        for i, s in enumerate(input_shapes):
+            dt = dtypes[i] if i < len(dtypes) else "float32"
+            if dt in ("int64", "long"):
+                xs.append(torch.zeros(s, dtype=torch.long))
+            else:
+                xs.append(torch.zeros(s))
     except Exception as e:
         return {
             "ok": False,
@@ -230,6 +249,80 @@ def smoke_test(
     }
 
 
+def _dist_name(spec: str) -> str:
+    """Pull the bare distribution name out of a requirement spec.
+    'torch_geometric==2.8.0' -> 'torch_geometric'; 'rdkit[extra]>=1' -> 'rdkit'."""
+    return re.split(r"[<>=!~;\[\( ]", spec.strip(), 1)[0].strip()
+
+
+def deps_check(specs: list[str]) -> dict:
+    """Compatibility smoke test: resolve `specs` against THIS interpreter's env
+    via `pip install --dry-run` WITHOUT installing anything. Returns whether the
+    requested versions resolve, what pip would add/upgrade, and currently
+    installed versions. Needs network access (pip queries the index)."""
+    import importlib.metadata as im
+
+    specs = [s.strip() for s in specs if isinstance(s, str) and s.strip()]
+    requested = []
+    for s in specs:
+        base = _dist_name(s)
+        try:
+            ver = im.version(base)
+        except Exception:
+            ver = None
+        requested.append({"spec": s, "name": base, "installed": ver})
+
+    if not specs:
+        return {"ok": True, "compatible": True, "python": sys.version.split()[0],
+                "requested": [], "would_install": [], "log": "no dependencies specified"}
+
+    cmd = [sys.executable, "-m", "pip", "install", "--dry-run", "--quiet",
+           "--disable-pip-version-check", "--no-input", "--report", "-"] + specs
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "pip resolution timed out (240s) — check network / index"}
+    except Exception as e:
+        return {"ok": False, "error": f"could not run pip: {type(e).__name__}: {e}"}
+
+    if r.returncode != 0:
+        # ResolutionImpossible / not-found / etc. — incompatible.
+        return {"ok": True, "compatible": False, "python": sys.version.split()[0],
+                "requested": requested, "would_install": [],
+                "error": (r.stderr or r.stdout or "pip failed").strip()[-4000:]}
+
+    would: list[str] = []
+    try:
+        rep = json.loads(r.stdout or "{}")
+        for it in rep.get("install", []):
+            m = it.get("metadata", {})
+            if m.get("name"):
+                would.append(f"{m['name']}=={m.get('version', '?')}")
+    except Exception:
+        would = []
+    would.sort()
+    return {"ok": True, "compatible": True, "python": sys.version.split()[0],
+            "requested": requested, "would_install": would,
+            "log": "already satisfied" if not would else f"{len(would)} package(s) would be installed/updated"}
+
+
+def deps_install(specs: list[str]) -> dict:
+    """Actually install `specs` into this interpreter's env. Long-running."""
+    specs = [s.strip() for s in specs if isinstance(s, str) and s.strip()]
+    if not specs:
+        return {"ok": False, "error": "no dependencies specified"}
+    cmd = [sys.executable, "-m", "pip", "install",
+           "--disable-pip-version-check", "--no-input"] + specs
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "pip install timed out (1800s)"}
+    except Exception as e:
+        return {"ok": False, "error": f"could not run pip: {type(e).__name__}: {e}"}
+    return {"ok": r.returncode == 0, "returncode": r.returncode,
+            "log": ((r.stdout or "") + (r.stderr or "")).strip()[-8000:]}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _cors(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -302,6 +395,20 @@ class Handler(BaseHTTPRequestHandler):
                 opts = opts_in if isinstance(opts_in, list) else None
                 self._json(200, smoke_test(code, abspaths, shapes, opts))
                 return
+            if self.path == "/deps/check":
+                specs = payload.get("specs")
+                if not isinstance(specs, list):
+                    self._json(400, {"ok": False, "error": "expected {specs: str[]}"})
+                    return
+                self._json(200, deps_check([str(s) for s in specs]))
+                return
+            if self.path == "/deps/install":
+                specs = payload.get("specs")
+                if not isinstance(specs, list):
+                    self._json(400, {"ok": False, "error": "expected {specs: str[]}"})
+                    return
+                self._json(200, deps_install([str(s) for s in specs]))
+                return
         except Exception as e:
             self._json(500, {
                 "ok": False, "stage": "sidecar",
@@ -325,9 +432,11 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(code, str) or not isinstance(shapes_in, list) or not all(isinstance(s, list) for s in shapes_in):
             self._json(400, {"ok": False, "error": "expected {code: str, input_shapes: int[][]} or {input_shape: int[]}"})
             return
+        dtypes_in = payload.get("input_dtypes")
+        dtypes = [str(d) for d in dtypes_in] if isinstance(dtypes_in, list) else None
         try:
             normalized = [[int(v) for v in s] for s in shapes_in]
-            result = infer(code, normalized)
+            result = infer(code, normalized, dtypes)
         except Exception as e:
             result = {
                 "ok": False, "stage": "sidecar",

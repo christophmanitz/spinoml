@@ -9,9 +9,10 @@ export type CodegenResult = {
   /** Legacy single-input shape — first Input node, for back-compat with the
    *  inference store / Smoke test path that still reads .inputShape. */
   inputShape: number[]
-  /** All Input nodes in declaration order, each carrying its forward arg name
-   *  and tensor shape. The sidecar uses this to build N zero tensors. */
-  inputs: { id: string; name: string; shape: number[] }[]
+  /** All Input nodes in declaration order, each carrying its forward arg name,
+   *  tensor shape and dtype. The sidecar uses this to build N zero tensors
+   *  (dtype 'int64' → LongTensor, e.g. token ids for Embedding). */
+  inputs: { id: string; name: string; shape: number[]; dtype: string }[]
   /** Topological order of node IDs that carry a pytorchModule, in init/forward order. */
   order: string[]
 }
@@ -78,6 +79,7 @@ export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {
       id: n.id,
       name,
       shape: (n.data.params.shape as number[] | undefined) ?? [1, 3, 224, 224],
+      dtype: String(n.data.params.dtype ?? 'float32'),
     }
   })
 
@@ -141,6 +143,8 @@ export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {
       varName.set(id, attr) // single-input modules reuse attr as var name
     } else if (k === 'merge') {
       varName.set(id, uniq('m_' + toSnake(n.data.layerType)))
+    } else if (k === 'function') {
+      varName.set(id, uniq('fx_' + toSnake(n.data.layerType)))
     } else if (k === 'output') {
       // Output nodes reuse their predecessor's variable; no new var needed.
     }
@@ -154,10 +158,20 @@ export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {
     const spec = LAYERS[n.data.layerType]
     if (!spec || !spec.pytorchModule) continue
     if (kindOf(id) !== 'module') continue
-    const args = spec.fields
-      .map((field) => `${field.name}=${serializeParam(field, n.data.params[field.name] ?? field.default)}`)
-      .join(', ')
-    initLines.push(`        self.${attrName.get(id)} = ${spec.pytorchModule}(${args})`)
+    const rhs = spec.initExpr
+      ? spec.initExpr(n.data.params)
+      : `${spec.pytorchModule}(${spec.fields
+          .map((field) => `${field.name}=${serializeParam(field, n.data.params[field.name] ?? field.default)}`)
+          .join(', ')})`
+    initLines.push(`        self.${attrName.get(id)} = ${rhs}`)
+  }
+
+  // ─── graph aux inputs (edge_index / batch) ──────────────────────────────
+  // GNN layers consume side Inputs identified purely by name. Resolve them
+  // once; missing ones are reported per-consumer below.
+  const aux = {
+    edgeIndex: inputs.find((i) => i.name === 'edge_index')?.name,
+    batch: inputs.find((i) => i.name === 'batch')?.name,
   }
 
   // ─── forward lines ──────────────────────────────────────────────────────
@@ -179,12 +193,36 @@ export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {
       if (preds.length > 1) {
         issues.push(`Node ${id} (${n.data.layerType}): module layer received ${preds.length} inputs — using first. Use a Merge layer (Concat/Add) to combine streams.`)
       }
-      forwardLines.push(`        ${varName.get(id)} = self.${attrName.get(id)}(${preds[0]})`)
+      if (spec.needsEdgeIndex) {
+        // GNN conv: forward(x, edge_index). edge_index comes from a named Input.
+        if (!aux.edgeIndex) {
+          issues.push(`Node ${id} (${n.data.layerType}) needs an Input named 'edge_index' (dtype int64, shape [2, E]).`)
+        }
+        forwardLines.push(`        ${varName.get(id)} = self.${attrName.get(id)}(${preds[0]}, ${aux.edgeIndex ?? 'edge_index'})`)
+      } else if (spec.tupleOutput) {
+        // e.g. nn.LSTM returns (output, (h, c)); keep output, drop state.
+        forwardLines.push(`        ${varName.get(id)}, _ = self.${attrName.get(id)}(${preds[0]})`)
+      } else {
+        forwardLines.push(`        ${varName.get(id)} = self.${attrName.get(id)}(${preds[0]})`)
+      }
     } else if (k === 'merge') {
       if (preds.length < 2) {
         issues.push(`Node ${id} (${n.data.layerType}): merge layer needs ≥2 inputs (has ${preds.length}).`)
       }
-      const expr = spec.forwardExpr ? spec.forwardExpr(preds, n.data.params) : preds[0] ?? ''
+      const expr = spec.forwardExpr ? spec.forwardExpr(preds, n.data.params, aux) : preds[0] ?? ''
+      forwardLines.push(`        ${varName.get(id)} = ${expr}`)
+    } else if (k === 'function') {
+      if (preds.length === 0) {
+        issues.push(`Node ${id} (${n.data.layerType}) has no upstream value.`)
+        continue
+      }
+      if (preds.length > 1) {
+        issues.push(`Node ${id} (${n.data.layerType}): function layer uses first of ${preds.length} inputs.`)
+      }
+      if (spec.pyImports?.some((s) => s.startsWith('global_')) && !aux.batch) {
+        issues.push(`Node ${id} (${n.data.layerType}) needs an Input named 'batch' (dtype int64, shape [N_nodes]).`)
+      }
+      const expr = spec.forwardExpr ? spec.forwardExpr([preds[0]], n.data.params, aux) : preds[0]
       forwardLines.push(`        ${varName.get(id)} = ${expr}`)
     } else if (k === 'output') {
       if (preds.length === 0) {
@@ -216,7 +254,17 @@ export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {
     returnLine = `        return { ${named} }`
   }
 
-  const code = emitModule(initLines, forwardLines, returnLine, inputs, issues)
+  // Collect torch_geometric symbols needed by any used node → one import line.
+  const tgImports = new Set<string>()
+  for (const id of order) {
+    if (!reachable.has(id)) continue
+    LAYERS[byId.get(id)!.data.layerType]?.pyImports?.forEach((s) => tgImports.add(s))
+  }
+  const extraImports = tgImports.size
+    ? [`from torch_geometric.nn import ${[...tgImports].sort().join(', ')}`]
+    : []
+
+  const code = emitModule(initLines, forwardLines, returnLine, inputs, issues, extraImports)
   const attrMap: Record<string, string> = {}
   for (const [id, attr] of attrName) attrMap[id] = attr
   const moduleOrder = order.filter((id) => attrMap[id] !== undefined)
@@ -246,18 +294,24 @@ function emitModule(
   initLines: string[],
   forwardLines: string[],
   returnLine: string,
-  inputs: { name: string; shape: number[] }[],
+  inputs: { name: string; shape: number[]; dtype: string }[],
   issues: string[],
+  extraImports: string[] = [],
 ): string {
   const header = issuesBlock(issues)
   const init = initLines.length ? initLines.join('\n') : '        pass'
   const forward = forwardLines.length ? forwardLines.join('\n') : '        pass'
   const argSig = inputs.map((i) => i.name).join(', ')
-  const sampleVars = inputs.map((i) => `${i.name} = torch.zeros(${pyTuple(i.shape)})`).join('\n    ')
+  const sampleVars = inputs.map((i) =>
+    i.dtype === 'int64'
+      ? `${i.name} = torch.zeros(${pyTuple(i.shape)}, dtype=torch.long)`
+      : `${i.name} = torch.zeros(${pyTuple(i.shape)})`,
+  ).join('\n    ')
   const callArgs = inputs.map((i) => i.name).join(', ')
+  const imports = extraImports.length ? '\n' + extraImports.join('\n') : ''
 
   return `${header}import torch
-import torch.nn as nn
+import torch.nn as nn${imports}
 
 
 class Model(nn.Module):
@@ -303,6 +357,10 @@ function serializeParam(field: FieldSpec, value: unknown): string {
     case 'tuple-int': {
       const arr = (Array.isArray(value) ? value : field.default) as number[]
       return pyTuple(arr.slice(0, field.arity))
+    }
+    case 'int-list': {
+      const arr = (Array.isArray(value) ? value : field.default) as number[]
+      return `[${arr.join(', ')}]`
     }
     case 'shape': {
       const arr = (Array.isArray(value) ? value : field.default) as number[]
