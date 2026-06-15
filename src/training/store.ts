@@ -34,12 +34,26 @@ export type NewRunInput = {
   resumeFrom?: string
 }
 
+/** Prefill for the New-Run dialog when launching from the training graph: the
+ *  compiled plan fills model/dataset/target/hyperparameters, and the user still
+ *  gets the dialog's backend/SLURM/sweep/resume knobs on top. */
+export type NewRunPrefill = {
+  label?: string
+  modelRelpath: string
+  datasetRelpath: string
+  targetColumn: string
+  featureColumns: string[] | null
+  training: TrainingConfig
+}
+
 type TrainingState = {
   runs: RunSummary[]
   listLoading: boolean
   listError: string | null
   selectedRunId: string | null
   newRunOpen: boolean
+  /** Set when the New-Run dialog was opened from the training graph. */
+  newRunPrefill: NewRunPrefill | null
   /** Run ids selected for multi-run compare (Phase 15.3). */
   compareIds: string[]
   compareOpen: boolean
@@ -50,7 +64,7 @@ type TrainingState = {
   clearCompare: () => void
   openCompare: () => void
   closeCompare: () => void
-  openNewRun: () => void
+  openNewRun: (prefill?: NewRunPrefill) => void
   closeNewRun: () => void
   startRun: (input: NewRunInput) => Promise<string>
   stopRun: (runId: string) => Promise<void>
@@ -92,6 +106,7 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   listError: null,
   selectedRunId: null,
   newRunOpen: false,
+  newRunPrefill: null,
   compareIds: [],
   compareOpen: false,
 
@@ -119,8 +134,8 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   clearCompare: () => set({ compareIds: [] }),
   openCompare: () => set({ compareOpen: true }),
   closeCompare: () => set({ compareOpen: false }),
-  openNewRun: () => set({ newRunOpen: true }),
-  closeNewRun: () => set({ newRunOpen: false }),
+  openNewRun: (prefill) => set({ newRunOpen: true, newRunPrefill: prefill ?? null }),
+  closeNewRun: () => set({ newRunOpen: false, newRunPrefill: null }),
 
   startRun: async (input) => {
     // Generate model.py from the frozen .mlforge snapshot (pure codegen).

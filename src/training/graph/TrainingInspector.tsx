@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import { fs, datasets as datasetsBackend } from '../../connections/backend'
+import { fs } from '../../connections/backend'
 import { isTauri } from '../../workspace/tauri-fs'
 import { useDatasetsStore } from '../../datasets/store'
 import { compileTrainingGraph } from '../../codegen/trainingGenerator'
@@ -71,32 +71,24 @@ export default function TrainingInspector() {
 }
 
 function CompilePanel({ compile }: { compile: ReturnType<typeof compileTrainingGraph> }) {
-  const startRun = useTrainingStore((s) => s.startRun)
-  const [busy, setBusy] = useState(false)
+  const openNewRun = useTrainingStore((s) => s.openNewRun)
   const [error, setError] = useState<string | null>(null)
 
-  async function launch() {
+  // Compile the graph and hand the plan to the New-Run dialog pre-filled, so the
+  // graph-driven launch still gets the dialog's backend/SLURM/sweep/resume knobs
+  // (instead of a lesser, instant local-only start).
+  function launch() {
     if (!compile.plan) return
     setError(null)
-    setBusy(true)
-    try {
-      const plan = compile.plan
-      const abspath = await datasetsBackend.abspath(plan.datasetRelpath)
-      const label = plan.modelRelpath.split('/').pop()!.replace(/\.mlforge$/i, '')
-      await startRun({
-        label,
-        modelRelpath: plan.modelRelpath,
-        datasetRelpath: plan.datasetRelpath,
-        datasetAbspath: abspath,
-        targetColumn: plan.target,
-        featureColumns: plan.features,
-        training: plan.training,
-      })
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
+    const plan = compile.plan
+    openNewRun({
+      label: plan.modelRelpath.split('/').pop()!.replace(/\.mlforge$/i, ''),
+      modelRelpath: plan.modelRelpath,
+      datasetRelpath: plan.datasetRelpath,
+      targetColumn: plan.target,
+      featureColumns: plan.features,
+      training: plan.training,
+    })
   }
 
   return (
@@ -120,12 +112,12 @@ function CompilePanel({ compile }: { compile: ReturnType<typeof compileTrainingG
         </div>
       )}
       <button
-        onClick={() => void launch()}
-        disabled={!compile.ok || busy}
-        title="Run aus diesem Graph starten"
+        onClick={launch}
+        disabled={!compile.ok}
+        title="Aus diesem Graph einen Run vorbereiten — öffnet den Dialog mit Backend/SLURM, Sweep und Resume"
         className="w-full rounded bg-[#13344f] px-2 py-1 text-[11px] text-[#6ab7ff] hover:bg-[#184466] disabled:cursor-not-allowed disabled:opacity-40"
       >
-        {busy ? 'starte…' : '▶ Run starten'}
+        ▶ Run vorbereiten…
       </button>
       {error && <div className="text-[#ff7a85]">{error}</div>}
     </div>

@@ -70,6 +70,9 @@ function nextSweepKey(existing: { key: SweepKey }[]): SweepKey {
 export default function NewRunModal() {
   const close = useTrainingStore((s) => s.closeNewRun)
   const startRun = useTrainingStore((s) => s.startRun)
+  // Prefill from the training graph (compiled plan), if the dialog was opened
+  // via "Run vorbereiten…" on the canvas. Read once at mount.
+  const prefill = useTrainingStore.getState().newRunPrefill
   const inspectDataset = useDatasetsStore((s) => s.inspect)
 
   // Current remote connection (for SLURM backend + persisting its config).
@@ -89,15 +92,15 @@ export default function NewRunModal() {
   const [dsList, setDsList] = useState<{ relpath: string; name: string; is_dir: boolean }[]>([])
   const [listErr, setListErr] = useState<string | null>(null)
 
-  const [label, setLabel] = useState('')
-  const [modelRelpath, setModelRelpath] = useState('')
-  const [datasetRelpath, setDatasetRelpath] = useState('')
-  const [targetColumn, setTargetColumn] = useState('')
-  const [cfg, setCfg] = useState<TrainingConfig>(defaultTrainingConfig())
+  const [label, setLabel] = useState(prefill?.label ?? '')
+  const [modelRelpath, setModelRelpath] = useState(prefill?.modelRelpath ?? '')
+  const [datasetRelpath, setDatasetRelpath] = useState(prefill?.datasetRelpath ?? '')
+  const [targetColumn, setTargetColumn] = useState(prefill?.targetColumn ?? '')
+  const [cfg, setCfg] = useState<TrainingConfig>(prefill?.training ?? defaultTrainingConfig())
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Phase 17 — resume: prior runs that have a checkpoints/best.pt to continue from.
-  const [resumable, setResumable] = useState<{ run_id: string; run_label: string }[]>([])
+  const [resumable, setResumable] = useState<{ run_id: string; run_label: string; model_path: string; best_val_loss: number | null }[]>([])
   const [resumeId, setResumeId] = useState('')
 
   // dataset columns come from the datasets-store inspect cache
@@ -125,7 +128,11 @@ export default function NewRunModal() {
         setDsList(ds.map((d) => ({ relpath: d.relpath, name: d.name, is_dir: d.is_dir })))
         // Runs that have a best.pt → eligible as a resume source.
         const runs = await training.list()
-        setResumable(runs.filter((r) => r.has_checkpoint).map((r) => ({ run_id: r.run_id, run_label: r.run_label })))
+        setResumable(runs.filter((r) => r.has_checkpoint).map((r) => ({
+          run_id: r.run_id, run_label: r.run_label, model_path: r.model_path, best_val_loss: r.best_val_loss,
+        })))
+        // Prefilled dataset (graph launch) → inspect so the target dropdown fills.
+        if (prefill?.datasetRelpath) void inspectDataset(prefill.datasetRelpath)
       } catch (e) {
         setListErr(e instanceof Error ? e.message : String(e))
       }
@@ -220,7 +227,10 @@ export default function NewRunModal() {
     >
       <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-[#1f2429] bg-[#0e1115] shadow-2xl">
         <div className="flex items-center gap-2 border-b border-[#1f2429] px-4 py-3">
-          <span className="flex-1 text-sm text-[#e6e8eb]">Neuer Trainings-Run</span>
+          <span className="flex-1 text-sm text-[#e6e8eb]">
+            Neuer Trainings-Run
+            {prefill && <span className="ml-2 rounded bg-[#13344f] px-1.5 py-0.5 text-[10px] text-[#6ab7ff]">aus Graph vorbefüllt</span>}
+          </span>
           <button onClick={close} className="rounded px-2 py-0.5 text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#e6e8eb]">×</button>
         </div>
 
@@ -287,15 +297,33 @@ export default function NewRunModal() {
             <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={effectiveLabel || 'run'} className={SELECT} />
           </Field>
 
-          {resumable.length > 0 && (
-            <Field label="Fortsetzen ab Checkpoint (optional)">
-              <select value={resumeId} onChange={(e) => setResumeId(e.target.value)} className={SELECT}>
-                <option value="">— von vorn trainieren —</option>
-                {resumable.map((r) => <option key={r.run_id} value={r.run_id}>{r.run_label || r.run_id}</option>)}
-              </select>
-              <Hint>Lädt Gewichte + Optimizer aus <code>best.pt</code> des gewählten Runs und trainiert „Epochs" weitere Epochen. Modell-Architektur muss passen.</Hint>
-            </Field>
-          )}
+          {resumable.length > 0 && (() => {
+            const chosen = resumable.find((r) => r.run_id === resumeId)
+            const mismatch = chosen && modelRelpath && chosen.model_path !== modelRelpath
+            return (
+              <Field label="Fortsetzen ab Checkpoint eines früheren Runs (optional)">
+                <select value={resumeId} onChange={(e) => setResumeId(e.target.value)} className={SELECT}>
+                  <option value="">— von vorn trainieren —</option>
+                  {resumable.map((r) => (
+                    <option key={r.run_id} value={r.run_id}>
+                      {(r.run_label || r.run_id)} · {r.model_path.split('/').pop()}{r.best_val_loss != null ? ` · best ${r.best_val_loss.toFixed(4)}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <Hint>
+                  Checkpoints gehören zu einem <strong>Run</strong> (nicht zu einem Modell): lädt Gewichte + Optimizer aus
+                  dessen <code>best.pt</code> und trainiert „Epochs" weitere Epochen. Das Modell oben muss dieselbe Architektur
+                  haben wie der gewählte Run.
+                </Hint>
+                {mismatch && (
+                  <span className="mt-1 block text-[10px] text-[#ff7a85]">
+                    ⚠ Dieser Run trainierte <code>{chosen!.model_path.split('/').pop()}</code>, oben gewählt ist
+                    <code> {modelRelpath.split('/').pop()}</code>. Bei abweichender Architektur schlägt das Laden fehl.
+                  </span>
+                )}
+              </Field>
+            )
+          })()}
 
           <div className="space-y-2 rounded border border-[#1f2429] bg-[#0a0d10] p-3">
             <div className="flex items-baseline gap-2">

@@ -46,7 +46,7 @@ export default function ExperimentsExplorer() {
           ↻
         </button>
         <button
-          onClick={openNewRun}
+          onClick={() => openNewRun()}
           className="rounded bg-[#13344f] px-2 py-0.5 text-[11px] text-[#6ab7ff] hover:bg-[#184466]"
           title="Neuen Trainings-Run starten"
         >
