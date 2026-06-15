@@ -1,6 +1,7 @@
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
 import { LAYERS } from '../layers/registry'
-import { iconForCategory, colorForCategory } from '../layers/categories'
+import { colorForCategory } from '../layers/categories'
+import CategoryIcon from '../layers/CategoryIcon'
 import type { LayerNodeData } from './GraphStore'
 
 const ERROR_COLOR = '#f43f5e'
@@ -15,7 +16,6 @@ export default function LayerNode({
   const catColor = spec ? colorForCategory(spec.category) : '#ff5555'
   const color = data.hasError ? ERROR_COLOR : catColor
   const summary = spec ? spec.summary(data.params) : '⚠ unknown layer'
-  const icon = spec ? iconForCategory(spec.category) : '?'
 
   const hasInput = data.layerType !== 'Input'
   const hasOutput = data.layerType !== 'Output'
@@ -41,11 +41,11 @@ export default function LayerNode({
         <div className="flex items-center gap-1.5">
           <span
             aria-hidden
-            className="inline-flex h-4 w-4 items-center justify-center rounded text-[11px] leading-none"
+            className="inline-flex h-4 w-4 items-center justify-center rounded"
             style={{ background: `${color}33`, color }}
             title={spec?.category ?? 'unknown'}
           >
-            {icon}
+            <CategoryIcon cat={spec?.category} />
           </span>
           <span>{data.layerType}</span>
         </div>

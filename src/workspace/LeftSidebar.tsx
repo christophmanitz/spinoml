@@ -1,12 +1,11 @@
-import { useState } from 'react'
 import FileExplorer from './FileExplorer'
 import DatasetExplorer from '../datasets/DatasetExplorer'
 import ExperimentsExplorer from '../training/ExperimentsExplorer'
-
-type Tab = 'files' | 'datasets' | 'experiments'
+import { useSidebarStore } from './sidebarStore'
 
 export default function LeftSidebar() {
-  const [tab, setTab] = useState<Tab>('files')
+  const tab = useSidebarStore((s) => s.tab)
+  const setTab = useSidebarStore((s) => s.setTab)
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 border-b border-[#1f2429] text-[11px]">

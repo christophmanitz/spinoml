@@ -15,8 +15,12 @@ export type FieldSpec =
   | { name: string; type: 'columns-multi'; default: string[] }
   /** Single-select column. Same lookup as columns-multi, single string. */
   | { name: string; type: 'column-single'; default: string }
+  /** Single-line free text (class name, constructor-arg string). Stored verbatim. */
+  | { name: string; type: 'text'; default: string; placeholder?: string }
+  /** Multi-line source code (Python for a Custom node). Stored & emitted verbatim. */
+  | { name: string; type: 'code'; default: string; placeholder?: string }
 
-export type LayerKind = 'module' | 'input' | 'output' | 'merge' | 'function'
+export type LayerKind = 'module' | 'input' | 'output' | 'merge' | 'function' | 'custom'
 
 export type LayerSpec = {
   type: string
@@ -401,6 +405,22 @@ export const LAYERS: Record<string, LayerSpec> = {
     ],
     summary: (p) => `graphconv ${get(p, 'in_channels', 16)}→${get(p, 'out_channels', 32)}`,
   },
+  GraphTransformer: {
+    // PyG TransformerConv — multi-head graph attention à la the Graph Transformer.
+    // out dim = out_channels * heads when concat, else out_channels (like GAT).
+    type: 'GraphTransformer', category: 'Graph', pytorchModule: 'TransformerConv',
+    needsEdgeIndex: true, pyImports: ['TransformerConv'],
+    fields: [
+      f.int('in_channels', 16, { min: 1 }),
+      f.int('out_channels', 32, { min: 1 }),
+      f.int('heads', 1, { min: 1 }),
+      f.bool('concat', true),
+      f.bool('beta', false),
+      f.float('dropout', 0.0, { min: 0, max: 1, step: 0.05 }),
+      f.bool('bias', true),
+    ],
+    summary: (p) => `gtrans ${get(p, 'in_channels', 16)}→${get(p, 'out_channels', 32)}×${get(p, 'heads', 1)}h`,
+  },
   GlobalMeanPool: {
     // Graph-level readout: [N_nodes, F] → [N_graphs, F]. Needs a 'batch' Input.
     type: 'GlobalMeanPool', category: 'Graph', pytorchModule: '', kind: 'function',
@@ -479,6 +499,40 @@ export const LAYERS: Record<string, LayerSpec> = {
     forwardExpr: (xs, p) => `torch.stack([${xs.join(', ')}], dim=${get(p, 'dim', 0)})`,
     summary: (p) => `stack dim=${get(p, 'dim', 0)}`,
   },
+
+  // ─── Custom (free-form nn.Module — the escape hatch) ────────────────────
+  // Write any nn.Module in `source`; the codegen emits the class verbatim at
+  // module level, instantiates it as `self.<attr> = <class_name>(<init_args>)`,
+  // and calls it in forward with ALL incoming edges as positional args (in edge
+  // order). One forward output (tensor / tuple / dict). torch, nn and F
+  // (torch.nn.functional) are imported for you; put any other imports at the top
+  // of `source`. This is how non-graph ops (bilinear heads, custom attention,
+  // relational message passing, …) get expressed.
+  Custom: {
+    type: 'Custom', category: 'Custom', pytorchModule: '', kind: 'custom',
+    fields: [
+      { name: 'class_name', type: 'text', default: 'MyModule', placeholder: 'nn.Module class name' } as FieldSpec,
+      { name: 'init_args', type: 'text', default: '', placeholder: 'e.g. 384, 256, dropout=0.0' } as FieldSpec,
+      {
+        name: 'source', type: 'code',
+        placeholder: 'class MyModule(nn.Module): ...',
+        default: [
+          'class MyModule(nn.Module):',
+          '    def __init__(self, in_dim, out_dim):',
+          '        super().__init__()',
+          '        self.fc = nn.Linear(in_dim, out_dim)',
+          '',
+          '    def forward(self, x):',
+          '        return self.fc(x)',
+        ].join('\n'),
+      } as FieldSpec,
+    ],
+    summary: (p) => {
+      const cls = String(get(p, 'class_name', 'MyModule')) || 'MyModule'
+      const args = String(get(p, 'init_args', '')).trim()
+      return `${cls}(${args})`
+    },
+  },
 }
 
 export function defaultParamsFor(layerType: string): Record<string, unknown> {
@@ -555,6 +609,9 @@ function coerceField(field: FieldSpec, value: unknown): unknown {
       return Array.isArray(value) ? value.filter((v) => typeof v === 'string') : field.default
     case 'column-single':
       return typeof value === 'string' ? value : field.default
+    case 'text':
+    case 'code':
+      return typeof value === 'string' ? value : field.default
   }
 }
 
@@ -583,6 +640,6 @@ export const LAYER_GROUPS: { name: string; layers: string[] }[] = (() => {
     if (!byCategory[spec.category]) byCategory[spec.category] = []
     byCategory[spec.category].push(spec.type)
   }
-  const order = ['IO', 'Conv', 'Linear', 'Recurrent', 'Graph', 'Norm', 'Activation', 'Pool', 'Regularize', 'Attention', 'Reshape', 'Merge']
+  const order = ['IO', 'Conv', 'Linear', 'Recurrent', 'Graph', 'Norm', 'Activation', 'Pool', 'Regularize', 'Attention', 'Reshape', 'Merge', 'Custom']
   return order.filter((c) => byCategory[c]).map((c) => ({ name: c, layers: byCategory[c] }))
 })()

@@ -6,6 +6,9 @@ import type { Edge } from '@xyflow/react'
 import { generate } from '../src/codegen/generator'
 import { defaultParamsFor } from '../src/layers/registry'
 import type { LayerNode } from '../src/canvas/GraphStore'
+import {
+  LIGAND_PROJECTOR_SRC, PROTEIN_PROJECTOR_SRC, BILINEAR_HEAD_SRC,
+} from '../src/templates/templates'
 
 function mkNode(id: string, layerType: string, overrides: Record<string, unknown> = {}): LayerNode {
   return {
@@ -125,6 +128,24 @@ const cases: Case[] = [
       { id: 'e2', source: 'n1', target: 'n2' },
       { id: 'e3', source: 'n2', target: 'n3' },
       { id: 'e4', source: 'n3', target: 'n4' },
+    ],
+  },
+  {
+    name: 'rankbind bilinear main model (custom code nodes, 2 inputs)',
+    nodes: [
+      mkNode('lig', 'Input', { name: 'lig_emb', shape: [1, 384], dtype: 'float32' }),
+      mkNode('prot', 'Input', { name: 'prot_emb', shape: [1, 1280], dtype: 'float32' }),
+      mkNode('lp', 'Custom', { class_name: 'LigandProjector', init_args: '384, 256, dropout=0.0', source: LIGAND_PROJECTOR_SRC }),
+      mkNode('pp', 'Custom', { class_name: 'ProteinProjector', init_args: '1280, 256, dropout=0.0', source: PROTEIN_PROJECTOR_SRC }),
+      mkNode('bh', 'Custom', { class_name: 'BilinearHead', init_args: '256, 256, rank=32', source: BILINEAR_HEAD_SRC }),
+      mkNode('out', 'Output', { name: 'score' }),
+    ],
+    edges: [
+      { id: 'e1', source: 'lig', target: 'lp' },
+      { id: 'e2', source: 'prot', target: 'pp' },
+      { id: 'e3', source: 'lp', target: 'bh' },
+      { id: 'e4', source: 'pp', target: 'bh' },
+      { id: 'e5', source: 'bh', target: 'out' },
     ],
   },
   {

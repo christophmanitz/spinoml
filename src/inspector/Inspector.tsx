@@ -4,6 +4,7 @@ import { LAYERS, type FieldSpec } from '../layers/registry'
 import { useInferenceStore } from '../inference/store'
 import { useDatasetsStore } from '../datasets/store'
 import { isTauri } from '../workspace/tauri-fs'
+import CodeField from './CodeField'
 
 export default function Inspector() {
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId)
@@ -338,7 +339,45 @@ function FieldInput({
       return <ColumnsMultiInput value={value as string[]} onChange={onChange} />
     case 'column-single':
       return <ColumnSingleInput value={value as string} onChange={onChange} baseClass={baseClass} />
+    case 'text':
+      return <TextInput field={field} value={value as string} onChange={onChange} baseClass={baseClass} />
+    case 'code':
+      return <CodeInput field={field} value={value as string} onChange={onChange} />
   }
+}
+
+function TextInput({
+  field, value, onChange, baseClass,
+}: {
+  field: Extract<FieldSpec, { type: 'text' }>
+  value: string
+  onChange: (v: unknown) => void
+  baseClass: string
+}) {
+  const [draft, setDraft] = useState(value ?? '')
+  useEffect(() => { setDraft(value ?? '') }, [value])
+  return (
+    <input
+      type="text"
+      className={`${baseClass} font-mono`}
+      value={draft}
+      placeholder={field.placeholder}
+      spellCheck={false}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => onChange(draft)}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+    />
+  )
+}
+
+function CodeInput({
+  field, value, onChange,
+}: {
+  field: Extract<FieldSpec, { type: 'code' }>
+  value: string
+  onChange: (v: unknown) => void
+}) {
+  return <CodeField value={value ?? ''} placeholder={field.placeholder} onChange={(v) => onChange(v)} />
 }
 
 function columnsFor(datasetRel: string | undefined): string[] | null {

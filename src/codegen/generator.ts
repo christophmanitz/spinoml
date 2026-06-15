@@ -141,6 +141,11 @@ export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {
       const attr = uniq(toSnake(n.data.layerType))
       attrName.set(id, attr)
       varName.set(id, attr) // single-input modules reuse attr as var name
+    } else if (k === 'custom') {
+      const cls = String(n.data.params.class_name ?? 'Custom').trim() || 'Custom'
+      const attr = uniq(toSnake(cls))
+      attrName.set(id, attr)
+      varName.set(id, attr)
     } else if (k === 'merge') {
       varName.set(id, uniq('m_' + toSnake(n.data.layerType)))
     } else if (k === 'function') {
@@ -150,20 +155,35 @@ export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {
     }
   }
 
-  // ─── init lines ─────────────────────────────────────────────────────────
+  // ─── init lines (+ collect Custom class definitions) ─────────────────────
   const initLines: string[] = []
+  // class_name → source, deduped so two instances of the same Custom layer
+  // emit the class body only once.
+  const customDefs = new Map<string, string>()
   for (const id of order) {
     if (!reachable.has(id)) continue
     const n = byId.get(id)!
     const spec = LAYERS[n.data.layerType]
-    if (!spec || !spec.pytorchModule) continue
-    if (kindOf(id) !== 'module') continue
-    const rhs = spec.initExpr
-      ? spec.initExpr(n.data.params)
-      : `${spec.pytorchModule}(${spec.fields
-          .map((field) => `${field.name}=${serializeParam(field, n.data.params[field.name] ?? field.default)}`)
-          .join(', ')})`
-    initLines.push(`        self.${attrName.get(id)} = ${rhs}`)
+    if (!spec) continue
+    const k = kindOf(id)
+    if (k === 'module' && spec.pytorchModule) {
+      const rhs = spec.initExpr
+        ? spec.initExpr(n.data.params)
+        : `${spec.pytorchModule}(${spec.fields
+            .map((field) => `${field.name}=${serializeParam(field, n.data.params[field.name] ?? field.default)}`)
+            .join(', ')})`
+      initLines.push(`        self.${attrName.get(id)} = ${rhs}`)
+    } else if (k === 'custom') {
+      const cls = String(n.data.params.class_name ?? 'Custom').trim() || 'Custom'
+      const args = String(n.data.params.init_args ?? '').trim()
+      initLines.push(`        self.${attrName.get(id)} = ${cls}(${args})`)
+      const src = String(n.data.params.source ?? '').trim()
+      if (!src) {
+        issues.push(`Custom node ${id} (${cls}) has no source code.`)
+      } else if (!customDefs.has(cls)) {
+        customDefs.set(cls, src)
+      }
+    }
   }
 
   // ─── graph aux inputs (edge_index / batch) ──────────────────────────────
@@ -205,6 +225,13 @@ export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {
       } else {
         forwardLines.push(`        ${varName.get(id)} = self.${attrName.get(id)}(${preds[0]})`)
       }
+    } else if (k === 'custom') {
+      if (preds.length === 0) {
+        issues.push(`Custom node ${id} (${n.data.params.class_name ?? 'Custom'}) has no upstream value.`)
+        continue
+      }
+      // All incoming edges become positional args, in edge order.
+      forwardLines.push(`        ${varName.get(id)} = self.${attrName.get(id)}(${preds.join(', ')})`)
     } else if (k === 'merge') {
       if (preds.length < 2) {
         issues.push(`Node ${id} (${n.data.layerType}): merge layer needs ≥2 inputs (has ${preds.length}).`)
@@ -260,11 +287,14 @@ export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {
     if (!reachable.has(id)) continue
     LAYERS[byId.get(id)!.data.layerType]?.pyImports?.forEach((s) => tgImports.add(s))
   }
-  const extraImports = tgImports.size
-    ? [`from torch_geometric.nn import ${[...tgImports].sort().join(', ')}`]
-    : []
+  const extraImports: string[] = []
+  // Custom nodes commonly reach for torch.nn.functional; import it for them.
+  if (customDefs.size) extraImports.push('import torch.nn.functional as F')
+  if (tgImports.size) extraImports.push(`from torch_geometric.nn import ${[...tgImports].sort().join(', ')}`)
 
-  const code = emitModule(initLines, forwardLines, returnLine, inputs, issues, extraImports)
+  const code = emitModule(
+    initLines, forwardLines, returnLine, inputs, issues, extraImports, [...customDefs.values()],
+  )
   const attrMap: Record<string, string> = {}
   for (const [id, attr] of attrName) attrMap[id] = attr
   const moduleOrder = order.filter((id) => attrMap[id] !== undefined)
@@ -297,6 +327,7 @@ function emitModule(
   inputs: { name: string; shape: number[]; dtype: string }[],
   issues: string[],
   extraImports: string[] = [],
+  customClassDefs: string[] = [],
 ): string {
   const header = issuesBlock(issues)
   const init = initLines.length ? initLines.join('\n') : '        pass'
@@ -309,10 +340,12 @@ function emitModule(
   ).join('\n    ')
   const callArgs = inputs.map((i) => i.name).join(', ')
   const imports = extraImports.length ? '\n' + extraImports.join('\n') : ''
+  // User-authored Custom classes are emitted verbatim at module level, before Model.
+  const customs = customClassDefs.length ? '\n\n' + customClassDefs.join('\n\n\n') + '\n' : ''
 
   return `${header}import torch
 import torch.nn as nn${imports}
-
+${customs}
 
 class Model(nn.Module):
     def __init__(self):
@@ -372,6 +405,11 @@ function serializeParam(field: FieldSpec, value: unknown): string {
       return `[${(value as string[]).map((s) => `'${s}'`).join(', ')}]`
     case 'column-single':
       return `'${value as string}'`
+    case 'text':
+    case 'code':
+      // Only used by Custom nodes, which emit init/source directly (never via
+      // serializeParam). Present for switch exhaustiveness.
+      return JSON.stringify(String(value))
   }
 }
 

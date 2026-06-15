@@ -14,6 +14,7 @@ export const CATEGORY_COLORS: Record<string, string> = {
   Merge: '#ec4899',
   Reshape: '#a78bfa',
   IO: '#e6e8eb',
+  Custom: '#a3e635',
 }
 
 // A short glyph rendered in the node header. Kept ASCII-safe so it survives
@@ -31,6 +32,7 @@ export const CATEGORY_ICON: Record<string, string> = {
   Merge: '⋈',        // join
   Reshape: '⤧',      // rearrange
   IO: '◉',           // terminal
+  Custom: '{}',      // free-form code
 }
 
 export function iconForCategory(cat: string | undefined): string {
