@@ -4,7 +4,7 @@
 // directly (mirrors the workspace tauri-fs / connections tauri-ssh split).
 
 import { invoke } from '@tauri-apps/api/core'
-import type { RunSummary, RunStatus } from './types'
+import type { RunSummary, RunStatus, GpuStat } from './types'
 
 export const tauriTraining = {
   list: () => invoke<RunSummary[]>('list_training_runs'),
@@ -15,4 +15,7 @@ export const tauriTraining = {
     invoke<void>('start_training_run', { runId, runJson, modelMlforge, modelPy }),
   stop: (runId: string) => invoke<void>('stop_training_run', { runId }),
   remove: (runId: string) => invoke<void>('delete_training_run', { runId }),
+  promote: (runId: string, destName: string) =>
+    invoke<string>('promote_run_checkpoint', { runId, destName }),
+  gpuStats: () => invoke<GpuStat[]>('gpu_stats'),
 }

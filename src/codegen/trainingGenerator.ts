@@ -27,6 +27,10 @@ export type TrainingPlan = {
 export type TrainingCompile = {
   ok: boolean
   issues: string[]
+  /** Non-blocking advisories — e.g. a node not wired into the TrainLoop. The
+   *  trainer is node-driven so these don't stop a launch, but they catch a graph
+   *  the user *thinks* is connected but isn't. */
+  warnings: string[]
   plan: TrainingPlan | null
 }
 
@@ -124,6 +128,46 @@ export function compileTrainingGraph(snapshot: TrainingGraphSnapshot): TrainingC
   if (dataset && !target) issues.push('DatasetSource braucht eine Ziel-Spalte (target).')
   if (model && !modelRelpath) issues.push('ModelSource hat kein Modell gewählt.')
 
+  // Edge validation (advisory): each core component should reach the TrainLoop
+  // along the graph's edges. The compiler assembles the config from node types,
+  // so an unwired graph still runs — but unconnected nodes usually signal the
+  // user forgot a link, so we surface them as warnings.
+  const warnings: string[] = []
+  if (loop) {
+    const adj = new Map<string, string[]>()
+    for (const e of snapshot.edges) {
+      const list = adj.get(e.source) ?? []
+      list.push(e.target)
+      adj.set(e.source, list)
+    }
+    const reaches = (startId: string): boolean => {
+      const seen = new Set<string>()
+      const stack = [startId]
+      while (stack.length) {
+        const cur = stack.pop()!
+        if (cur === loop.id) return true
+        if (seen.has(cur)) continue
+        seen.add(cur)
+        for (const nx of adj.get(cur) ?? []) stack.push(nx)
+      }
+      return false
+    }
+    const wired = (n: SnapNode | null, label: string) => {
+      if (n && n.id !== loop.id && !reaches(n.id)) {
+        warnings.push(`${label} ist nicht mit dem TrainLoop verbunden.`)
+      }
+    }
+    wired(dataset, 'DatasetSource')
+    wired(model, 'ModelSource')
+    wired(loss, 'Loss')
+    wired(optimizer, 'Optimizer')
+    wired(scheduler, 'Scheduler')
+    for (const m of byType('Metric')) wired(m, 'Metric')
+    for (const t of ['EarlyStopping', 'GradientClipping', 'MixedPrecision']) {
+      for (const c of byType(t)) wired(c, t)
+    }
+  }
+
   const ok = issues.every((m) => m.includes('Mehrere')) &&
     !!loop && !!dataset && !!model && !!loss && !!optimizer && !!datasetRelpath && !!target && !!modelRelpath
 
@@ -131,5 +175,5 @@ export function compileTrainingGraph(snapshot: TrainingGraphSnapshot): TrainingC
     ? { modelRelpath, datasetRelpath, target, features, training }
     : null
 
-  return { ok, issues, plan }
+  return { ok, issues, warnings, plan }
 }

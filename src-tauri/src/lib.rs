@@ -792,6 +792,8 @@ pub fn run() {
             ssh::ssh_stop_training_run,
             ssh::ssh_delete_training_run,
             ssh::ssh_remote_training_capabilities,
+            ssh::ssh_promote_checkpoint,
+            ssh::ssh_gpu_stats,
             pty::pty_spawn,
             pty::pty_write,
             pty::pty_resize,
@@ -805,6 +807,8 @@ pub fn run() {
             training::start_training_run,
             training::stop_training_run,
             training::delete_training_run,
+            training::promote_run_checkpoint,
+            training::gpu_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

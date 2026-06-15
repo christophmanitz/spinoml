@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import { training } from './backend'
 import { useTrainingStore } from './store'
-import { type RunConfig, type TrainingEvent, RUNNING_STATES } from './types'
+import { type RunConfig, type TrainingEvent, type GpuStat, RUNNING_STATES } from './types'
 import StatusPill from './StatusPill'
 import LineChart from './charts/LineChart'
 import { parseEventLines, lossSeries, lrSeries, metricSeries } from './charts/series'
@@ -12,7 +12,7 @@ import { useViewModeStore } from './graph/viewMode'
 import { getCurrentConnection } from '../connections/store'
 import { confirmDialog } from '../ui/confirm'
 
-type Tab = 'overview' | 'charts' | 'events' | 'logs' | 'script'
+type Tab = 'overview' | 'charts' | 'events' | 'predictions' | 'hardware' | 'logs' | 'script'
 
 export default function RunDetailModal({ runId }: { runId: string }) {
   const close = useTrainingStore((s) => s.select)
@@ -29,6 +29,10 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   const [busy, setBusy] = useState(false)
   const [lossLog, setLossLog] = useState(false)
   const [trainSbatch, setTrainSbatch] = useState('')
+  const [gpu, setGpu] = useState<GpuStat[] | null>(null)
+  const [promoteName, setPromoteName] = useState('')
+  const [promoted, setPromoted] = useState<string | null>(null)
+  const [promoteErr, setPromoteErr] = useState<string | null>(null)
 
   const status = summary?.status ?? 'unknown'
   const active = RUNNING_STATES.has(status) || (summary?.alive ?? false)
@@ -114,6 +118,28 @@ export default function RunDetailModal({ runId }: { runId: string }) {
     return () => { stopped = true; clearTimeout(timer) }
   }, [active, tailReload])
 
+  // GPU snapshot polling — only while the hardware tab is open (it's a host-wide
+  // nvidia-smi call, one ssh round-trip on remote). Non-overlapping.
+  useEffect(() => {
+    if (tab !== 'hardware') return
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout>
+    const delay = getCurrentConnection().kind === 'remote-ssh' ? 6000 : 3000
+    const tick = async () => {
+      try { setGpu(await training.gpuStats()) } catch { setGpu([]) }
+      if (!stopped) timer = setTimeout(tick, delay)
+    }
+    void tick()
+    return () => { stopped = true; clearTimeout(timer) }
+  }, [tab])
+
+  // Prefill the promote name from the run label once run.json is loaded.
+  useEffect(() => {
+    if (!promoteName && summary?.run_label) {
+      setPromoteName(summary.run_label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'model')
+    }
+  }, [summary?.run_label, promoteName])
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') close(null) }
     document.addEventListener('keydown', onKey)
@@ -124,6 +150,10 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   const last = epochEvents[epochEvents.length - 1]
   const failed = events.find((e) => e.kind === 'run.failed')
   const done = events.find((e) => e.kind === 'run.done')
+  // Latest sample-predictions snapshot (emitted by the trainer on each new best).
+  const samplePreds = [...events].reverse().find((e) => e.kind === 'sample.preds')
+  const predRows = (samplePreds?.rows as Array<Record<string, unknown>> | undefined) ?? []
+  const canPromote = !active && (summary?.has_checkpoint ?? false)
 
   const totalEpochs = summary?.epochs ?? 0
   // Fix the chart x-axis to the planned epoch count so the curve fills
@@ -190,7 +220,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
         </div>
 
         <div className="flex border-b border-[#1f2429] text-xs">
-          {(['overview', 'charts', 'events', 'logs', 'script'] as Tab[]).map((t) => (
+          {(['overview', 'charts', 'events', 'predictions', 'hardware', 'logs', 'script'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -233,6 +263,42 @@ export default function RunDetailModal({ runId }: { runId: string }) {
                   <div className="font-medium">Fehlgeschlagen in „{String(failed.stage)}"</div>
                   <div className="mt-1">{String(failed.error)}</div>
                   {!!failed.traceback && <pre className="mt-2 whitespace-pre-wrap text-[10px] text-[#b85a62]">{String(failed.traceback)}</pre>}
+                </div>
+              )}
+
+              {canPromote && (
+                <div className="rounded border border-[#1f2429] bg-[#0a0d10] p-3">
+                  <div className="mb-1.5 text-[11px] text-[#9aa1a8]">Bestes Modell übernehmen</div>
+                  <div className="mb-2 text-[10px] text-[#7a8088]">
+                    Kopiert <code>checkpoints/best.pt</code> nach <code>models/best/&lt;name&gt;.pt</code> —
+                    von dort als Pretrained-Gewicht weiterverwendbar.
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={promoteName}
+                      onChange={(e) => { setPromoteName(e.target.value); setPromoted(null); setPromoteErr(null) }}
+                      placeholder="iris-mlp"
+                      className="min-w-0 flex-1 rounded border border-[#2a3038] bg-[#0e1115] px-2 py-1 text-[11px] text-[#e6e8eb] focus:border-[#6ab7ff] focus:outline-none"
+                    />
+                    <span className="text-[10px] text-[#5a6068]">.pt</span>
+                    <button
+                      disabled={busy || !promoteName.trim()}
+                      onClick={async () => {
+                        setBusy(true); setPromoted(null); setPromoteErr(null)
+                        try {
+                          const dest = await training.promote(runId, promoteName.trim())
+                          setPromoted(dest)
+                        } catch (e) {
+                          setPromoteErr(e instanceof Error ? e.message : String(e))
+                        } finally { setBusy(false) }
+                      }}
+                      className="rounded bg-[#13344f] px-2 py-1 text-[11px] text-[#6ab7ff] hover:bg-[#184466] disabled:opacity-40"
+                    >
+                      Übernehmen
+                    </button>
+                  </div>
+                  {promoted && <div className="mt-2 text-[10px] text-emerald-400">→ {promoted}</div>}
+                  {promoteErr && <div className="mt-2 text-[10px] text-rose-400">{promoteErr}</div>}
                 </div>
               )}
 
@@ -298,6 +364,69 @@ export default function RunDetailModal({ runId }: { runId: string }) {
             )
           )}
 
+          {tab === 'predictions' && (
+            predRows.length === 0 ? (
+              <div className="text-[11px] text-[#7a8088]">
+                Noch keine Sample-Vorhersagen — der Trainer schreibt sie bei jedem neuen Best-Checkpoint
+                (braucht einen Validierungs-Split).
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="text-[10px] text-[#7a8088]">
+                  Stichprobe aus dem Validierungs-Set beim besten Checkpoint
+                  {samplePreds?.epoch != null ? ` (Epoch ${(samplePreds.epoch as number) + 1})` : ''}.
+                </div>
+                <table className="w-full text-left text-[11px]">
+                  <thead className="text-[#7a8088]">
+                    <tr><th className="py-1 pr-3">#</th><th className="pr-3">Vorhersage</th><th className="pr-3">Wahrheit</th><th className="pr-3">Konfidenz</th><th></th></tr>
+                  </thead>
+                  <tbody className="font-mono">
+                    {predRows.map((r, i) => {
+                      const correct = r.correct as boolean | undefined
+                      return (
+                        <tr key={i} className="border-t border-[#171b1f]">
+                          <td className="py-0.5 pr-3 text-[#5a6068]">{i + 1}</td>
+                          <td className="pr-3 text-[#e6e8eb]">{String(r.pred)}</td>
+                          <td className="pr-3 text-[#9aa1a8]">{String(r.truth)}</td>
+                          <td className="pr-3">{r.conf != null ? Number(r.conf).toFixed(3) : '—'}</td>
+                          <td>{correct === undefined ? '' : correct ? <span className="text-emerald-400">✓</span> : <span className="text-rose-400">✗</span>}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
+
+          {tab === 'hardware' && (
+            gpu === null ? (
+              <div className="text-[11px] text-[#7a8088]">GPU-Status wird abgefragt…</div>
+            ) : gpu.length === 0 ? (
+              <div className="text-[11px] text-[#7a8088]">
+                Keine GPU sichtbar (kein <code>nvidia-smi</code> auf dem Ausführungs-Host, oder reines CPU-Training).
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {gpu.map((g) => {
+                  const memPct = g.mem_total_mb > 0 ? (g.mem_used_mb / g.mem_total_mb) * 100 : 0
+                  return (
+                    <div key={g.index} className="rounded border border-[#1f2429] bg-[#0a0d10] p-3">
+                      <div className="mb-2 flex items-center text-[11px]">
+                        <span className="text-[#e6e8eb]">GPU {g.index} · {g.name}</span>
+                        <span className="ml-auto font-mono text-[#7a8088]">{g.temp_c.toFixed(0)}°C</span>
+                      </div>
+                      <Meter label="Auslastung" pct={g.util_pct} text={`${g.util_pct.toFixed(0)}%`} />
+                      <div className="h-1" />
+                      <Meter label="Speicher" pct={memPct} text={`${(g.mem_used_mb / 1024).toFixed(1)} / ${(g.mem_total_mb / 1024).toFixed(1)} GB`} />
+                    </div>
+                  )
+                })}
+                <div className="text-[10px] text-[#5a6068]">Aktualisiert automatisch, solange dieser Tab offen ist.</div>
+              </div>
+            )
+          )}
+
           {tab === 'logs' && (
             <div className="space-y-3">
               <LogBlock title="stdout.log" text={stdout} />
@@ -332,6 +461,21 @@ function ChartCard({ title, right, children }: { title: string; right?: ReactNod
         {right && <span className="ml-auto">{right}</span>}
       </div>
       {children}
+    </div>
+  )
+}
+
+function Meter({ label, pct, text }: { label: string; pct: number; text: string }) {
+  const clamped = Math.max(0, Math.min(100, pct))
+  return (
+    <div>
+      <div className="mb-0.5 flex items-center text-[10px] text-[#7a8088]">
+        <span>{label}</span>
+        <span className="ml-auto font-mono">{text}</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded bg-[#1a1e22]">
+        <div className="h-full rounded bg-[#6ab7ff] transition-all" style={{ width: `${clamped.toFixed(1)}%` }} />
+      </div>
     </div>
   )
 }

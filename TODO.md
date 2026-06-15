@@ -216,8 +216,17 @@ Graph geknüpft.
   `useTrainingGraphStore`. Der Trainings-Graph kompiliert in die Phase-13
   `run.json` (nicht in eine eigene `train.py`) — der konfig-getriebene
   Trainer aus Phase 13 wird wiederverwendet statt ein zweiter Codepfad.
-- Offen: Edge-Validierung/Smoke-Test des Trainings-Graphs; `.mltrain` im
-  FileExplorer-Baum (aktuell eigener Save/Load-Bar).
+- ✅ Edge-Validierung des Trainings-Graphs (2026-06-15): der Compiler prüft jetzt
+  per Erreichbarkeits-Analyse, ob jede Kern-Komponente (Dataset/Model/Loss/
+  Optimizer/Scheduler/Metric/Callbacks) tatsächlich zum TrainLoop verdrahtet ist,
+  und zeigt fehlende Verbindungen als nicht-blockierende Warnungen
+  (`TrainingCompile.warnings`) im Inspector. Nicht-blockierend, weil der Trainer
+  knoten-typ-getrieben ist (Edges sind rein visuell) — ein unverdrahteter Graph
+  liefe identisch, die Warnung fängt aber den „ich dachte das ist verbunden"-Fall.
+- ✅ `.mltrain` im FileExplorer-Baum (2026-06-15): Klick auf eine `.mltrain`-Datei
+  lädt den Trainings-Graph auf den Canvas und schaltet in den Training-Modus.
+- Offen: echter Smoke-Test des Trainings-Graphs (1 Batch forward/backward über den
+  Sidecar) — braucht einen neuen Sidecar-Endpunkt; bewusst verschoben.
 
 ### 14.1 Mode-Switch im Canvas
 
@@ -369,8 +378,14 @@ endlich ist, ohne den ganzen Run zu starten.
   lebt), KEIN `fs::watch`/Tauri-`training:event` — für Epoch-Granularität
   ausreichend; fs-watch verschoben (relevant erst bei Batch-Live-Charts).
   Kein eigener Bottom-Panel-Tab „Training" — Charts leben im Run-Detail-
-  Modal (weniger invasiv, gleiche Daten). Hardware-Strip + Sample-Preds
-  noch offen (brauchen optionale Sidecar-Polls bzw. sample-Callback).
+  Modal (weniger invasiv, gleiche Daten).
+- ✅ Hardware-Strip (2026-06-15): Run-Detail-Tab „hardware" pollt `nvidia-smi`
+  auf dem Ausführungs-Host (lokal via `gpu_stats`-Command, remote via
+  `ssh_gpu_stats`) und zeigt pro GPU Auslastung/Speicher/Temperatur, solange der
+  Tab offen ist. Leer/Hinweis bei reinem CPU-Training.
+- ✅ Sample-Predictions (2026-06-15): der Trainer emittiert bei jedem neuen
+  Best-Checkpoint ein `sample.preds`-Event (gleichmäßige Stichprobe aus dem
+  Val-Set, Pred vs. Truth + Konfidenz); Run-Detail-Tab „predictions" zeigt sie.
 
 Sobald Phase 13+14 stehen, baue Live-Visualisierung:
 
@@ -505,11 +520,18 @@ sidecar-torch der bug, hier wird es zum Feature.
   pre-run-script. SlurmConfig wird auf der Connection gemerkt (`slurm?`).
 - Abweichung vom Plan: KEIN `SlurmConfig`-Graph-Node (17.1) — SLURM wird beim
   Run-Start gewählt statt als Trainings-Graph-Knoten (deutlich weniger
-  invasiv, gleiche Capability). KEIN rsync (wie Phase 16). Resume aus
-  Checkpoint (17.3) + sacct-Final-State-Parsing (17.2) noch offen: Status
-  kommt aus dem status-File des Trainers + squeue-Liveness; ein per SLURM
-  gekillter Job (OOM/Timeout) wird über `reconcile_status` als failed
-  angezeigt, sobald er aus squeue fällt.
+  invasiv, gleiche Capability). KEIN rsync (wie Phase 16).
+- ✅ sacct-Final-State-Parsing (2026-06-15): `ssh_training_run_status` holt für
+  SLURM-Runs die Live-`squeue`-State (PENDING→queued, RUNNING→running) und, sobald
+  der Job aus der Queue ist, den `sacct`-State und mappt ihn präzise
+  (COMPLETED→done, CANCELLED→cancelled, TIMEOUT/OOM/FAILED/NODE_FAIL→failed) via
+  `reconcile_slurm_status`. So wird ein scheduler-gekillter Job korrekt erklärt
+  statt nur als „failed".
+- ✅ Resume aus Checkpoint (2026-06-15): Checkpoints speichern jetzt auch
+  optimizer/scheduler-State + best_val; `run.json.resume_from` (Picker im
+  NewRunModal, Quelle = jeder Run mit `best.pt`) lädt sie und trainiert
+  „Epochs" weitere Epochen. `RunSummary.has_checkpoint` (local + ssh) speist den
+  Picker.
 
 Der eigentliche HPC-Use-Case. Voraussetzung: Phase 16.
 
@@ -596,10 +618,14 @@ bis Job-Ende kaum sichtbar). Deshalb verlassen wir uns auf
   Phase-15b-Compare vergleichbar.
 - CSV-Export im `CompareModal` („CSV"-Button): eine Zeile pro Run mit
   finalen Metriken + allen abweichenden Config-Feldern (aus dem Config-Diff).
+- ✅ `best.pt`-Promotion nach `models/best/` (2026-06-15): im Run-Detail-Modal
+  („Bestes Modell übernehmen", nur bei terminalem Run mit Checkpoint) kopiert
+  `promote_run_checkpoint` / `ssh_promote_checkpoint` die `best.pt` nach
+  `models/best/<name>.pt` (lokal + remote).
 - Abweichung/Offen: SLURM-Array-Jobs für Sweeps (aktuell N Einzel-Runs),
-  W&B/TensorBoard-Export, `best.pt`-Promotion nach `models/best/`, und der
-  Chat-Auto-Tag („warum ist Run #47 schlechter als #46") sind NICHT dabei —
-  brauchen externe Deps bzw. LLM-Tool-Surface; bewusst verschoben.
+  W&B/TensorBoard-Export, und der Chat-Auto-Tag („warum ist Run #47 schlechter
+  als #46") sind NICHT dabei — brauchen externe Deps bzw. LLM-Tool-Surface;
+  bewusst verschoben.
 
 Letzte Phase macht's komfortabel:
 

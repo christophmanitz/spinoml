@@ -21,11 +21,14 @@ export default function Welcome() {
 
   const saved = useConnectionsStore((s) => s.saved)
   const addRemote = useConnectionsStore((s) => s.addRemote)
+  const updateRemote = useConnectionsStore((s) => s.updateRemote)
   const removeRemote = useConnectionsStore((s) => s.removeRemote)
   const testConnection = useConnectionsStore((s) => s.testConnection)
 
   const [view, setView] = useState<View>('main')
   const [showCreateFor, setShowCreateFor] = useState<null | 'new' | 'migrate'>(null)
+  // When set, the remote form opens in edit mode for this connection.
+  const [editing, setEditing] = useState<RemoteSshConnection | null>(null)
 
   if (!isTauri()) {
     return (
@@ -141,16 +144,21 @@ export default function Welcome() {
   if (view === 'remote-form') {
     return (
       <RemoteConnectionForm
+        initial={editing}
         onTest={testConnection}
         onSave={(label, alias, root, user) => {
           const c = addRemote(label, alias, root, user)
           return c
         }}
+        onUpdate={(id, patch) => updateRemote(id, patch)}
         onOpen={async (c) => {
           await openConnection(c.id)
           setView('main')
         }}
-        onCancel={() => setView('remote-picker')}
+        onCancel={() => {
+          setEditing(null)
+          setView('remote-picker')
+        }}
       />
     )
   }
@@ -191,6 +199,16 @@ export default function Welcome() {
                     Öffnen
                   </Button>
                   <button
+                    onClick={() => {
+                      setEditing(c)
+                      setView('remote-form')
+                    }}
+                    title="Verbindung bearbeiten"
+                    className="rounded px-1.5 py-1 text-[#7a8088] hover:bg-[#2a3038] hover:text-[#6ab7ff]"
+                  >
+                    ✎
+                  </button>
+                  <button
                     onClick={async () => {
                       if (await confirmDialog(`Verbindung „${c.label}" entfernen?`)) removeRemote(c.id)
                     }}
@@ -204,7 +222,7 @@ export default function Welcome() {
             </div>
           )}
           <div className="flex gap-2">
-            <Button primary onClick={() => setView('remote-form')}>
+            <Button primary onClick={() => { setEditing(null); setView('remote-form') }}>
               Neue Verbindung
             </Button>
             <Button onClick={() => setView('main')}>Zurück</Button>
@@ -259,20 +277,26 @@ export default function Welcome() {
 }
 
 function RemoteConnectionForm({
+  initial,
   onTest,
   onSave,
+  onUpdate,
   onOpen,
   onCancel,
 }: {
+  initial?: RemoteSshConnection | null
   onTest: (target: string) => Promise<SshTestResult>
   onSave: (label: string, alias: string, root: string, user?: string) => RemoteSshConnection
+  onUpdate: (id: string, patch: Partial<RemoteSshConnection>) => void
   onOpen: (c: RemoteSshConnection) => Promise<void>
   onCancel: () => void
 }) {
-  const [label, setLabel] = useState('')
-  const [alias, setAlias] = useState('')
-  const [user, setUser] = useState('')
-  const [root, setRoot] = useState('~/mlforge')
+  const editMode = !!initial
+  const [label, setLabel] = useState(initial?.label ?? '')
+  const [alias, setAlias] = useState(initial?.alias ?? '')
+  const [user, setUser] = useState(initial?.user ?? '')
+  const [root, setRoot] = useState(initial?.root ?? '~/mlforge')
+  const [python, setPython] = useState(initial?.python ?? '')
   const [testing, setTesting] = useState(false)
   const [busy, setBusy] = useState(false)
   const [testResult, setTestResult] = useState<SshTestResult | null>(null)
@@ -287,7 +311,7 @@ function RemoteConnectionForm({
 
   return (
     <FullScreen>
-      <Card title="Neue SSH-Verbindung">
+      <Card title={editMode ? 'SSH-Verbindung bearbeiten' : 'Neue SSH-Verbindung'}>
         <div className="space-y-3">
           <Field label="Label" hint="Wie soll das in der Liste auftauchen?">
             <input
@@ -343,6 +367,17 @@ function RemoteConnectionForm({
               }`}
             />
           </Field>
+          <Field
+            label="Python (optional)"
+            hint="Interpreter mit torch (+ pandas) für Trainings-Runs. Leer = <root>/.mlforge/venv/bin/python."
+          >
+            <input
+              value={python}
+              onChange={(e) => setPython(e.target.value)}
+              placeholder="~/mlforge/.mlforge/venv/bin/python"
+              className="w-full rounded border border-[#2a3038] bg-[#0e1115] px-2 py-1 text-sm text-[#e6e8eb] focus:border-[#6ab7ff] focus:outline-none"
+            />
+          </Field>
 
           {validAlias && (
             <div className="rounded bg-[#1a1e22] px-2 py-1 text-[10px] text-[#7a8088]">
@@ -381,24 +416,49 @@ function RemoteConnectionForm({
             >
               {testing ? 'Teste…' : 'Verbindung testen'}
             </Button>
-            <Button
-              primary
-              disabled={!validAlias || !validUser || !validRoot || busy || !label.trim()}
-              onClick={async () => {
-                setBusy(true)
-                setError(null)
-                try {
-                  const c = onSave(label.trim(), alias.trim(), root.trim(), user.trim() || undefined)
-                  await onOpen(c)
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : String(e))
-                } finally {
-                  setBusy(false)
-                }
-              }}
-            >
-              {busy ? 'Öffne…' : 'Anlegen & öffnen'}
-            </Button>
+            {editMode ? (
+              <Button
+                primary
+                disabled={!validAlias || !validUser || !validRoot || busy || !label.trim()}
+                onClick={() => {
+                  setError(null)
+                  try {
+                    onUpdate(initial!.id, {
+                      label: label.trim(),
+                      alias: alias.trim(),
+                      user: user.trim() || undefined,
+                      root: root.trim(),
+                      python: python.trim() || undefined,
+                    })
+                    onCancel()
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e))
+                  }
+                }}
+              >
+                Speichern
+              </Button>
+            ) : (
+              <Button
+                primary
+                disabled={!validAlias || !validUser || !validRoot || busy || !label.trim()}
+                onClick={async () => {
+                  setBusy(true)
+                  setError(null)
+                  try {
+                    const c = onSave(label.trim(), alias.trim(), root.trim(), user.trim() || undefined)
+                    if (python.trim()) onUpdate(c.id, { python: python.trim() })
+                    await onOpen(c)
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e))
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+              >
+                {busy ? 'Öffne…' : 'Anlegen & öffnen'}
+              </Button>
+            )}
             <Button onClick={onCancel} disabled={busy}>Abbrechen</Button>
           </div>
         </div>

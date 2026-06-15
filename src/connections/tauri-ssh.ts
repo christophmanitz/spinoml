@@ -4,7 +4,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import type { ProjectMeta, NoteEntry, DatasetEntry, FsEntry } from '../workspace/tauri-fs'
-import type { RunSummary, RunStatus, RemoteTrainingCapabilities } from '../training/types'
+import type { RunSummary, RunStatus, RemoteTrainingCapabilities, GpuStat } from '../training/types'
 
 export type SshTestResult = {
   ok: boolean
@@ -106,4 +106,10 @@ export const tauriSsh = {
 
   remoteTrainingCapabilities: (alias: string, root: string) =>
     invoke<RemoteTrainingCapabilities>('ssh_remote_training_capabilities', { alias, root }),
+
+  promoteCheckpoint: (alias: string, root: string, runId: string, destName: string) =>
+    invoke<string>('ssh_promote_checkpoint', { alias, root, runId, destName }),
+
+  gpuStats: (alias: string, root: string) =>
+    invoke<GpuStat[]>('ssh_gpu_stats', { alias, root }),
 }

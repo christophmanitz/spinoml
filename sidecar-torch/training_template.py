@@ -39,6 +39,9 @@ EVENTS = RUN_DIR / "events.jsonl"
 STATUS = RUN_DIR / "status"
 METRICS = RUN_DIR / "metrics.json"
 CKPT_DIR = RUN_DIR / "checkpoints"
+# run dir is <workspace>/experiments/runs/<run_id> → workspace root is 3 up.
+# Used to resolve workspace-relative resume_from paths.
+WORKSPACE_ROOT = RUN_DIR.parents[2] if len(RUN_DIR.parents) >= 3 else RUN_DIR
 
 
 def _now() -> str:
@@ -239,6 +242,44 @@ def parse_callbacks(callbacks: list[dict]) -> dict:
     return out
 
 
+def sample_predictions(task: str, out, y, classes, k: int = 12) -> list[dict]:
+    """A handful of evenly-spaced val predictions vs. ground truth, for the
+    Run-Detail "Vorhersagen" tab. Pure torch, bounded size."""
+    import torch
+
+    n = int(out.shape[0])
+    if n == 0:
+        return []
+    k = min(k, n)
+    idx = torch.linspace(0, n - 1, k).round().long()
+    out_s = out[idx]
+    y_s = y[idx]
+    rows: list[dict] = []
+    if task == "regression":
+        pred = out_s.float().view(-1)
+        tgt = y_s.float().view(-1)
+        for i in range(k):
+            rows.append({"pred": round(float(pred[i]), 4), "truth": round(float(tgt[i]), 4)})
+        return rows
+    if task == "binary":
+        prob = torch.sigmoid(out_s.view(-1))
+        pred = (prob > 0.5).long()
+        conf = torch.where(pred.bool(), prob, 1.0 - prob)
+    else:
+        probs = torch.softmax(out_s.float(), dim=-1)
+        conf, pred = probs.max(dim=-1)
+    tgt = y_s.long().view(-1)
+    for i in range(k):
+        pi = int(pred[i]); ti = int(tgt[i])
+        rows.append({
+            "pred": classes[pi] if classes and pi < len(classes) else pi,
+            "truth": classes[ti] if classes and ti < len(classes) else ti,
+            "conf": round(float(conf[i]), 4),
+            "correct": pi == ti,
+        })
+    return rows
+
+
 def main() -> None:
     set_status("running")
     t0 = time.time()
@@ -345,9 +386,32 @@ def main() -> None:
 
     CKPT_DIR.mkdir(exist_ok=True)
     best_val = float("inf")
+    start_epoch = 0
+
+    # ── resume from a prior checkpoint (Phase 17) ──
+    resume_from = cfg.get("resume_from") or train_cfg.get("resume_from")
+    if resume_from:
+        try:
+            rp = Path(os.path.expanduser(str(resume_from)))
+            if not rp.is_absolute():
+                rp = WORKSPACE_ROOT / str(resume_from)
+            ckpt = torch.load(rp, map_location="cpu", weights_only=False)
+            model.load_state_dict(ckpt["model_state"])
+            if "optim_state" in ckpt:
+                optimizer.load_state_dict(ckpt["optim_state"])
+            if scheduler is not None and ckpt.get("sched_state") is not None:
+                scheduler.load_state_dict(ckpt["sched_state"])
+            best_val = float(ckpt.get("best_val", best_val))
+            start_epoch = int(ckpt.get("epoch", -1)) + 1
+            emit("run.resumed", source=str(resume_from), start_epoch=start_epoch,
+                 prev_val_loss=ckpt.get("val_loss"))
+        except Exception as e:  # noqa: BLE001
+            fail("resume", f"cannot resume from {resume_from!r}: {e}", traceback.format_exc())
+
+    end_epoch = start_epoch + epochs
 
     try:
-        for epoch in range(epochs):
+        for epoch in range(start_epoch, end_epoch):
             if STATUS.read_text().strip() == "cancelled":
                 emit("run.cancelled", epoch=epoch)
                 METRICS.write_text(json.dumps({"status": "cancelled", "epoch": epoch}, indent=2))
@@ -378,6 +442,7 @@ def main() -> None:
             val_loss = None
             val_acc = None
             extra: dict = {}
+            val_cat = None
             if val_loader is not None:
                 model.eval()
                 vrun = 0.0
@@ -401,9 +466,11 @@ def main() -> None:
                 val_loss = vrun / max(1, vseen)
                 if task in ("classification", "binary"):
                     val_acc = correct / max(1, vseen)
-                if outs and metric_kinds:
-                    extra = {k: round(v, 6) for k, v in
-                             compute_metrics(task, torch.cat(outs), torch.cat(ys), metric_kinds).items()}
+                if outs:
+                    val_cat = (torch.cat(outs), torch.cat(ys))
+                    if metric_kinds:
+                        extra = {k: round(v, 6) for k, v in
+                                 compute_metrics(task, val_cat[0], val_cat[1], metric_kinds).items()}
 
             monitor = val_loss if val_loss is not None else train_loss
             if scheduler is not None:
@@ -422,10 +489,16 @@ def main() -> None:
             if monitor < best_val:
                 best_val = monitor
                 torch.save({"epoch": epoch, "model_state": model.state_dict(),
+                            "optim_state": optimizer.state_dict(),
+                            "sched_state": scheduler.state_dict() if scheduler is not None else None,
+                            "best_val": best_val,
                             "val_loss": val_loss, "classes": classes},
                            CKPT_DIR / "best.pt")
                 emit("checkpoint", epoch=epoch, path="checkpoints/best.pt",
                      val_loss=None if val_loss is None else round(val_loss, 6), is_best=True)
+                if val_cat is not None:
+                    emit("sample.preds", epoch=epoch,
+                         rows=sample_predictions(task, val_cat[0], val_cat[1], classes))
 
             # ── early stopping ──
             if early is not None:
@@ -441,7 +514,10 @@ def main() -> None:
                             emit("run.earlystop", epoch=epoch, monitor=early["monitor"], best=round(es_best, 6))
                             break
 
-        torch.save({"epoch": epochs - 1, "model_state": model.state_dict(), "classes": classes},
+        torch.save({"epoch": end_epoch - 1, "model_state": model.state_dict(),
+                    "optim_state": optimizer.state_dict(),
+                    "sched_state": scheduler.state_dict() if scheduler is not None else None,
+                    "best_val": best_val, "classes": classes},
                    CKPT_DIR / "last.pt")
     except Exception as e:  # noqa: BLE001
         fail("train", str(e), traceback.format_exc())

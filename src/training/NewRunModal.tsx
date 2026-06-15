@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { fs, datasets as datasetsBackend } from '../connections/backend'
 import { useDatasetsStore } from '../datasets/store'
-import { useConnectionsStore, remotePython } from '../connections/store'
+import { useConnectionsStore, remotePython, sshTarget, type RemoteSshConnection } from '../connections/store'
 import { useTrainingStore } from './store'
 import { training } from './backend'
 import {
@@ -96,6 +96,9 @@ export default function NewRunModal() {
   const [cfg, setCfg] = useState<TrainingConfig>(defaultTrainingConfig())
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Phase 17 — resume: prior runs that have a checkpoints/best.pt to continue from.
+  const [resumable, setResumable] = useState<{ run_id: string; run_label: string }[]>([])
+  const [resumeId, setResumeId] = useState('')
 
   // dataset columns come from the datasets-store inspect cache
   const inspect = useDatasetsStore((s) => (datasetRelpath ? s.inspects[datasetRelpath] : undefined))
@@ -120,6 +123,9 @@ export default function NewRunModal() {
         await useDatasetsStore.getState().refresh()
         const ds = useDatasetsStore.getState().entries
         setDsList(ds.map((d) => ({ relpath: d.relpath, name: d.name, is_dir: d.is_dir })))
+        // Runs that have a best.pt → eligible as a resume source.
+        const runs = await training.list()
+        setResumable(runs.filter((r) => r.has_checkpoint).map((r) => ({ run_id: r.run_id, run_label: r.run_label })))
       } catch (e) {
         setListErr(e instanceof Error ? e.message : String(e))
       }
@@ -138,11 +144,15 @@ export default function NewRunModal() {
   // SLURM where it exists and can prefill the partition.
   useEffect(() => {
     let cancelled = false
+    setCaps(null)
     void training.capabilities().then((c) => {
       if (cancelled) return
       setCaps(c)
+      // No SLURM on this host (or it's not a cluster) → force direct backend so a
+      // stale 'slurm' choice from a previous connection can't leak across hosts.
+      if (!c.has_slurm) setBackendKind('local')
       setSlurm((prev) => (prev.partition || !c.partitions.length ? prev : { ...prev, partition: c.partitions[0] }))
-    }).catch(() => { if (!cancelled) setCaps(null) })
+    }).catch(() => { if (!cancelled) { setCaps(null); setBackendKind('local') } })
     return () => { cancelled = true }
   }, [currentId])
 
@@ -179,6 +189,7 @@ export default function NewRunModal() {
         targetColumn,
         featureColumns: null, // null = all numeric cols except target
         backend,
+        ...(resumeId ? { resumeFrom: `experiments/runs/${resumeId}/checkpoints/best.pt` } : {}),
       }
       if (axes.length === 0) {
         await startRun({ ...base, label: effectiveLabel || 'run', training: cfg })
@@ -276,104 +287,105 @@ export default function NewRunModal() {
             <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={effectiveLabel || 'run'} className={SELECT} />
           </Field>
 
+          {resumable.length > 0 && (
+            <Field label="Fortsetzen ab Checkpoint (optional)">
+              <select value={resumeId} onChange={(e) => setResumeId(e.target.value)} className={SELECT}>
+                <option value="">— von vorn trainieren —</option>
+                {resumable.map((r) => <option key={r.run_id} value={r.run_id}>{r.run_label || r.run_id}</option>)}
+              </select>
+              <Hint>Lädt Gewichte + Optimizer aus <code>best.pt</code> des gewählten Runs und trainiert „Epochs" weitere Epochen. Modell-Architektur muss passen.</Hint>
+            </Field>
+          )}
+
           <div className="space-y-2 rounded border border-[#1f2429] bg-[#0a0d10] p-3">
-            <div className="flex items-center">
-              <span className="text-[11px] text-[#9aa1a8]">Sweep (optional)</span>
-              {sweepCount > 1 && (
-                <span className={`ml-auto text-[10px] ${sweepCount > 64 ? 'text-[#ff7a85]' : 'text-[#6ab7ff]'}`}>
-                  {sweepCount} Runs{sweepCount > 64 ? ' — zu viele (max 64)' : ''}
-                </span>
-              )}
+            <div className="flex items-baseline gap-2">
+              <span className="text-[11px] font-medium text-[#cfd3d8]">Hyperparameter-Tuning</span>
+              <span className="text-[10px] text-[#7a8088]">(Grid Search, optional)</span>
             </div>
-            {sweeps.map((s, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <select
-                  value={s.key}
-                  onChange={(e) => setSweeps(sweeps.map((x, j) => j === i ? { ...x, key: e.target.value as SweepKey } : x))}
-                  className={`${SELECT} w-36 shrink-0`}
-                >
-                  {SWEEP_FIELDS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
-                </select>
-                <input
-                  value={s.raw}
-                  onChange={(e) => setSweeps(sweeps.map((x, j) => j === i ? { ...x, raw: e.target.value } : x))}
-                  placeholder="z.B. 0.01, 0.001, 0.0001"
-                  className={`${SELECT} flex-1 font-mono`}
-                />
-                <button onClick={() => setSweeps(sweeps.filter((_, j) => j !== i))} className="rounded px-1.5 py-0.5 text-[11px] text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#ff7a85]">×</button>
-              </div>
-            ))}
+            <p className="text-[10px] leading-snug text-[#7a8088]">
+              Mehrere Werte je Parameter durchprobieren statt einen festen. MLForge startet
+              <strong className="text-[#9aa1a8]"> einen Run pro Kombination</strong> aller Parameter (Gitter) — danach im
+              Vergleich gegenüberstellbar. Diese Werte überschreiben die Einzelwerte oben.
+            </p>
+
+            {sweeps.map((s, i) => {
+              const n = parseValues(s.raw).length
+              return (
+                <div key={i} className="space-y-1.5 rounded border border-[#1f2429] bg-[#0b0e11] p-2">
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={s.key}
+                      onChange={(e) => setSweeps(sweeps.map((x, j) => j === i ? { ...x, key: e.target.value as SweepKey } : x))}
+                      className={SELECT}
+                    >
+                      {SWEEP_FIELDS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+                    </select>
+                    <span className={`shrink-0 text-[10px] ${n > 0 ? 'text-[#6ab7ff]' : 'text-[#5a6068]'}`}>
+                      {n > 0 ? `${n} Werte` : 'keine Werte'}
+                    </span>
+                    <button onClick={() => setSweeps(sweeps.filter((_, j) => j !== i))} className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#ff7a85]">×</button>
+                  </div>
+                  <label className="block">
+                    <span className="mb-1 block text-[10px] text-[#7a8088]">zu testende Werte (komma-getrennt)</span>
+                    <input
+                      value={s.raw}
+                      onChange={(e) => setSweeps(sweeps.map((x, j) => j === i ? { ...x, raw: e.target.value } : x))}
+                      placeholder="z. B. 0.01, 0.001, 0.0001"
+                      className={`${SELECT} font-mono`}
+                    />
+                  </label>
+                </div>
+              )
+            })}
+
             <button
               onClick={() => setSweeps([...sweeps, { key: nextSweepKey(sweeps), raw: '' }])}
               disabled={sweeps.length >= SWEEP_FIELDS.length}
               className="rounded border border-[#1f2429] px-2 py-0.5 text-[10px] text-[#9aa1a8] hover:border-[#3a4148] hover:text-[#e6e8eb] disabled:opacity-40"
             >
-              + Sweep-Achse
+              + Parameter hinzufügen
             </button>
-            {sweeps.length > 0 && <Hint>Komma-getrennte Werte je Achse. Gitter = ein Run pro Kombination; überschreibt die Einzelwerte oben.</Hint>}
+
+            {axes.length === 0 && (
+              <p className="text-[10px] text-[#5a6068]">
+                Leer = ein einzelner Run mit den Werten oben. Es werden keine Werte automatisch gewählt.
+              </p>
+            )}
+
+            {/* Live grid preview — count breakdown + first combos as chips. */}
+            {axes.length > 0 && (
+              <div className="space-y-1.5 rounded border border-[#1f2429] bg-[#0b0e11] p-2">
+                <div className="flex items-baseline gap-2 text-[10px]">
+                  <span className="font-mono text-[#9aa1a8]">
+                    {axes.map((a) => `${a.values.length} ${SWEEP_FIELDS.find((f) => f.key === a.key)!.label}`).join('  ×  ')}
+                  </span>
+                  <span className={`ml-auto font-medium ${sweepCount > 64 ? 'text-[#ff7a85]' : 'text-[#6ab7ff]'}`}>
+                    = {sweepCount} Run{sweepCount === 1 ? '' : 's'}{sweepCount > 64 ? ' · zu viele (max 64)' : ''}
+                  </span>
+                </div>
+                {sweepCount <= 64 && (
+                  <div className="flex flex-wrap gap-1">
+                    {combos.slice(0, 10).map((c, i) => (
+                      <span key={i} className="rounded bg-[#14181c] px-1.5 py-0.5 font-mono text-[9px] text-[#7a8088]">
+                        {comboLabel(c)}
+                      </span>
+                    ))}
+                    {combos.length > 10 && <span className="px-1 py-0.5 text-[9px] text-[#5a6068]">+{combos.length - 10} weitere</span>}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
-          {caps?.has_slurm && (
-            <div className="space-y-3 rounded border border-[#1f2429] bg-[#0a0d10] p-3">
-              <Field label="Backend">
-                <select value={backendKind} onChange={(e) => setBackendKind(e.target.value as 'local' | 'slurm')} className={SELECT}>
-                  <option value="local">Direkt (ssh, nohup setsid)</option>
-                  <option value="slurm">SLURM (sbatch)</option>
-                </select>
-                {caps.gpu_names.length > 0 && <Hint>GPUs erkannt: {caps.gpu_names.slice(0, 4).join(', ')}</Hint>}
-              </Field>
-
-              {backendKind === 'slurm' && (
-                <>
-                  <div className="grid grid-cols-3 gap-3">
-                    <Field label="Partition">
-                      {caps.partitions.length ? (
-                        <select value={slurm.partition} onChange={(e) => setSlurm({ ...slurm, partition: e.target.value })} className={SELECT}>
-                          <option value="">— wählen —</option>
-                          {caps.partitions.map((p) => <option key={p} value={p}>{p}</option>)}
-                        </select>
-                      ) : (
-                        <input value={slurm.partition} onChange={(e) => setSlurm({ ...slurm, partition: e.target.value })} className={SELECT} />
-                      )}
-                    </Field>
-                    <Field label="Time (HH:MM:SS)">
-                      <input value={slurm.time} onChange={(e) => setSlurm({ ...slurm, time: e.target.value })} className={SELECT} />
-                    </Field>
-                    <Field label="Memory">
-                      <input value={slurm.mem} onChange={(e) => setSlurm({ ...slurm, mem: e.target.value })} className={SELECT} />
-                    </Field>
-                  </div>
-                  <div className="grid grid-cols-3 gap-3">
-                    <NumField label="CPUs/task" value={slurm.cpus_per_task} onChange={(v) => setSlurm({ ...slurm, cpus_per_task: v })} />
-                    <Field label="GRES (z.B. gpu:1)">
-                      <input value={slurm.gres ?? ''} onChange={(e) => setSlurm({ ...slurm, gres: e.target.value })} className={SELECT} />
-                    </Field>
-                    <Field label="Account">
-                      <input value={slurm.account ?? ''} onChange={(e) => setSlurm({ ...slurm, account: e.target.value })} className={SELECT} />
-                    </Field>
-                  </div>
-                  <Field label="module load (eine pro Zeile)">
-                    <textarea
-                      value={slurm.modules.join('\n')}
-                      onChange={(e) => setSlurm({ ...slurm, modules: e.target.value.split('\n').map((l) => l.trim()).filter(Boolean) })}
-                      rows={2}
-                      placeholder={'Python/3.11.5\nCUDA/12.4.0'}
-                      className={`${SELECT} font-mono`}
-                    />
-                  </Field>
-                  <Field label="Pre-Run-Script (bash, optional)">
-                    <textarea
-                      value={slurm.pre_run_script ?? ''}
-                      onChange={(e) => setSlurm({ ...slurm, pre_run_script: e.target.value })}
-                      rows={2}
-                      placeholder={'export OMP_NUM_THREADS=8'}
-                      className={`${SELECT} font-mono`}
-                    />
-                  </Field>
-                  <Hint>Python: <code className="text-[#9aa1a8]">{remoteConn ? remotePython(remoteConn) : 'python'}</code> — im Runs-Tab editierbar. Muss torch (+pandas) haben (Sidecar-venv passt; sonst via module load).</Hint>
-                </>
-              )}
-            </div>
+          {remoteConn && (
+            <BackendSection
+              conn={remoteConn}
+              caps={caps}
+              backendKind={backendKind}
+              setBackendKind={setBackendKind}
+              slurm={slurm}
+              setSlurm={setSlurm}
+            />
           )}
 
           {error && <div className="text-[#ff7a85]">{error}</div>}
@@ -390,6 +402,180 @@ export default function NewRunModal() {
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── Backend section: explains WHERE the run executes and WHERE its files live,
+// adapting to whether the host is a SLURM cluster, a plain SSH box, or still
+// being probed. Partitions are always whatever THIS host's `sinfo` reported —
+// never a hardcoded list (cluster naming differs everywhere).
+function BackendSection({
+  conn, caps, backendKind, setBackendKind, slurm, setSlurm,
+}: {
+  conn: RemoteSshConnection
+  caps: RemoteTrainingCapabilities | null
+  backendKind: 'local' | 'slurm'
+  setBackendKind: (k: 'local' | 'slurm') => void
+  slurm: SlurmConfig
+  setSlurm: (s: SlurmConfig) => void
+}) {
+  const host = sshTarget(conn)
+  const root = conn.root.replace(/\/+$/, '')
+  const runDir = `${root}/experiments/runs/<id>/`
+  const python = remotePython(conn)
+  const gpus = caps?.gpu_names ?? []
+
+  return (
+    <div className="space-y-3 rounded border border-[#1f2429] bg-[#0a0d10] p-3">
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-medium text-[#cfd3d8]">Wo läuft das Training?</span>
+        <span className="rounded bg-[#14181c] px-1.5 py-0.5 font-mono text-[10px] text-[#7a8088]">{host}</span>
+      </div>
+
+      {caps === null ? (
+        <div className="text-[11px] text-[#7a8088]">Prüfe Fähigkeiten von <code className="text-[#9aa1a8]">{host}</code> (sbatch? GPUs?)…</div>
+      ) : !caps.has_slurm ? (
+        // Plain SSH host — no scheduler. Be explicit that this isn't a cluster.
+        <div className="space-y-2">
+          <div className="rounded border border-[#1f2429] bg-[#0b0e11] px-2 py-1.5 text-[11px] text-[#9aa1a8]">
+            Kein SLURM auf diesem Host (kein <code>sbatch</code>) — also <strong className="text-[#cfd3d8]">kein HPC-Cluster</strong>.
+            Das Training läuft direkt als losgelöster Hintergrund-Prozess (<code>nohup setsid</code>) auf <code className="text-[#9aa1a8]">{host}</code>
+            und überlebt das Schließen von MLForge.
+          </div>
+          <FlowDiagram steps={directSteps(host, runDir, python)} />
+          {gpus.length > 0 && <Hint>GPU am Host: {gpus.slice(0, 4).join(', ')} — wird automatisch genutzt, wenn torch CUDA sieht.</Hint>}
+        </div>
+      ) : (
+        // SLURM cluster — let the user choose direct vs. batch, with a flow for each.
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            <BackendCard
+              active={backendKind === 'local'}
+              onClick={() => setBackendKind('local')}
+              title="Direkt"
+              desc="Prozess auf dem Login-Knoten. Sofort, aber teilt sich die Login-Ressourcen."
+            />
+            <BackendCard
+              active={backendKind === 'slurm'}
+              onClick={() => setBackendKind('slurm')}
+              title="SLURM-Job"
+              desc="In die Queue (sbatch). Läuft auf einem Compute-Knoten mit eigenen Ressourcen."
+            />
+          </div>
+
+          {backendKind === 'local' ? (
+            <FlowDiagram steps={directSteps(host, runDir, python)} />
+          ) : (
+            <>
+              <FlowDiagram steps={slurmSteps(host, runDir, slurm.partition || '<partition>')} />
+
+              <div className="grid grid-cols-3 gap-3">
+                <Field label={`Partition${caps.partitions.length ? ` (${caps.partitions.length} erkannt)` : ''}`}>
+                  {caps.partitions.length ? (
+                    <select value={slurm.partition} onChange={(e) => setSlurm({ ...slurm, partition: e.target.value })} className={SELECT}>
+                      <option value="">— wählen —</option>
+                      {caps.partitions.map((p) => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                  ) : (
+                    <input value={slurm.partition} onChange={(e) => setSlurm({ ...slurm, partition: e.target.value })} placeholder="sinfo lieferte nichts — manuell" className={SELECT} />
+                  )}
+                </Field>
+                <Field label="Time (HH:MM:SS)">
+                  <input value={slurm.time} onChange={(e) => setSlurm({ ...slurm, time: e.target.value })} className={SELECT} />
+                </Field>
+                <Field label="Memory">
+                  <input value={slurm.mem} onChange={(e) => setSlurm({ ...slurm, mem: e.target.value })} className={SELECT} />
+                </Field>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <NumField label="CPUs/task" value={slurm.cpus_per_task} onChange={(v) => setSlurm({ ...slurm, cpus_per_task: v })} />
+                <Field label="GRES (optional)">
+                  <input value={slurm.gres ?? ''} onChange={(e) => setSlurm({ ...slurm, gres: e.target.value })} placeholder="gpu:1" className={SELECT} />
+                </Field>
+                <Field label="Account (optional)">
+                  <input value={slurm.account ?? ''} onChange={(e) => setSlurm({ ...slurm, account: e.target.value })} className={SELECT} />
+                </Field>
+              </div>
+              <Hint>
+                GRES-Format ist clusterabhängig (z. B. <code>gpu:&lt;typ&gt;:&lt;n&gt;</code>) — nur für GPU-Partitionen nötig, sonst leer lassen.
+                {gpus.length > 0 && <> Am Host gesehen: {gpus.slice(0, 4).join(', ')}.</>}
+              </Hint>
+              <Field label="module load (eine pro Zeile)">
+                <textarea
+                  value={slurm.modules.join('\n')}
+                  onChange={(e) => setSlurm({ ...slurm, modules: e.target.value.split('\n').map((l) => l.trim()).filter(Boolean) })}
+                  rows={2}
+                  placeholder={'CUDA/12.4.0'}
+                  className={`${SELECT} font-mono`}
+                />
+              </Field>
+              <Field label="Pre-Run-Script (bash, optional)">
+                <textarea
+                  value={slurm.pre_run_script ?? ''}
+                  onChange={(e) => setSlurm({ ...slurm, pre_run_script: e.target.value })}
+                  rows={2}
+                  placeholder={'export OMP_NUM_THREADS=8'}
+                  className={`${SELECT} font-mono`}
+                />
+              </Field>
+            </>
+          )}
+          <Hint>Python: <code className="text-[#9aa1a8]">{python}</code> — pro Verbindung editierbar (Stift in der Verbindungsliste). Muss torch (+pandas) haben.</Hint>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function BackendCard({ active, onClick, title, desc }: { active: boolean; onClick: () => void; title: string; desc: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded border px-2.5 py-2 text-left transition-colors ${active ? 'border-[#6ab7ff] bg-[#13344f]/40' : 'border-[#1f2429] bg-[#0b0e11] hover:border-[#3a4148]'}`}
+    >
+      <div className="flex items-center gap-1.5">
+        <span className={`inline-block h-2 w-2 rounded-full ${active ? 'bg-[#6ab7ff]' : 'bg-[#3a4148]'}`} />
+        <span className={`text-[12px] font-medium ${active ? 'text-[#e6e8eb]' : 'text-[#cfd3d8]'}`}>{title}</span>
+      </div>
+      <div className="mt-1 text-[10px] leading-snug text-[#7a8088]">{desc}</div>
+    </button>
+  )
+}
+
+type FlowStep = { tag: string; title: string; lines: string[] }
+
+function directSteps(host: string, runDir: string, python: string): FlowStep[] {
+  return [
+    { tag: 'lokal', title: 'Dein Rechner', lines: ['model.py + run.json', 'aus dem Graph generiert'] },
+    { tag: host, title: 'Host (Prozess)', lines: [runDir, `${python.split('/').pop()} -u train.py`, 'nohup setsid'] },
+    { tag: 'live', title: 'Ergebnis', lines: ['events.jsonl', 'best.pt · stdout/err', '→ Live-Status hier'] },
+  ]
+}
+
+function slurmSteps(host: string, runDir: string, partition: string): FlowStep[] {
+  return [
+    { tag: 'lokal', title: 'Dein Rechner', lines: ['model.py + run.json', 'aus dem Graph generiert'] },
+    { tag: host, title: 'Login-Knoten', lines: [runDir, 'train.sbatch', 'sbatch → Queue'] },
+    { tag: partition, title: 'Compute-Knoten', lines: ['Job in der Partition', 'events.jsonl · best.pt', '→ Live-Status hier'] },
+  ]
+}
+
+function FlowDiagram({ steps }: { steps: FlowStep[] }) {
+  return (
+    <div className="flex items-stretch gap-1 overflow-x-auto">
+      {steps.map((s, i) => (
+        <div key={i} className="flex items-stretch gap-1">
+          <div className="min-w-[120px] flex-1 rounded border border-[#1f2429] bg-[#0b0e11] px-2 py-1.5">
+            <div className="mb-1 truncate font-mono text-[9px] uppercase tracking-wide text-[#6ab7ff]">{s.tag}</div>
+            <div className="text-[10px] font-medium text-[#cfd3d8]">{s.title}</div>
+            {s.lines.map((l, j) => (
+              <div key={j} className="truncate font-mono text-[9px] text-[#7a8088]" title={l}>{l}</div>
+            ))}
+          </div>
+          {i < steps.length - 1 && <div className="flex items-center px-0.5 text-[#3a4148]">→</div>}
+        </div>
+      ))}
     </div>
   )
 }

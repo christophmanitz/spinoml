@@ -281,6 +281,14 @@ function Row({
     if (!isFile) return
     const lower = entry.name.toLowerCase()
     if (lower.endsWith('.mlforge')) { open(id); return }
+    // .mltrain: load the training graph onto the training canvas + switch mode.
+    if (lower.endsWith('.mltrain')) {
+      void import('../training/graph/files').then(({ loadTrainingGraph }) => loadTrainingGraph(id))
+        .then(() => import('../training/graph/viewMode'))
+        .then(({ useViewModeStore }) => useViewModeStore.getState().setMode('training'))
+        .catch(() => { /* malformed / not on disk */ })
+      return
+    }
     // datasets/: hand off to the dataset modal instead of trying to parse.
     if (id.startsWith('datasets/')) {
       const datasetRel = 'datasets/' + id.slice('datasets/'.length).split('/')[0]

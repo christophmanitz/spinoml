@@ -111,6 +111,14 @@ function CompilePanel({ compile }: { compile: ReturnType<typeof compileTrainingG
           </ul>
         </div>
       )}
+      {compile.warnings.length > 0 && (
+        <div className="space-y-0.5">
+          <span className="text-[#c98b3a]">⚠ Verdrahtung prüfen:</span>
+          <ul className="ml-3 list-disc text-[#9aa1a8]">
+            {compile.warnings.map((m, i) => <li key={i}>{m}</li>)}
+          </ul>
+        </div>
+      )}
       <button
         onClick={() => void launch()}
         disabled={!compile.ok || busy}

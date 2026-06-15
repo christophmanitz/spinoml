@@ -77,6 +77,7 @@ pub struct RunSummary {
     epochs: u32,
     best_val_loss: Option<f64>,
     alive: bool,
+    has_checkpoint: bool,
 }
 
 /// Reconcile a raw status string against process liveness. A "running" status
@@ -101,6 +102,7 @@ impl RunSummary {
         metrics_json: &str,
         status_raw: &str,
         alive: bool,
+        has_checkpoint: bool,
     ) -> RunSummary {
         let cfg: Value = serde_json::from_str(run_json).unwrap_or(Value::Null);
         let metrics: Value = serde_json::from_str(metrics_json).unwrap_or(Value::Null);
@@ -124,8 +126,64 @@ impl RunSummary {
                 .unwrap_or(0) as u32,
             best_val_loss: metrics.get("best_val_loss").and_then(|x| x.as_f64()),
             alive,
+            has_checkpoint,
         }
     }
+}
+
+#[derive(Serialize)]
+pub struct GpuStat {
+    index: u32,
+    name: String,
+    util_pct: f64,
+    mem_used_mb: f64,
+    mem_total_mb: f64,
+    temp_c: f64,
+}
+
+/// The nvidia-smi query line used by both the local and ssh hardware probes.
+pub(crate) const NVIDIA_SMI_QUERY: &str =
+    "nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits";
+
+/// Parse the CSV rows from NVIDIA_SMI_QUERY into GpuStat. Tolerant of the odd
+/// "[Not Supported]" cell (→ 0). Shared by local + ssh so one parser covers both.
+pub(crate) fn parse_gpu_stats(out: &str) -> Vec<GpuStat> {
+    let num = |s: &str| s.trim().parse::<f64>().unwrap_or(0.0);
+    out.lines()
+        .filter_map(|line| {
+            let cols: Vec<&str> = line.split(',').map(|c| c.trim()).collect();
+            if cols.len() < 6 {
+                return None;
+            }
+            Some(GpuStat {
+                index: cols[0].parse::<u32>().unwrap_or(0),
+                name: cols[1].to_string(),
+                util_pct: num(cols[2]),
+                mem_used_mb: num(cols[3]),
+                mem_total_mb: num(cols[4]),
+                temp_c: num(cols[5]),
+            })
+        })
+        .collect()
+}
+
+/// Local GPU snapshot (empty if no nvidia-smi). The Run-Detail hardware strip
+/// polls this every few seconds while its tab is open. Async + spawn_blocking so
+/// the nvidia-smi subprocess never runs on the GTK main thread (a sync command
+/// would, and a slow nvidia-smi would then freeze the GUI — the Phase-12/16
+/// lesson).
+#[tauri::command]
+pub async fn gpu_stats() -> Result<Vec<GpuStat>, String> {
+    let out = tokio::task::spawn_blocking(|| {
+        Command::new("sh")
+            .arg("-c")
+            .arg(format!("{NVIDIA_SMI_QUERY} 2>/dev/null || true"))
+            .output()
+    })
+    .await
+    .map_err(|e| format!("join: {e}"))?
+    .map_err(|e| format!("nvidia-smi: {e}"))?;
+    Ok(parse_gpu_stats(&String::from_utf8_lossy(&out.stdout)))
 }
 
 fn pid_of(dir: &Path) -> Option<i32> {
@@ -157,7 +215,8 @@ fn summarize(dir: &Path, run_id: &str) -> RunSummary {
     let metrics_json = fs::read_to_string(dir.join("metrics.json")).unwrap_or_default();
     let status_raw = fs::read_to_string(dir.join("status")).unwrap_or_default();
     let alive = pid_of(dir).map(is_alive).unwrap_or(false);
-    RunSummary::from_parts(run_id, &run_json, &metrics_json, &status_raw, alive)
+    let has_checkpoint = dir.join("checkpoints").join("best.pt").exists();
+    RunSummary::from_parts(run_id, &run_json, &metrics_json, &status_raw, alive, has_checkpoint)
 }
 
 #[tauri::command]
@@ -198,6 +257,54 @@ impl RunStatus {
             alive,
             pid,
         }
+    }
+
+    /// Build from an already-reconciled status (e.g. the SLURM-aware path).
+    pub(crate) fn new_with_status(status: String, alive: bool, pid: Option<i32>) -> RunStatus {
+        RunStatus { status, alive, pid }
+    }
+}
+
+/// Refine a SLURM run's status using the scheduler's own accounting. The trainer
+/// writes the status file cooperatively, but a job the scheduler kills (TIMEOUT,
+/// OUT_OF_MEMORY, node failure, `scancel`) never gets to write a terminal word —
+/// it's SIGKILLed. `sacct` then tells us *why* it ended. `squeue_state` is the
+/// live `%T` while the job is still in the queue (PENDING/RUNNING/…); when it has
+/// left the queue we fall back to `sacct_state`. Either may be empty.
+pub(crate) fn reconcile_slurm_status(
+    status_raw: &str,
+    squeue_state: &str,
+    sacct_state: &str,
+) -> String {
+    let file = status_raw.trim();
+    // Still queued/running on the cluster → trust the live scheduler state.
+    let q = squeue_state.trim().to_ascii_uppercase();
+    if !q.is_empty() {
+        return match q.as_str() {
+            "PENDING" | "CONFIGURING" => "queued".to_string(),
+            // Running on a node: prefer the trainer's own word if it has already
+            // moved past "queued" (e.g. it self-reported "running"), else running.
+            _ => {
+                if file == "done" || file == "failed" || file == "cancelled" {
+                    file.to_string()
+                } else {
+                    "running".to_string()
+                }
+            }
+        };
+    }
+    // Out of the queue: the trainer's terminal word wins if it wrote one.
+    if file == "done" || file == "failed" || file == "cancelled" {
+        return file.to_string();
+    }
+    // Otherwise map sacct's terminal state (strip "CANCELLED by 123" suffix).
+    let a = sacct_state.trim().split_whitespace().next().unwrap_or("").to_ascii_uppercase();
+    match a.as_str() {
+        "COMPLETED" => "done".to_string(),
+        "CANCELLED" => "cancelled".to_string(),
+        "" => reconcile_status(status_raw, false),
+        // FAILED, TIMEOUT, OUT_OF_MEMORY, NODE_FAIL, BOOT_FAIL, DEADLINE, …
+        _ => "failed".to_string(),
     }
 }
 
@@ -317,6 +424,44 @@ pub fn stop_training_run(state: State<WorkspaceState>, run_id: String) -> Result
         let _ = Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
     }
     Ok(())
+}
+
+/// A destination model name for `models/best/<name>.pt`. Same tameness rules as
+/// run ids (it becomes a path segment) but a single filename, no slashes.
+pub(crate) fn sanitize_model_name(name: &str) -> Result<String, String> {
+    let stem = name.trim().trim_end_matches(".pt");
+    if stem.is_empty() || stem.len() > 200 {
+        return Err("model name must be 1..200 chars".into());
+    }
+    if !stem
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err("model name may only contain [A-Za-z0-9._-]".into());
+    }
+    Ok(format!("{stem}.pt"))
+}
+
+/// Promote a finished run's best checkpoint to `models/best/<name>.pt` so it can
+/// be reused as a pretrained weight. Returns the workspace-relative dest path.
+#[tauri::command]
+pub fn promote_run_checkpoint(
+    state: State<WorkspaceState>,
+    run_id: String,
+    dest_name: String,
+) -> Result<String, String> {
+    validate_run_id(&run_id)?;
+    let file = sanitize_model_name(&dest_name)?;
+    let root = current_root(&state)?;
+    let src = run_dir(&root, &run_id).join("checkpoints").join("best.pt");
+    if !src.exists() {
+        return Err("this run has no checkpoints/best.pt to promote".into());
+    }
+    let dest_dir = root.join("models").join("best");
+    fs::create_dir_all(&dest_dir).map_err(|e| format!("mkdir {}: {e}", dest_dir.display()))?;
+    let dest = dest_dir.join(&file);
+    fs::copy(&src, &dest).map_err(|e| format!("copy checkpoint: {e}"))?;
+    Ok(format!("models/best/{file}"))
 }
 
 #[tauri::command]

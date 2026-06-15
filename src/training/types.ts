@@ -74,6 +74,10 @@ export type RunConfig = {
   backend: RunBackend
   dataset: DatasetConfig
   training: TrainingConfig
+  /** Phase 17 — resume weights/optimizer from a prior run's checkpoint. A
+   *  workspace-relative path (e.g. experiments/runs/<id>/checkpoints/best.pt)
+   *  resolved on the executor host, or an absolute path. */
+  resume_from?: string
 }
 
 export function defaultSlurmConfig(): SlurmConfig {
@@ -102,6 +106,18 @@ export type RunSummary = {
   epochs: number
   best_val_loss: number | null
   alive: boolean
+  /** Phase 17 — whether checkpoints/best.pt exists (→ resumable / promotable). */
+  has_checkpoint: boolean
+}
+
+/** A snapshot from nvidia-smi on the executor host (hardware strip). */
+export type GpuStat = {
+  index: number
+  name: string
+  util_pct: number
+  mem_used_mb: number
+  mem_total_mb: number
+  temp_c: number
 }
 
 export type RunStatus = {

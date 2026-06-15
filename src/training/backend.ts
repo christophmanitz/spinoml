@@ -6,7 +6,7 @@
 import { getCurrentConnection, sshTarget, remotePython, type RemoteSshConnection } from '../connections/store'
 import { tauriTraining } from './tauri-training'
 import { tauriSsh } from '../connections/tauri-ssh'
-import type { RunSummary, RunStatus, RemoteTrainingCapabilities } from './types'
+import type { RunSummary, RunStatus, RemoteTrainingCapabilities, GpuStat } from './types'
 
 const NO_CAPS: RemoteTrainingCapabilities = { has_slurm: false, has_gpu: false, partitions: [], gpu_names: [] }
 
@@ -56,5 +56,17 @@ export const training = {
     const r = remote()
     // Local backend has no SLURM; only remote hosts are probed.
     return r ? tauriSsh.remoteTrainingCapabilities(sshTarget(r), r.root) : Promise.resolve(NO_CAPS)
+  },
+  /** Copy a run's best checkpoint to models/best/<name>.pt. Returns the dest relpath. */
+  promote: (runId: string, destName: string): Promise<string> => {
+    const r = remote()
+    return r
+      ? tauriSsh.promoteCheckpoint(sshTarget(r), r.root, runId, destName)
+      : tauriTraining.promote(runId, destName)
+  },
+  /** GPU snapshot on the executor host (empty if no nvidia-smi). */
+  gpuStats: (): Promise<GpuStat[]> => {
+    const r = remote()
+    return r ? tauriSsh.gpuStats(sshTarget(r), r.root) : tauriTraining.gpuStats()
   },
 }

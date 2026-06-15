@@ -29,6 +29,9 @@ export type NewRunInput = {
   training: TrainingConfig
   /** Launch backend; defaults to direct ({kind:'local'}). */
   backend?: RunBackend
+  /** Phase 17 — resume weights/optimizer from a prior run's checkpoint
+   *  (workspace-relative path). */
+  resumeFrom?: string
 }
 
 type TrainingState = {
@@ -141,6 +144,7 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       backend: input.backend ?? { kind: 'local' },
       dataset,
       training: input.training,
+      ...(input.resumeFrom ? { resume_from: input.resumeFrom } : {}),
     }
     await training.start(runId, JSON.stringify(config, null, 2), modelContent, modelPy)
     await get().refresh()

@@ -974,6 +974,7 @@ fn build_sbatch(run_id: &str, python_q: &str, slurm: Option<&Value>) -> String {
 struct ParsedRun {
     id: String,
     alive: bool,
+    has_checkpoint: bool,
     status: String,
     run_json: String,
     metrics: String,
@@ -1003,6 +1004,7 @@ pub async fn ssh_list_training_runs(
                '') echo 'MLF_ALIVE 0' ;; \
                *) if kill -0 \"$pid\" 2>/dev/null; then echo 'MLF_ALIVE 1'; else echo 'MLF_ALIVE 0'; fi ;; \
              esac; \
+             if [ -f \"$d/checkpoints/best.pt\" ]; then echo 'MLF_CKPT 1'; else echo 'MLF_CKPT 0'; fi; \
              echo MLF_STATUS_BEGIN; cat \"$d/status\" 2>/dev/null; echo; echo MLF_STATUS_END; \
              echo MLF_RUNJSON_BEGIN; cat \"$d/run.json\" 2>/dev/null; echo; echo MLF_RUNJSON_END; \
              echo MLF_METRICS_BEGIN; cat \"$d/metrics.json\" 2>/dev/null; echo; echo MLF_METRICS_END; \
@@ -1022,6 +1024,7 @@ pub async fn ssh_list_training_runs(
             cur = Some(ParsedRun {
                 id: name.to_string(),
                 alive: false,
+                has_checkpoint: false,
                 status: String::new(),
                 run_json: String::new(),
                 metrics: String::new(),
@@ -1032,6 +1035,12 @@ pub async fn ssh_list_training_runs(
         if let Some(a) = line.strip_prefix("MLF_ALIVE ") {
             if let Some(r) = cur.as_mut() {
                 r.alive = a.trim() == "1";
+            }
+            continue;
+        }
+        if let Some(c) = line.strip_prefix("MLF_CKPT ") {
+            if let Some(r) = cur.as_mut() {
+                r.has_checkpoint = c.trim() == "1";
             }
             continue;
         }
@@ -1066,6 +1075,7 @@ pub async fn ssh_list_training_runs(
                 r.metrics.trim(),
                 r.status.trim(),
                 r.alive,
+                r.has_checkpoint,
             )
         })
         .collect())
@@ -1081,10 +1091,18 @@ pub async fn ssh_training_run_status(
     validate_remote_root(&root)?;
     training::validate_run_id(&run_id)?;
     let dir_q = shell_quote_path(&remote_run_dir(&root, &run_id));
+    // For SLURM jobs we also fetch the live squeue state (%T) and, once the job
+    // has left the queue, the sacct accounting state — so a scheduler-killed job
+    // (TIMEOUT/OOM/scancel) is reported precisely instead of just "failed".
     let cmd = format!(
         "d={dir_q}; pid=$(cat \"$d/pid\" 2>/dev/null); \
          case \"$pid\" in \
-           slurm:*) jid=${{pid#slurm:}}; if squeue -j \"$jid\" -h -o '%T' 2>/dev/null | grep -q .; then echo 'MLF_ALIVE 1'; else echo 'MLF_ALIVE 0'; fi ;; \
+           slurm:*) jid=${{pid#slurm:}}; \
+             st=$(squeue -j \"$jid\" -h -o '%T' 2>/dev/null | head -1); \
+             if [ -n \"$st\" ]; then echo 'MLF_ALIVE 1'; echo \"MLF_SQUEUE $st\"; \
+             else echo 'MLF_ALIVE 0'; \
+               sa=$(sacct -j \"$jid\" -n -X -o State%30 2>/dev/null | head -1); \
+               echo \"MLF_SACCT $sa\"; fi ;; \
            '') echo 'MLF_ALIVE 0' ;; \
            *) if kill -0 \"$pid\" 2>/dev/null; then echo 'MLF_ALIVE 1'; else echo 'MLF_ALIVE 0'; fi ;; \
          esac; \
@@ -1094,13 +1112,26 @@ pub async fn ssh_training_run_status(
     let out = ssh_exec(&alias, &cmd, None).await?;
     let mut alive = false;
     let mut pid: Option<i32> = None;
+    let mut is_slurm = false;
+    let mut squeue_state = String::new();
+    let mut sacct_state = String::new();
     let mut status = String::new();
     let mut in_status = false;
     for line in out.lines() {
         if let Some(a) = line.strip_prefix("MLF_ALIVE ") {
             alive = a.trim() == "1";
+        } else if let Some(s) = line.strip_prefix("MLF_SQUEUE ") {
+            is_slurm = true;
+            squeue_state = s.trim().to_string();
+        } else if let Some(s) = line.strip_prefix("MLF_SACCT ") {
+            is_slurm = true;
+            sacct_state = s.trim().to_string();
         } else if let Some(p) = line.strip_prefix("MLF_PID ") {
-            pid = p.trim().parse::<i32>().ok();
+            let p = p.trim();
+            if p.starts_with("slurm:") {
+                is_slurm = true;
+            }
+            pid = p.parse::<i32>().ok();
         } else if line == "MLF_STATUS_BEGIN" {
             in_status = true;
         } else if line == "MLF_STATUS_END" {
@@ -1110,7 +1141,12 @@ pub async fn ssh_training_run_status(
             status.push('\n');
         }
     }
-    Ok(training::RunStatus::new(status.trim(), alive, pid))
+    if is_slurm {
+        let st = training::reconcile_slurm_status(status.trim(), &squeue_state, &sacct_state);
+        Ok(training::RunStatus::new_with_status(st, alive, pid))
+    } else {
+        Ok(training::RunStatus::new(status.trim(), alive, pid))
+    }
 }
 
 #[tauri::command]
@@ -1237,4 +1273,49 @@ pub async fn ssh_remote_training_capabilities(
         partitions,
         gpu_names,
     })
+}
+
+/// Promote a remote run's best checkpoint to `<root>/models/best/<name>.pt`.
+/// Mirror of the local `promote_run_checkpoint`. Returns the workspace-relative
+/// dest path so the UI shows the same thing local and remote.
+#[tauri::command]
+pub async fn ssh_promote_checkpoint(
+    alias: String,
+    root: String,
+    run_id: String,
+    dest_name: String,
+) -> Result<String, String> {
+    validate_alias(&alias)?;
+    validate_remote_root(&root)?;
+    training::validate_run_id(&run_id)?;
+    let file = training::sanitize_model_name(&dest_name)?;
+    let src_q = shell_quote_path(&format!(
+        "{}/checkpoints/best.pt",
+        remote_run_dir(&root, &run_id)
+    ));
+    let dest_dir = join_remote(&root, "models/best");
+    let dest_dir_q = shell_quote_path(&dest_dir);
+    let dest_q = shell_quote_path(&format!("{dest_dir}/{file}"));
+    let cmd = format!(
+        "if [ ! -f {src_q} ]; then echo MLF_NO_CKPT; else mkdir -p {dest_dir_q} && cp {src_q} {dest_q} && echo MLF_OK; fi"
+    );
+    let out = ssh_exec(&alias, &cmd, None).await?;
+    if out.contains("MLF_NO_CKPT") {
+        return Err("this run has no checkpoints/best.pt to promote".into());
+    }
+    if !out.contains("MLF_OK") {
+        return Err(format!("promote failed: {}", out.trim()));
+    }
+    Ok(format!("models/best/{file}"))
+}
+
+/// Remote GPU snapshot (empty if no nvidia-smi). Mirror of the local
+/// `gpu_stats`. The hardware strip polls this while a remote run is alive.
+#[tauri::command]
+pub async fn ssh_gpu_stats(alias: String, root: String) -> Result<Vec<training::GpuStat>, String> {
+    let _ = &root;
+    validate_alias(&alias)?;
+    let cmd = format!("{} 2>/dev/null || true", training::NVIDIA_SMI_QUERY);
+    let out = ssh_exec(&alias, &cmd, None).await?;
+    Ok(training::parse_gpu_stats(&out))
 }
