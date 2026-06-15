@@ -6,6 +6,7 @@ import { TEMPLATES } from './templates/templates'
 import { useWorkspaceStore, ROOT_ID } from './workspace/store'
 import { isTauri } from './workspace/tauri-fs'
 import { confirmDialog } from './ui/confirm'
+import DependenciesModal from './deps/DependenciesModal'
 
 export default function Toolbar() {
   const activeFileName = useWorkspaceStore((s) =>
@@ -15,6 +16,7 @@ export default function Toolbar() {
   const mode = useWorkspaceStore((s) => s.mode)
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot)
   const tauriAvailable = isTauri()
+  const [depsOpen, setDepsOpen] = useState(false)
 
   const saveToWorkspace = async () => {
     const ws = useWorkspaceStore.getState()
@@ -36,6 +38,7 @@ export default function Toolbar() {
   }
 
   return (
+    <>
     <div className="flex items-center gap-1 text-xs">
       <Menu label="File">
         <Item onSelect={async () => {
@@ -102,7 +105,15 @@ export default function Toolbar() {
           >{t.name}</Item>
         ))}
       </Menu>
+
+      <Menu label="Project">
+        <Item onSelect={() => setDepsOpen(true)} hint="requirements.txt">
+          Dependencies…
+        </Item>
+      </Menu>
     </div>
+    {depsOpen && <DependenciesModal onClose={() => setDepsOpen(false)} />}
+    </>
   )
 }
 

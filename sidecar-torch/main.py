@@ -8,6 +8,8 @@ Endpoints:
   POST /dataset/inspect  { abspath }                       → kind + cheap metadata
   POST /dataset/stats    { abspath }                       → stats/histograms (heavier)
   POST /dataset/smoke    { code, abspath, input_shape? }   → run sample through generated model
+  POST /deps/check       { specs: str[] }                   → pip dry-run resolve (compat smoke test)
+  POST /deps/install     { specs: str[] }                   → pip install into the sidecar env
 
 Safety: this exec's code from the local frontend only. CORS is permissive
 because the dev server (Vite, port 5173) and the Tauri webview both need
@@ -18,6 +20,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 import traceback
@@ -245,6 +249,80 @@ def smoke_test(
     }
 
 
+def _dist_name(spec: str) -> str:
+    """Pull the bare distribution name out of a requirement spec.
+    'torch_geometric==2.8.0' -> 'torch_geometric'; 'rdkit[extra]>=1' -> 'rdkit'."""
+    return re.split(r"[<>=!~;\[\( ]", spec.strip(), 1)[0].strip()
+
+
+def deps_check(specs: list[str]) -> dict:
+    """Compatibility smoke test: resolve `specs` against THIS interpreter's env
+    via `pip install --dry-run` WITHOUT installing anything. Returns whether the
+    requested versions resolve, what pip would add/upgrade, and currently
+    installed versions. Needs network access (pip queries the index)."""
+    import importlib.metadata as im
+
+    specs = [s.strip() for s in specs if isinstance(s, str) and s.strip()]
+    requested = []
+    for s in specs:
+        base = _dist_name(s)
+        try:
+            ver = im.version(base)
+        except Exception:
+            ver = None
+        requested.append({"spec": s, "name": base, "installed": ver})
+
+    if not specs:
+        return {"ok": True, "compatible": True, "python": sys.version.split()[0],
+                "requested": [], "would_install": [], "log": "no dependencies specified"}
+
+    cmd = [sys.executable, "-m", "pip", "install", "--dry-run", "--quiet",
+           "--disable-pip-version-check", "--no-input", "--report", "-"] + specs
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "pip resolution timed out (240s) — check network / index"}
+    except Exception as e:
+        return {"ok": False, "error": f"could not run pip: {type(e).__name__}: {e}"}
+
+    if r.returncode != 0:
+        # ResolutionImpossible / not-found / etc. — incompatible.
+        return {"ok": True, "compatible": False, "python": sys.version.split()[0],
+                "requested": requested, "would_install": [],
+                "error": (r.stderr or r.stdout or "pip failed").strip()[-4000:]}
+
+    would: list[str] = []
+    try:
+        rep = json.loads(r.stdout or "{}")
+        for it in rep.get("install", []):
+            m = it.get("metadata", {})
+            if m.get("name"):
+                would.append(f"{m['name']}=={m.get('version', '?')}")
+    except Exception:
+        would = []
+    would.sort()
+    return {"ok": True, "compatible": True, "python": sys.version.split()[0],
+            "requested": requested, "would_install": would,
+            "log": "already satisfied" if not would else f"{len(would)} package(s) would be installed/updated"}
+
+
+def deps_install(specs: list[str]) -> dict:
+    """Actually install `specs` into this interpreter's env. Long-running."""
+    specs = [s.strip() for s in specs if isinstance(s, str) and s.strip()]
+    if not specs:
+        return {"ok": False, "error": "no dependencies specified"}
+    cmd = [sys.executable, "-m", "pip", "install",
+           "--disable-pip-version-check", "--no-input"] + specs
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "pip install timed out (1800s)"}
+    except Exception as e:
+        return {"ok": False, "error": f"could not run pip: {type(e).__name__}: {e}"}
+    return {"ok": r.returncode == 0, "returncode": r.returncode,
+            "log": ((r.stdout or "") + (r.stderr or "")).strip()[-8000:]}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _cors(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -316,6 +394,20 @@ class Handler(BaseHTTPRequestHandler):
                 opts_in = payload.get("input_options")
                 opts = opts_in if isinstance(opts_in, list) else None
                 self._json(200, smoke_test(code, abspaths, shapes, opts))
+                return
+            if self.path == "/deps/check":
+                specs = payload.get("specs")
+                if not isinstance(specs, list):
+                    self._json(400, {"ok": False, "error": "expected {specs: str[]}"})
+                    return
+                self._json(200, deps_check([str(s) for s in specs]))
+                return
+            if self.path == "/deps/install":
+                specs = payload.get("specs")
+                if not isinstance(specs, list):
+                    self._json(400, {"ok": False, "error": "expected {specs: str[]}"})
+                    return
+                self._json(200, deps_install([str(s) for s in specs]))
                 return
         except Exception as e:
             self._json(500, {
