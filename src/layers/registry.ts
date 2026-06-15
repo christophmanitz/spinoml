@@ -20,7 +20,7 @@ export type FieldSpec =
   /** Multi-line source code (Python for a Custom node). Stored & emitted verbatim. */
   | { name: string; type: 'code'; default: string; placeholder?: string }
 
-export type LayerKind = 'module' | 'input' | 'output' | 'merge' | 'function' | 'custom'
+export type LayerKind = 'module' | 'input' | 'output' | 'merge' | 'function' | 'custom' | 'group'
 
 export type LayerSpec = {
   type: string
@@ -77,6 +77,14 @@ const f = {
 
 const get = <T>(p: Record<string, unknown>, k: string, fallback: T): T =>
   (p[k] as T) ?? fallback
+
+/** Parse the first `class Name(...)` from Custom-node source. The Custom node
+ *  has no separate class-name field — this IS its name, so it can't drift from
+ *  what the codegen instantiates. */
+export function classNameFromSource(source: string): string | null {
+  const m = source.match(/^\s*class\s+([A-Za-z_]\w*)\s*[(:]/m)
+  return m ? m[1] : null
+}
 
 export const LAYERS: Record<string, LayerSpec> = {
   Input: {
@@ -510,17 +518,21 @@ export const LAYERS: Record<string, LayerSpec> = {
   // relational message passing, …) get expressed.
   Custom: {
     type: 'Custom', category: 'Custom', pytorchModule: '', kind: 'custom',
+    // The class name is the `class X(...)` in `source` — single source of truth,
+    // so it can never drift from what gets instantiated. `init_args` is the
+    // constructor arg string.
     fields: [
-      { name: 'class_name', type: 'text', default: 'MyModule', placeholder: 'nn.Module class name' } as FieldSpec,
-      { name: 'init_args', type: 'text', default: '', placeholder: 'e.g. 384, 256, dropout=0.0' } as FieldSpec,
+      { name: 'init_args', type: 'text', default: '', placeholder: 'z.B. 384, 256, dropout=0.0' } as FieldSpec,
       {
         name: 'source', type: 'code',
         placeholder: 'class MyModule(nn.Module): ...',
+        // No-arg __init__ + LazyLinear → a freshly dropped node constructs and
+        // runs immediately (init_args can stay empty). Edit freely.
         default: [
           'class MyModule(nn.Module):',
-          '    def __init__(self, in_dim, out_dim):',
+          '    def __init__(self):',
           '        super().__init__()',
-          '        self.fc = nn.Linear(in_dim, out_dim)',
+          '        self.fc = nn.LazyLinear(32)',
           '',
           '    def forward(self, x):',
           '        return self.fc(x)',
@@ -528,11 +540,39 @@ export const LAYERS: Record<string, LayerSpec> = {
       } as FieldSpec,
     ],
     summary: (p) => {
-      const cls = String(get(p, 'class_name', 'MyModule')) || 'MyModule'
+      const cls = classNameFromSource(String(get(p, 'source', ''))) ?? '?'
       const args = String(get(p, 'init_args', '')).trim()
       return `${cls}(${args})`
     },
   },
+
+  // ─── Subgraph (a node that is itself a graph — opens its own subcanvas) ───
+  // Compiles to a nested `class <class_name>(nn.Module)` built from its
+  // subgraph. The subgraph's Input nodes become the class's forward args (in
+  // declaration order; the parent wires incoming edges positionally) and its
+  // Output node(s) the return. Edit it by double-clicking the node.
+  Subgraph: {
+    type: 'Subgraph', category: 'Custom', pytorchModule: '', kind: 'group',
+    fields: [
+      { name: 'class_name', type: 'text', default: 'SubModule', placeholder: 'verschachtelter Modulname' } as FieldSpec,
+    ],
+    summary: (p) => {
+      const cls = String(get(p, 'class_name', 'SubModule')) || 'SubModule'
+      const sg = get(p, 'subgraph', undefined) as { nodes?: unknown[] } | undefined
+      const n = Array.isArray(sg?.nodes) ? sg!.nodes!.length : 0
+      return `${cls} · ${n} Knoten`
+    },
+  },
+}
+
+// Starter subgraph for a fresh Group: one Input → one Output (identity). Edited
+// via the subcanvas. Kept as a plain GraphSnapshot-shaped object.
+export const DEFAULT_SUBGRAPH = {
+  nodes: [
+    { id: 'in', layerType: 'Input', params: { name: 'x', shape: [1, 128], dtype: 'float32' }, position: { x: 80, y: 80 } },
+    { id: 'out', layerType: 'Output', params: { name: 'out' }, position: { x: 80, y: 240 } },
+  ],
+  edges: [{ source: 'in', target: 'out' }],
 }
 
 export function defaultParamsFor(layerType: string): Record<string, unknown> {
@@ -541,6 +581,10 @@ export function defaultParamsFor(layerType: string): Record<string, unknown> {
   const params: Record<string, unknown> = {}
   for (const field of spec.fields) {
     params[field.name] = field.default
+  }
+  // Group nodes carry a structural subgraph (not a FieldSpec) — seed a starter.
+  if (spec.kind === 'group') {
+    params.subgraph = structuredClone(DEFAULT_SUBGRAPH)
   }
   return params
 }

@@ -4,12 +4,15 @@ import { LAYERS, type FieldSpec } from '../layers/registry'
 import { useInferenceStore } from '../inference/store'
 import { useDatasetsStore } from '../datasets/store'
 import { isTauri } from '../workspace/tauri-fs'
+import { useScopeStore } from '../canvas/scopeStore'
+import { layerInitExpr } from '../codegen/generator'
 import CodeField from './CodeField'
 
 export default function Inspector() {
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId)
   const node = useGraphStore((s) => s.nodes.find((n) => n.id === selectedNodeId))
   const updateNodeParams = useGraphStore((s) => s.updateNodeParams)
+  const replaceNodeLayer = useGraphStore((s) => s.replaceNodeLayer)
   const deleteNode = useGraphStore((s) => s.deleteNode)
   const failingNodeId = useInferenceStore((s) => s.failingNodeId)
   const inferenceError = useInferenceStore((s) => s.error)
@@ -56,6 +59,12 @@ export default function Inspector() {
         <span>{outShape ? `[${outShape.join(', ')}]` : <em className="text-[#5b6168]">unknown</em>}</span>
       </div>
 
+      <NodeActions
+        node={node}
+        onEnterGroup={() => useScopeStore.getState().enterGroup(node.id)}
+        onEject={() => ejectToCustom(node, replaceNodeLayer)}
+      />
+
       {isFailing && inferenceError && (
         <div className="mb-2 rounded border border-rose-900/60 bg-rose-950/40 px-2 py-1.5 text-[10px] leading-snug text-rose-200">
           <div className="mb-0.5 font-medium text-rose-300">
@@ -87,6 +96,70 @@ export default function Inspector() {
 
 function shortenError(s: string): string {
   return s.length > 240 ? s.slice(0, 240) + '…' : s
+}
+
+// Per-node actions: open a Group's subcanvas, or "eject" a built-in module node
+// into an editable Custom-code node (take an existing node, tweak its code).
+function NodeActions({
+  node, onEnterGroup, onEject,
+}: {
+  node: { id: string; data: { layerType: string } }
+  onEnterGroup: () => void
+  onEject: () => void
+}) {
+  const lt = node.data.layerType
+  const spec = LAYERS[lt]
+  if (lt === 'Subgraph') {
+    return (
+      <button
+        onClick={onEnterGroup}
+        className="mb-2 w-full rounded bg-[#13344f] px-2 py-1 text-[11px] text-[#6ab7ff] hover:bg-[#184466]"
+        title="Subgraph dieses Knotens bearbeiten"
+      >
+        ⤢ Subcanvas öffnen
+      </button>
+    )
+  }
+  // Only module-kind layers (those with a pytorchModule) can be ejected.
+  if (!spec?.pytorchModule || spec.kind === 'custom') return null
+  return (
+    <button
+      onClick={onEject}
+      className="mb-2 w-full rounded border border-[#1f2429] px-2 py-1 text-[11px] text-[#9aa1a8] hover:border-[#3a4148] hover:bg-[#13171b] hover:text-[#e6e8eb]"
+      title="In einen editierbaren Custom-Code-Knoten umwandeln (Code dieses Layers als Startpunkt)"
+    >
+      ✎ Zu Custom-Code umwandeln
+    </button>
+  )
+}
+
+// Turn a built-in module node into a Custom node seeded with that layer's code,
+// so you can take an existing node and lightly edit it.
+function ejectToCustom(
+  node: { id: string; data: { layerType: string; params: Record<string, unknown> } },
+  replaceNodeLayer: (id: string, layerType: string, extra?: Record<string, unknown>) => void,
+) {
+  const lt = node.data.layerType
+  const spec = LAYERS[lt]
+  const expr = layerInitExpr(lt, node.data.params)
+  if (!spec || !expr) return
+  const cls = `${lt}Custom`
+  const imports = spec.pyImports?.length
+    ? `from torch_geometric.nn import ${spec.pyImports.join(', ')}\n\n\n`
+    : ''
+  const sig = spec.needsEdgeIndex ? 'x, edge_index' : 'x'
+  const callArgs = spec.needsEdgeIndex ? 'x, edge_index' : 'x'
+  const body = spec.tupleOutput
+    ? `        out, _ = self.layer(${callArgs})\n        return out`
+    : `        return self.layer(${callArgs})`
+  const source = `${imports}class ${cls}(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.layer = ${expr}
+
+    def forward(self, ${sig}):
+${body}`
+  replaceNodeLayer(node.id, 'Custom', { class_name: cls, init_args: '', source })
 }
 
 function FixHints({

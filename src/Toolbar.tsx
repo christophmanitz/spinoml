@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useHistoryStore } from './history/store'
 import { useGraphStore } from './canvas/GraphStore'
+import { useScopeStore } from './canvas/scopeStore'
 import { downloadCurrent, pickAndLoad, clearAutosave } from './persistence/file'
 import { TEMPLATES } from './templates/templates'
 import { useWorkspaceStore, ROOT_ID } from './workspace/store'
@@ -43,6 +44,7 @@ export default function Toolbar() {
       <Menu label="File">
         <Item onSelect={async () => {
           if (await confirmDialog('Reset graph? Current model will be lost (Cmd+Z to undo).')) {
+            useScopeStore.getState().reset()
             useGraphStore.getState().resetGraph()
             useWorkspaceStore.getState().closeActive()
             clearAutosave()
@@ -67,6 +69,7 @@ export default function Toolbar() {
           </>
         )}
         <Item onSelect={() => pickAndLoad((snap) => {
+          useScopeStore.getState().reset()
           useGraphStore.getState().loadSnapshot(snap)
           useWorkspaceStore.getState().closeActive()
         })}>
@@ -97,6 +100,7 @@ export default function Toolbar() {
             onSelect={async () => {
               if (useGraphStore.getState().nodes.length > 1 &&
                   !(await confirmDialog(`Replace current graph with "${t.name}"? (Cmd+Z to undo)`))) return
+              useScopeStore.getState().reset()
               useGraphStore.getState().loadSnapshot(t.build())
               useGraphStore.getState().autoLayout()
               useWorkspaceStore.getState().closeActive()

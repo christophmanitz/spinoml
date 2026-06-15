@@ -26,12 +26,11 @@ const MONACO_OPTIONS = {
 }
 
 /**
- * Code editor for a Custom node's `source` field. UNCONTROLLED on purpose:
- * Monaco owns the buffer (defaultValue + refs, no per-keystroke React state),
- * which avoids the cursor-fighting / flicker you get from a controlled `value`
- * in a frequently re-rendering panel. The buffer commits to the GraphStore on
- * blur and on modal-close, so typing doesn't spam undo history or shape
- * inference.
+ * Code editor for a Custom node's `source` field. UNCONTROLLED (defaultValue +
+ * Monaco owns the buffer) so the cursor never fights React, BUT the live text is
+ * mirrored into a ref via onChange — we never call getValue() on a disposing
+ * editor (that returns '' and used to wipe the source on node switch). Commits
+ * are debounced and flushed on unmount so edits survive switching nodes.
  */
 export default function CodeField({
   value, placeholder, onChange,
@@ -40,14 +39,24 @@ export default function CodeField({
   placeholder?: string
   onChange: (v: string) => void
 }) {
-  const editorRef = useRef<MonacoEditor | null>(null)
-  // Seed text for the fullscreen modal, captured (in an event handler, not
-  // render) when the user opens it. null = closed.
+  const inlineRef = useRef<MonacoEditor | null>(null)
+  const latest = useRef(value ?? '')          // live editor text (from onChange)
+  const valueRef = useRef(value ?? '')        // last value we know the store holds
+  valueRef.current = value ?? ''
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [modalSeed, setModalSeed] = useState<string | null>(null)
 
-  const commit = () => {
-    const v = editorRef.current?.getValue()
-    if (v !== undefined && v !== value) onChange(v)
+  const flush = () => {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null }
+    if (latest.current !== valueRef.current) onChange(latest.current)
+  }
+  // Flush any pending edit when the field unmounts (e.g. selecting another node).
+  useEffect(() => () => flush(), []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleChange = (v: string | undefined) => {
+    latest.current = v ?? ''
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(flush, 500)
   }
 
   return (
@@ -55,7 +64,7 @@ export default function CodeField({
       <div className="flex items-center justify-between border-b border-[#1f2429] bg-[#0b0e11] px-2 py-1 text-[10px] text-[#7a8088]">
         <span className="font-mono">python</span>
         <button
-          onClick={() => setModalSeed(editorRef.current?.getValue() ?? value ?? '')}
+          onClick={() => setModalSeed(latest.current)}
           className="rounded px-1.5 py-0.5 text-[#9aa1a8] hover:bg-[#1a1e22] hover:text-[#e6e8eb]"
           title="Im großen Editor öffnen"
         >
@@ -69,10 +78,8 @@ export default function CodeField({
           theme="vs-dark"
           defaultValue={value ?? ''}
           options={MONACO_OPTIONS}
-          onMount={(editor) => {
-            editorRef.current = editor
-            editor.onDidBlurEditorText(() => commit())
-          }}
+          onChange={handleChange}
+          onMount={(editor) => { inlineRef.current = editor }}
         />
       </div>
       {!value?.trim() && placeholder && (
@@ -85,8 +92,9 @@ export default function CodeField({
           onClose={(next) => {
             setModalSeed(null)
             if (next === undefined) return
-            editorRef.current?.setValue(next) // keep the inline editor in sync
-            if (next !== value) onChange(next)
+            latest.current = next
+            inlineRef.current?.setValue(next) // keep the inline editor in sync
+            if (next !== valueRef.current) onChange(next)
           }}
         />
       )}
@@ -100,8 +108,8 @@ function CodeModal({
   initial: string
   onClose: (next?: string) => void
 }) {
-  const editorRef = useRef<MonacoEditor | null>(null)
-  const close = () => onClose(editorRef.current?.getValue() ?? initial)
+  const latest = useRef(initial)
+  const close = () => onClose(latest.current)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -140,7 +148,8 @@ function CodeModal({
             theme="vs-dark"
             defaultValue={initial}
             options={{ ...MONACO_OPTIONS, fontSize: 13, minimap: { enabled: true } }}
-            onMount={(editor) => { editorRef.current = editor; editor.focus() }}
+            onChange={(v) => { latest.current = v ?? '' }}
+            onMount={(editor) => editor.focus()}
           />
         </div>
       </div>

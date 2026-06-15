@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { useGraphStore, captureStructuralSnapshot } from '../canvas/GraphStore'
+import { useGraphStore } from '../canvas/GraphStore'
+import { captureRootSnapshot, useScopeStore } from '../canvas/scopeStore'
 import { parseFile, serializeCurrent } from '../persistence/file'
 import { generateFromSnapshot } from '../codegen/generator'
 import { isTauri, tauriFs } from './tauri-fs'
@@ -358,6 +359,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
         set({ entries: { ...get().entries, [id]: { ...e, content } } })
       }
       const snap = parseFile(content)
+      useScopeStore.getState().reset()
       useGraphStore.getState().loadSnapshot(snap)
       set({ activeFileId: id, dirty: false })
       return true
@@ -514,7 +516,12 @@ useWorkspaceStore.subscribe((s) => { if (s.mode === 'browser') persist(s) })
 let lastFingerprint: string | null = null
 
 function fingerprintCurrent(): string {
-  return JSON.stringify(captureStructuralSnapshot(useGraphStore.getState()))
+  // Fold to the root so edits made inside a subcanvas still register as dirty.
+  const root = captureRootSnapshot()
+  return JSON.stringify({
+    nodes: root.nodes.map((n) => ({ id: n.id, layerType: n.layerType, params: n.params })),
+    edges: root.edges.map((e) => ({ source: e.source, target: e.target })),
+  })
 }
 
 function fingerprintFile(file: File): string | null {

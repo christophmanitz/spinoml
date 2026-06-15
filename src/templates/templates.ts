@@ -79,16 +79,42 @@ export const BILINEAR_HEAD_SRC = `class BilinearHead(nn.Module):
         diag = (fL * self.d * gP).sum(dim=-1)
         return lr + diag + self.b`
 
-/** RankBind main bilinear model as a 2-input DAG. Edge order into BilinearHead
- *  matters — ligand projector first (fL), protein projector second (gP). */
+// A projector is a pure Sequential, so it's expressible as a Subgraph built from
+// standard layer nodes: LayerNorm → Linear → GELU → Dropout → Linear.
+function projectorSubgraph(inDim: number, outDim: number): GraphSnapshot {
+  return {
+    nodes: [
+      { id: 'in', layerType: 'Input', params: { name: 'x', shape: [1, inDim], dtype: 'float32' }, position: { x: 40, y: 20 } },
+      { id: 'ln', layerType: 'LayerNorm', params: { normalized_shape: [inDim] }, position: { x: 40, y: 120 } },
+      { id: 'fc1', layerType: 'Linear', params: { in_features: inDim, out_features: outDim }, position: { x: 40, y: 220 } },
+      { id: 'act', layerType: 'GELU', params: {}, position: { x: 40, y: 320 } },
+      { id: 'drop', layerType: 'Dropout', params: { p: 0.0 }, position: { x: 40, y: 420 } },
+      { id: 'fc2', layerType: 'Linear', params: { in_features: outDim, out_features: outDim }, position: { x: 40, y: 520 } },
+      { id: 'out', layerType: 'Output', params: { name: 'out' }, position: { x: 40, y: 620 } },
+    ],
+    edges: [
+      { source: 'in', target: 'ln' },
+      { source: 'ln', target: 'fc1' },
+      { source: 'fc1', target: 'act' },
+      { source: 'act', target: 'drop' },
+      { source: 'drop', target: 'fc2' },
+      { source: 'fc2', target: 'out' },
+    ],
+  }
+}
+
+/** RankBind main bilinear model. The two projectors are Subgraph nodes (built
+ *  from standard layers — double-click to open their subcanvas); the bilinear
+ *  head stays a Custom code node (needs nn.Parameter + bilinear math). Edge
+ *  order into BilinearHead matters — ligand first (fL), protein second (gP). */
 export function buildRankBindBilinear(): GraphSnapshot {
   return {
     nodes: [
       { id: 'lig', layerType: 'Input', params: { name: 'lig_emb', shape: [1, 384], dtype: 'float32' }, position: { x: 0, y: 0 } },
       { id: 'prot', layerType: 'Input', params: { name: 'prot_emb', shape: [1, 1280], dtype: 'float32' }, position: { x: 0, y: 180 } },
-      { id: 'lp', layerType: 'Custom', params: { class_name: 'LigandProjector', init_args: '384, 256, dropout=0.0', source: LIGAND_PROJECTOR_SRC }, position: { x: 280, y: 0 } },
-      { id: 'pp', layerType: 'Custom', params: { class_name: 'ProteinProjector', init_args: '1280, 256, dropout=0.0', source: PROTEIN_PROJECTOR_SRC }, position: { x: 280, y: 180 } },
-      { id: 'bh', layerType: 'Custom', params: { class_name: 'BilinearHead', init_args: '256, 256, rank=32', source: BILINEAR_HEAD_SRC }, position: { x: 580, y: 90 } },
+      { id: 'lp', layerType: 'Subgraph', params: { class_name: 'LigandProjector', subgraph: projectorSubgraph(384, 256) }, position: { x: 280, y: 0 } },
+      { id: 'pp', layerType: 'Subgraph', params: { class_name: 'ProteinProjector', subgraph: projectorSubgraph(1280, 256) }, position: { x: 280, y: 180 } },
+      { id: 'bh', layerType: 'Custom', params: { init_args: '256, 256, rank=32', source: BILINEAR_HEAD_SRC }, position: { x: 580, y: 90 } },
       { id: 'out', layerType: 'Output', params: { name: 'score' }, position: { x: 840, y: 90 } },
     ],
     edges: [

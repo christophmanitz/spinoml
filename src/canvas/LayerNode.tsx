@@ -1,14 +1,17 @@
-import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
+import { useEffect } from 'react'
+import { Handle, Position, useUpdateNodeInternals, type NodeProps, type Node } from '@xyflow/react'
 import { LAYERS } from '../layers/registry'
 import { colorForCategory } from '../layers/categories'
 import CategoryIcon from '../layers/CategoryIcon'
 import type { LayerNodeData } from './GraphStore'
+import { useLayoutStore } from './layoutStore'
 
 const ERROR_COLOR = '#f43f5e'
 
 const handleStyle = { background: '#3a4148', width: 8, height: 8, border: 'none' }
 
 export default function LayerNode({
+  id,
   data,
   selected,
 }: NodeProps<Node<LayerNodeData>>) {
@@ -19,6 +22,15 @@ export default function LayerNode({
 
   const hasInput = data.layerType !== 'Input'
   const hasOutput = data.layerType !== 'Output'
+
+  const dir = useLayoutStore((s) => s.direction)
+  const targetPos = dir === 'LR' ? Position.Left : Position.Top
+  const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom
+
+  // React Flow caches handle bounds; when the direction flips we must tell it to
+  // re-measure, otherwise edges keep routing to the old anchor positions.
+  const updateNodeInternals = useUpdateNodeInternals()
+  useEffect(() => { updateNodeInternals(id) }, [dir, id, updateNodeInternals])
 
   const shapeText = data.inferredOutputShape ? `[${data.inferredOutputShape.join(', ')}]` : null
 
@@ -32,7 +44,7 @@ export default function LayerNode({
           : selected ? `0 0 0 1px ${catColor}40` : undefined,
       }}
     >
-      {hasInput && <Handle type="target" position={Position.Top} style={handleStyle} />}
+      {hasInput && <Handle type="target" position={targetPos} style={handleStyle} />}
 
       <div
         className="flex items-center justify-between rounded-t px-2 py-1 text-[11px] font-medium"
@@ -52,13 +64,18 @@ export default function LayerNode({
         {data.hasError && <span className="text-[10px]" title="forward pass failed here">!</span>}
       </div>
       <div className="px-2 py-1.5 font-mono text-[10px] text-[#9aa1a8]">{summary}</div>
+      {spec?.kind === 'group' && (
+        <div className="border-t border-dashed border-[#2a2f36] px-2 py-1 text-[10px] text-[#7a8088]">
+          ⤢ Doppelklick → Subcanvas
+        </div>
+      )}
       {shapeText && (
         <div className="border-t border-[#1f2429] px-2 py-1 font-mono text-[10px] text-[#7a8088]">
           out {shapeText}
         </div>
       )}
 
-      {hasOutput && <Handle type="source" position={Position.Bottom} style={handleStyle} />}
+      {hasOutput && <Handle type="source" position={sourcePos} style={handleStyle} />}
     </div>
   )
 }

@@ -11,6 +11,7 @@ import {
   addEdge,
 } from '@xyflow/react'
 import { defaultParamsFor, coerceParams } from '../layers/registry'
+import { useLayoutStore, type FlowDir } from './layoutStore'
 
 export type LayerNodeData = {
   layerType: string
@@ -141,7 +142,7 @@ export const useGraphStore = create<State>((set, get) => ({
   autoLayout: () => {
     const { nodes, edges } = get()
     if (nodes.length === 0) return
-    const positions = computeLayout(nodes, edges)
+    const positions = computeLayout(nodes, edges, useLayoutStore.getState().direction)
     const next = nodes.map((n) => {
       const pos = positions.get(n.id)
       if (!pos) return n
@@ -224,9 +225,16 @@ const ORIGIN_Y = 60
  * the same depth. Nodes unreachable from Input get parked in a trailing
  * column so they're at least visible.
  */
-function computeLayout(nodes: LayerNode[], edges: Edge[]): Map<string, XYPosition> {
+function computeLayout(nodes: LayerNode[], edges: Edge[], direction: FlowDir = 'TB'): Map<string, XYPosition> {
   const out = new Map<string, XYPosition>()
   if (nodes.length === 0) return out
+
+  // `p` = position along the chain, `s` = branch / wrap index. The two map to
+  // x/y depending on direction: TB chains downward (p→y), LR rightward (p→x).
+  const pos = (p: number, s: number): XYPosition =>
+    direction === 'LR'
+      ? { x: ORIGIN_X + p * COL_W, y: ORIGIN_Y + s * ROW_H }
+      : { x: ORIGIN_X + s * COL_W, y: ORIGIN_Y + p * ROW_H }
 
   const succ = new Map<string, string[]>()
   for (const n of nodes) succ.set(n.id, [])
@@ -242,7 +250,7 @@ function computeLayout(nodes: LayerNode[], edges: Edge[]): Map<string, XYPositio
     if (visited.has(id)) return
     visited.add(id)
     if (row >= MAX_ROWS) { row = 0; col++ }
-    out.set(id, { x: ORIGIN_X + col * COL_W, y: ORIGIN_Y + row * ROW_H })
+    out.set(id, pos(row, col))
     row++
     if (col > maxCol) maxCol = col
     const next = succ.get(id) ?? []
@@ -261,7 +269,7 @@ function computeLayout(nodes: LayerNode[], edges: Edge[]): Map<string, XYPositio
     let bcol = startCol
     let brow = startRow
     if (brow >= MAX_ROWS) { brow = 0; bcol++ }
-    out.set(id, { x: ORIGIN_X + bcol * COL_W, y: ORIGIN_Y + brow * ROW_H })
+    out.set(id, pos(brow, bcol))
     if (bcol > maxCol) maxCol = bcol
     const next = succ.get(id) ?? []
     for (const nxt of next) placeBranch(nxt, bcol, brow + 1)
@@ -274,7 +282,7 @@ function computeLayout(nodes: LayerNode[], edges: Edge[]): Map<string, XYPositio
   for (const n of nodes) {
     if (visited.has(n.id)) continue
     if (orphanRow >= MAX_ROWS) { orphanRow = 0; orphanCol++ }
-    out.set(n.id, { x: ORIGIN_X + orphanCol * COL_W, y: ORIGIN_Y + orphanRow * ROW_H })
+    out.set(n.id, pos(orphanRow, orphanCol))
     orphanRow++
   }
 

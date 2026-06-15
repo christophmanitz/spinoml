@@ -149,6 +149,37 @@ const cases: Case[] = [
     ],
   },
   {
+    name: 'group node compiles to a nested nn.Module (subcanvas)',
+    nodes: [
+      mkNode('input', 'Input', { name: 'x', shape: [1, 64], dtype: 'float32' }),
+      mkNode('g', 'Subgraph', {
+        class_name: 'MLPBlock',
+        subgraph: {
+          nodes: [
+            { id: 'in', layerType: 'Input', params: { name: 'x', shape: [1, 64], dtype: 'float32' } },
+            { id: 'fc1', layerType: 'Linear', params: { in_features: 64, out_features: 128 } },
+            { id: 'act', layerType: 'ReLU', params: {} },
+            { id: 'fc2', layerType: 'Linear', params: { in_features: 128, out_features: 32 } },
+            { id: 'out', layerType: 'Output', params: { name: 'out' } },
+          ],
+          edges: [
+            { source: 'in', target: 'fc1' },
+            { source: 'fc1', target: 'act' },
+            { source: 'act', target: 'fc2' },
+            { source: 'fc2', target: 'out' },
+          ],
+        },
+      }),
+      mkNode('head', 'Linear', { in_features: 32, out_features: 10 }),
+      mkNode('out', 'Output', { name: 'logits' }),
+    ],
+    edges: [
+      { id: 'e1', source: 'input', target: 'g' },
+      { id: 'e2', source: 'g', target: 'head' },
+      { id: 'e3', source: 'head', target: 'out' },
+    ],
+  },
+  {
     name: 'graph with no input (expect 1 issue)',
     nodes: [mkNode('n1', 'Conv2d')],
     edges: [],

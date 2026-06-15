@@ -1,5 +1,6 @@
-import { captureSnapshot, type GraphSnapshot } from '../canvas/GraphStore'
+import { type GraphSnapshot } from '../canvas/GraphStore'
 import { useGraphStore } from '../canvas/GraphStore'
+import { captureRootSnapshot } from '../canvas/scopeStore'
 
 export const FORMAT_VERSION = 1
 
@@ -15,7 +16,7 @@ export function serializeCurrent(): string {
     format: 'mlforge',
     version: FORMAT_VERSION,
     savedAt: new Date().toISOString(),
-    graph: captureSnapshot(useGraphStore.getState()),
+    graph: captureRootSnapshot(),
   }
   return JSON.stringify(file, null, 2)
 }

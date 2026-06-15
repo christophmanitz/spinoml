@@ -72,6 +72,19 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   clear: () => set({ past: [], future: [], canUndo: false, canRedo: false }),
 }))
 
+/** Run a GraphStore mutation without it landing on the undo stack, and rebase
+ *  the structural baseline afterwards. Used by subcanvas enter/exit, which swap
+ *  the whole graph as a navigation (not an editable change). */
+export function suspendHistory<T>(fn: () => T): T {
+  suppress = true
+  try {
+    return fn()
+  } finally {
+    lastStructural = structuralKey(captureStructuralSnapshot(useGraphStore.getState()))
+    suppress = false
+  }
+}
+
 // Subscribe: push to history whenever the structural shape of the graph
 // changes (ignore pure position drags, inferred shapes, selection).
 useGraphStore.subscribe((state, prev) => {
