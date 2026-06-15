@@ -43,10 +43,14 @@ def infer(
     try:
         exec(compile(code, "<mlforge-model>", "exec"), ns)
     except Exception as e:
+        msg = f"{type(e).__name__}: {e}"
+        # Graceful hint for the optional GNN dependency.
+        if isinstance(e, ModuleNotFoundError) and "torch_geometric" in str(e):
+            msg += " — GNN layers need PyTorch Geometric. Install it with: pip install torch_geometric"
         return {
             "ok": False,
             "stage": "compile",
-            "error": f"{type(e).__name__}: {e}",
+            "error": msg,
             "trace": traceback.format_exc(limit=4),
             "shapes": shapes,
         }

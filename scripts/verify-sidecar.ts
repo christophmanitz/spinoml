@@ -86,9 +86,29 @@ const cases: Case[] = [
     expectOk: true,
     expectShapeFor: { id: 'n1', shape: [1, 16, 64] },
   },
+  {
+    name: 'gcn node classification (int64 edge_index)',
+    nodes: [
+      mkNode('x', 'Input', { name: 'x', shape: [10, 16] }),
+      mkNode('ei', 'Input', { name: 'edge_index', dtype: 'int64', shape: [2, 20] }),
+      mkNode('n1', 'GCNConv', { in_channels: 16, out_channels: 32 }),
+      mkNode('n2', 'ReLU'),
+      mkNode('n3', 'GCNConv', { in_channels: 32, out_channels: 7 }),
+    ],
+    edges: [
+      { id: 'e1', source: 'x', target: 'n1' },
+      { id: 'e2', source: 'n1', target: 'n2' },
+      { id: 'e3', source: 'n2', target: 'n3' },
+    ],
+    expectOk: true,
+    expectShapeFor: { id: 'n3', shape: [10, 7] },
+  },
 ]
 
-const SIDECAR = 'http://127.0.0.1:7421'
+// Port-configurable so this can run against a private sidecar instance while
+// another (e.g. a parallel `tauri dev`) holds the default 7421.
+const PORT = process.env.MLFORGE_TORCH_PORT ?? '7421'
+const SIDECAR = `http://127.0.0.1:${PORT}`
 
 async function isUp(): Promise<boolean> {
   try {

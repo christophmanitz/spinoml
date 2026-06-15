@@ -95,6 +95,39 @@ const cases: Case[] = [
     ],
   },
   {
+    name: 'gcn node classification (edge_index side input)',
+    nodes: [
+      mkNode('x', 'Input', { name: 'x', shape: [10, 16] }),               // [N, F]
+      mkNode('ei', 'Input', { name: 'edge_index', dtype: 'int64', shape: [2, 20] }),
+      mkNode('n1', 'GCNConv', { in_channels: 16, out_channels: 32 }),
+      mkNode('n2', 'ReLU'),
+      mkNode('n3', 'GCNConv', { in_channels: 32, out_channels: 7 }),
+    ],
+    edges: [
+      { id: 'e1', source: 'x', target: 'n1' },
+      { id: 'e2', source: 'n1', target: 'n2' },
+      { id: 'e3', source: 'n2', target: 'n3' },
+    ],
+  },
+  {
+    name: 'gat + global pooling graph classification',
+    nodes: [
+      mkNode('x', 'Input', { name: 'x', shape: [10, 16] }),
+      mkNode('ei', 'Input', { name: 'edge_index', dtype: 'int64', shape: [2, 20] }),
+      mkNode('b', 'Input', { name: 'batch', dtype: 'int64', shape: [10] }),
+      mkNode('n1', 'GATConv', { in_channels: 16, out_channels: 8, heads: 4 }), // -> [10, 32]
+      mkNode('n2', 'ReLU'),
+      mkNode('n3', 'GlobalMeanPool'),                                          // -> [1, 32]
+      mkNode('n4', 'Linear', { in_features: 32, out_features: 3 }),
+    ],
+    edges: [
+      { id: 'e1', source: 'x', target: 'n1' },
+      { id: 'e2', source: 'n1', target: 'n2' },
+      { id: 'e3', source: 'n2', target: 'n3' },
+      { id: 'e4', source: 'n3', target: 'n4' },
+    ],
+  },
+  {
     name: 'graph with no input (expect 1 issue)',
     nodes: [mkNode('n1', 'Conv2d')],
     edges: [],

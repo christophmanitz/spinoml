@@ -28,8 +28,14 @@ export type LayerSpec = {
    *  'function' — 1→1 functional transform (reshape/permute), emits forwardExpr. */
   kind?: LayerKind
   /** For kind='merge'/'function': how to emit the forward expression given input
-   *  variable names. e.g. (xs) => `torch.cat([${xs.join(', ')}], dim=${dim})`. */
-  forwardExpr?: (inputVars: string[], params: Record<string, unknown>) => string
+   *  variable names. `aux` carries the resolved var names of special graph inputs
+   *  (an Input named 'edge_index' / 'batch') for GNN pooling ops.
+   *  e.g. (xs) => `torch.cat([${xs.join(', ')}], dim=${dim})`. */
+  forwardExpr?: (
+    inputVars: string[],
+    params: Record<string, unknown>,
+    aux: { edgeIndex?: string; batch?: string },
+  ) => string
   /** For module kinds whose constructor can't be expressed as flat kwargs
    *  (e.g. nn.TransformerEncoder wrapping a layer). Returns the full RHS of
    *  `self.attr = <expr>`. When present, the default kwargs emit is skipped. */
@@ -37,6 +43,13 @@ export type LayerSpec = {
   /** Module returns a tuple (output, state); codegen unpacks `var, _ = ...` and
    *  the sidecar forward-hook reads element 0. e.g. nn.LSTM/GRU/RNN. */
   tupleOutput?: boolean
+  /** Message-passing module whose forward takes (x, edge_index). Codegen emits
+   *  `var = self.attr(pred, edge_index)`, resolving edge_index from an Input
+   *  node named 'edge_index'. e.g. GCNConv/GATConv/SAGEConv. */
+  needsEdgeIndex?: boolean
+  /** Symbols this layer needs from torch_geometric.nn. The generator unions
+   *  these across all used nodes into one `from torch_geometric.nn import …`. */
+  pyImports?: string[]
   fields: FieldSpec[]
   summary: (params: Record<string, unknown>) => string
 }
@@ -65,7 +78,7 @@ export const LAYERS: Record<string, LayerSpec> = {
   Input: {
     type: 'Input', category: 'IO', pytorchModule: '', kind: 'input',
     fields: [
-      { name: 'name', type: 'select', options: ['x', 'x1', 'x2', 'x3', 'q', 'k', 'v', 'cond'], default: 'x' } as FieldSpec,
+      { name: 'name', type: 'select', options: ['x', 'x1', 'x2', 'x3', 'q', 'k', 'v', 'cond', 'edge_index', 'batch'], default: 'x' } as FieldSpec,
       f.shape('shape', [1, 3, 224, 224]),
       // 'int64' makes the sample input a LongTensor — required by Embedding (token ids).
       { name: 'dtype', type: 'select', options: ['float32', 'int64'], default: 'float32' } as FieldSpec,
@@ -333,6 +346,81 @@ export const LAYERS: Record<string, LayerSpec> = {
     summary: (p) => `rnn ${get(p, 'input_size', 64)}→${get(p, 'hidden_size', 128)}`,
   },
 
+  // ─── Graph (torch_geometric; consume an Input named 'edge_index') ──────
+  // Node features use the PyG convention [N_nodes, in_channels] (no batch
+  // dim). edge_index is [2, N_edges] int64 — add an Input named 'edge_index'
+  // with dtype 'int64'. Graph-level pooling additionally needs an Input
+  // named 'batch' ([N_nodes] int64).
+  GCNConv: {
+    type: 'GCNConv', category: 'Graph', pytorchModule: 'GCNConv',
+    needsEdgeIndex: true, pyImports: ['GCNConv'],
+    fields: [
+      f.int('in_channels', 16, { min: 1 }),
+      f.int('out_channels', 32, { min: 1 }),
+      f.bool('improved', false),
+      f.bool('cached', false),
+      f.bool('add_self_loops', true),
+      f.bool('bias', true),
+    ],
+    summary: (p) => `gcn ${get(p, 'in_channels', 16)}→${get(p, 'out_channels', 32)}`,
+  },
+  GATConv: {
+    type: 'GATConv', category: 'Graph', pytorchModule: 'GATConv',
+    needsEdgeIndex: true, pyImports: ['GATConv'],
+    fields: [
+      f.int('in_channels', 16, { min: 1 }),
+      f.int('out_channels', 32, { min: 1 }),
+      f.int('heads', 1, { min: 1 }),
+      f.bool('concat', true),
+      f.float('dropout', 0.0, { min: 0, max: 1, step: 0.05 }),
+      f.bool('bias', true),
+    ],
+    // out dim = out_channels * heads when concat, else out_channels.
+    summary: (p) => `gat ${get(p, 'in_channels', 16)}→${get(p, 'out_channels', 32)}×${get(p, 'heads', 1)}h`,
+  },
+  SAGEConv: {
+    type: 'SAGEConv', category: 'Graph', pytorchModule: 'SAGEConv',
+    needsEdgeIndex: true, pyImports: ['SAGEConv'],
+    fields: [
+      f.int('in_channels', 16, { min: 1 }),
+      f.int('out_channels', 32, { min: 1 }),
+      f.select('aggr', ['mean', 'max', 'add', 'min'], 'mean'),
+      f.bool('normalize', false),
+      f.bool('bias', true),
+    ],
+    summary: (p) => `sage ${get(p, 'in_channels', 16)}→${get(p, 'out_channels', 32)}`,
+  },
+  GraphConv: {
+    type: 'GraphConv', category: 'Graph', pytorchModule: 'GraphConv',
+    needsEdgeIndex: true, pyImports: ['GraphConv'],
+    fields: [
+      f.int('in_channels', 16, { min: 1 }),
+      f.int('out_channels', 32, { min: 1 }),
+      f.select('aggr', ['add', 'mean', 'max'], 'add'),
+      f.bool('bias', true),
+    ],
+    summary: (p) => `graphconv ${get(p, 'in_channels', 16)}→${get(p, 'out_channels', 32)}`,
+  },
+  GlobalMeanPool: {
+    // Graph-level readout: [N_nodes, F] → [N_graphs, F]. Needs a 'batch' Input.
+    type: 'GlobalMeanPool', category: 'Graph', pytorchModule: '', kind: 'function',
+    pyImports: ['global_mean_pool'], fields: [],
+    forwardExpr: (xs, _p, aux) => `global_mean_pool(${xs[0]}, ${aux.batch ?? 'batch'})`,
+    summary: () => 'mean pool → [B, F]',
+  },
+  GlobalMaxPool: {
+    type: 'GlobalMaxPool', category: 'Graph', pytorchModule: '', kind: 'function',
+    pyImports: ['global_max_pool'], fields: [],
+    forwardExpr: (xs, _p, aux) => `global_max_pool(${xs[0]}, ${aux.batch ?? 'batch'})`,
+    summary: () => 'max pool → [B, F]',
+  },
+  GlobalAddPool: {
+    type: 'GlobalAddPool', category: 'Graph', pytorchModule: '', kind: 'function',
+    pyImports: ['global_add_pool'], fields: [],
+    forwardExpr: (xs, _p, aux) => `global_add_pool(${xs[0]}, ${aux.batch ?? 'batch'})`,
+    summary: () => 'add pool → [B, F]',
+  },
+
   // ─── Reshape (functional 1→1, no nn.Module) ────────────────────────────
   Reshape: {
     // Batch dim is preserved automatically; `shape` is the per-sample target
@@ -495,6 +583,6 @@ export const LAYER_GROUPS: { name: string; layers: string[] }[] = (() => {
     if (!byCategory[spec.category]) byCategory[spec.category] = []
     byCategory[spec.category].push(spec.type)
   }
-  const order = ['IO', 'Conv', 'Linear', 'Recurrent', 'Norm', 'Activation', 'Pool', 'Regularize', 'Attention', 'Reshape', 'Merge']
+  const order = ['IO', 'Conv', 'Linear', 'Recurrent', 'Graph', 'Norm', 'Activation', 'Pool', 'Regularize', 'Attention', 'Reshape', 'Merge']
   return order.filter((c) => byCategory[c]).map((c) => ({ name: c, layers: byCategory[c] }))
 })()

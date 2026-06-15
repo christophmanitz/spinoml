@@ -167,14 +167,19 @@ function FixHints({
       })
     }
   }
-  if (layerType === 'Conv2d' || layerType === 'Conv1d' || layerType === 'Conv3d') {
-    const c = inShape[1]
+  const GNN_CONV = layerType === 'GCNConv' || layerType === 'GATConv'
+    || layerType === 'SAGEConv' || layerType === 'GraphConv'
+  if (layerType === 'Conv2d' || layerType === 'Conv1d' || layerType === 'Conv3d' || GNN_CONV) {
+    // For GNN node features [N, F] the feature dim is the last; for Conv it's dim 1.
+    const c = GNN_CONV ? inShape[inShape.length - 1] : inShape[1]
     const current = params.in_channels as number | undefined
     if (typeof c === 'number' && current !== c) {
       hints.push({
         label: `set in_channels = ${c}`,
         patch: { in_channels: c },
-        rationale: 'Conv expects in_channels to match the channel dim of the input',
+        rationale: GNN_CONV
+          ? 'GNN conv in_channels = node-feature dim (last dim of [N, F])'
+          : 'Conv expects in_channels to match the channel dim of the input',
       })
     }
   }
