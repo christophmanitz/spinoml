@@ -179,8 +179,31 @@ async fn ssh_exec(alias: &str, remote_cmd: &str, stdin_data: Option<&[u8]>) -> R
         .map_err(|e| format!("ssh task join: {e}"))?
 }
 
+/// Connection-multiplexing options. MLForge fires many short ssh commands (list
+/// / status / tail / gpu-stats / readFile, several per polling tick); without
+/// multiplexing each is a full TCP+KEX+auth handshake, and the burst trips the
+/// server's MaxStartups / fail2ban → "kex_exchange_identification: Connection
+/// reset by peer" (ssh exit 255). ControlMaster=auto makes the first call open a
+/// shared master connection that the rest reuse as cheap channels; ControlPersist
+/// keeps it alive ~2 min after the last use so polling bursts share one TCP
+/// connection. %C is a short hash of the connection params → a filesystem-safe,
+/// length-bounded socket name. Falls back to a fresh connection if the master is
+/// gone, so it's purely additive.
+fn control_args() -> Vec<String> {
+    let dir = std::env::temp_dir().join("mlforge-ssh");
+    let _ = std::fs::create_dir_all(&dir); // best effort; ssh won't mkdir for us
+    vec![
+        "-o".into(), "ControlMaster=auto".into(),
+        "-o".into(), format!("ControlPath={}/%C", dir.display()),
+        "-o".into(), "ControlPersist=120".into(),
+    ]
+}
+
 fn ssh_exec_blocking(alias: &str, remote_cmd: &str, stdin_data: Option<&[u8]>) -> Result<String, String> {
     let mut cmd = Command::new("ssh");
+    for o in control_args() {
+        cmd.arg(o);
+    }
     for o in SSH_OPTS {
         cmd.arg(o);
     }
