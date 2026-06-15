@@ -895,8 +895,16 @@ pub async fn ssh_start_training_run(
         // and app close); nohup → belt-and-suspenders; stdio to files; stdin
         // /dev/null. The remote command shell has job control off, so setsid
         // execs in place and $! is the python pid.
+        //
+        // The `{ … & echo $! > pid; }` brace group is load-bearing: without it,
+        // `cd dir && nohup … & echo $! > pid` is parsed as
+        // `{ cd dir && nohup … & } ; echo $! > pid`, so the pid file lands in the
+        // ssh login cwd ($HOME), not the run dir, AND $! is the transient
+        // subshell, not python. The run-list then can't find/trust the pid and
+        // reports a live run as "failed" on re-open. The group binds both the
+        // background launch and the pid write to the post-`cd` run dir.
         let launch = format!(
-            "cd {dir_q} && nohup setsid {python_q} -u train.py > stdout.log 2> stderr.log < /dev/null & echo $! > pid"
+            "cd {dir_q} && {{ nohup setsid {python_q} -u train.py > stdout.log 2> stderr.log < /dev/null & echo $! > pid; }}"
         );
         ssh_exec(&alias, &launch, None).await?;
         eprintln!("[mlforge] remote training run {run_id} launched on {alias} ({python})");
