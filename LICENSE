@@ -1,0 +1,117 @@
+SpinoML — Noncommercial No-Derivatives Source-Available License
+Copyright (c) 2026 Christoph Manitz. All Rights Reserved.
+
+================================================================================
+SUMMARY (non-binding)
+================================================================================
+You MAY run and use SpinoML for personal, educational, academic, and other
+NONCOMMERCIAL purposes, free of charge. You MAY view the source code.
+You MAY NOT use it commercially, modify it, or distribute it. The full,
+binding terms are below.
+
+================================================================================
+1. DEFINITIONS
+================================================================================
+"Software" means the SpinoML software in this repository, including its source
+code, object code, documentation, assets, designs, and all associated files.
+
+"Author" means Christoph Manitz, the copyright holder.
+
+"You" means the individual or entity exercising rights under this License.
+
+"Use" means to run, execute, and operate the Software for its intended purpose.
+
+"Noncommercial" means not primarily intended for or directed toward commercial
+advantage or monetary compensation. Use by an individual for private learning,
+personal projects, or academic research, and use by an accredited educational
+or nonprofit institution for teaching or non-commercial research, is
+Noncommercial. Any use by or for a for-profit entity in the course of its
+business, or any use that is part of generating revenue or commercial value,
+is NOT Noncommercial.
+
+================================================================================
+2. GRANT OF LIMITED PERMISSION
+================================================================================
+Subject to your continuous and complete compliance with every term of this
+License, the Author grants You a personal, non-exclusive, non-transferable,
+non-sublicensable, royalty-free, and revocable permission to:
+
+  (a) download and Use the Software solely for Noncommercial purposes; and
+  (b) view and read the source code of the Software for the purpose of
+      understanding and Using it.
+
+This is the entire permission granted. It is a permission to RUN and READ the
+Software only. No other rights are granted, whether by implication, estoppel,
+or otherwise.
+
+================================================================================
+3. RESTRICTIONS
+================================================================================
+Except to the minimum extent that mandatory applicable law expressly overrides
+these restrictions, You may NOT, without the prior, explicit, WRITTEN
+permission of the Author:
+
+  1. use the Software for any commercial purpose or any purpose that is not
+     Noncommercial as defined above;
+  2. modify, adapt, translate, port, or otherwise alter the Software, or
+     create any derivative work based on it, in whole or in part;
+  3. distribute, publish, transmit, sublicense, lease, rent, lend, sell,
+     resell, host as a service, mirror, or otherwise make the Software (or any
+     copy, fork, or portion of it) available to any third party;
+  4. incorporate the Software, or any portion, concept, structure, or
+     technique embodied in it, into any other product, service, model, or
+     codebase;
+  5. use the Software, in whole or in part, as training data, input, or
+     reference material for any machine-learning or artificial-intelligence
+     system; or
+  6. remove, obscure, or alter any copyright, license, trademark, or other
+     proprietary notice contained in the Software.
+
+You may make a reasonable number of backup copies strictly for your own
+permitted Noncommercial Use; such copies remain subject to this License.
+
+================================================================================
+4. RESERVATION OF RIGHTS
+================================================================================
+All rights not expressly granted in Section 2 are reserved by the Author.
+Publication of the source code does not place it in the public domain and does
+not grant any license under any patent, copyright, trademark, or trade secret
+beyond the limited permission stated above.
+
+================================================================================
+5. CONTRIBUTIONS
+================================================================================
+Any contribution You intentionally submit for inclusion in the Software is
+provided to the Author with an irrevocable, worldwide, royalty-free right to
+use, modify, and relicense it under any terms, and confers no rights on You.
+
+================================================================================
+6. TERMINATION
+================================================================================
+This License and the permission granted in Section 2 terminate automatically
+and immediately upon any breach of its terms, and may be revoked by the Author
+at any time at the Author's sole discretion. Upon termination or revocation You
+must immediately cease all Use of the Software and destroy all copies in your
+possession or control.
+
+================================================================================
+7. NO WARRANTY
+================================================================================
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
+
+================================================================================
+8. LIMITATION OF LIABILITY
+================================================================================
+IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM,
+OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+
+For commercial licensing, modification, or redistribution permission, contact:
+Christoph Manitz <christoph.manitz@uni-leipzig.de>
+
+================================================================================

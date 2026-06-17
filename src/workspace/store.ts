@@ -1,10 +1,12 @@
 import { create } from 'zustand'
-import { useGraphStore, captureStructuralSnapshot } from '../canvas/GraphStore'
+import { useGraphStore } from '../canvas/GraphStore'
+import { captureRootSnapshot, useScopeStore } from '../canvas/scopeStore'
 import { parseFile, serializeCurrent } from '../persistence/file'
 import { generateFromSnapshot } from '../codegen/generator'
 import { isTauri, tauriFs } from './tauri-fs'
 import { fs as fsBackend } from '../connections/backend'
 import { useConnectionsStore } from '../connections/store'
+import { confirmDialog } from '../ui/confirm'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -28,7 +30,7 @@ export type File = {
 export type Entry = Folder | File
 
 export const ROOT_ID = 'root'
-const STORAGE_KEY = 'mlforge.workspace.v1'
+const STORAGE_KEY = 'spinoml.workspace.v1'
 
 type Mode = 'browser' | 'tauri'
 
@@ -61,8 +63,8 @@ type State = {
   refreshFromDisk: () => Promise<void>
 }
 
-function pyTwinPath(mlforgeRel: string): string {
-  return mlforgeRel.replace(/\.mlforge$/i, '').replace(/[^\w\/]+/g, '_') + '.py'
+function pyTwinPath(spinomlRel: string): string {
+  return spinomlRel.replace(/\.spinoml$/i, '').replace(/[^\w\/]+/g, '_') + '.py'
 }
 
 function parentRelOf(relpath: string): string {
@@ -162,7 +164,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       const parent = get().entries[parentId]
       if (!parent || parent.kind !== 'folder') return ''
       const parentRel = parentId === ROOT_ID ? '' : parentId
-      const wantName = uniqueName(name ?? 'untitled.mlforge', siblingNames(get().entries, parentId))
+      const wantName = uniqueName(name ?? 'untitled.spinoml', siblingNames(get().entries, parentId))
       const relpath = joinRel(parentRel, wantName)
       const content = serializeCurrent()
       await fsBackend.write(relpath, content)
@@ -176,7 +178,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     const parent = get().entries[parentId]
     if (!parent || parent.kind !== 'folder') return ''
     const id = newId()
-    const wantName = uniqueName(name ?? 'untitled.mlforge', siblingNames(get().entries, parentId))
+    const wantName = uniqueName(name ?? 'untitled.spinoml', siblingNames(get().entries, parentId))
     const file: File = {
       kind: 'file', id, name: wantName, parentId,
       content: serializeCurrent(),
@@ -234,7 +236,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       const final = uniqueName(trimmed, siblingNames(get().entries, e.parentId ?? ROOT_ID))
       const newRel = joinRel(parentRel, final)
       await fsBackend.rename(id, newRel)
-      if (e.kind === 'file' && id.toLowerCase().endsWith('.mlforge')) {
+      if (e.kind === 'file' && id.toLowerCase().endsWith('.spinoml')) {
         try { await fsBackend.rename(pyTwinPath(id), pyTwinPath(newRel)) } catch { /* maybe absent */ }
       }
       const wasActive = get().activeFileId === id
@@ -256,7 +258,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       const e = get().entries[id]
       if (!e) return
       await fsBackend.remove(id)
-      if (e.kind === 'file' && id.toLowerCase().endsWith('.mlforge')) {
+      if (e.kind === 'file' && id.toLowerCase().endsWith('.spinoml')) {
         try { await fsBackend.remove(pyTwinPath(id)) } catch { /* maybe absent */ }
       }
       await get().refreshFromDisk()
@@ -301,7 +303,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       const destRel = newParentId === ROOT_ID ? '' : newParentId
       const newRel = joinRel(destRel, node.name)
       await fsBackend.rename(id, newRel)
-      if (node.kind === 'file' && id.toLowerCase().endsWith('.mlforge')) {
+      if (node.kind === 'file' && id.toLowerCase().endsWith('.spinoml')) {
         try { await fsBackend.rename(pyTwinPath(id), pyTwinPath(newRel)) } catch { /* maybe absent */ }
       }
       const wasActive = get().activeFileId === id
@@ -347,7 +349,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     const e = get().entries[id]
     if (!e || e.kind !== 'file') return false
     if (get().dirty) {
-      const ok = confirm('Current model has unsaved changes. Discard and open this file?')
+      const ok = await confirmDialog('Current model has unsaved changes. Discard and open this file?')
       if (!ok) return false
     }
     try {
@@ -357,6 +359,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
         set({ entries: { ...get().entries, [id]: { ...e, content } } })
       }
       const snap = parseFile(content)
+      useScopeStore.getState().reset()
       useGraphStore.getState().loadSnapshot(snap)
       set({ activeFileId: id, dirty: false })
       return true
@@ -397,7 +400,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
   },
 
   saveAsNew: async (parentId, name) => {
-    return get().createFile(parentId, name.endsWith('.mlforge') ? name : `${name}.mlforge`)
+    return get().createFile(parentId, name.endsWith('.spinoml') ? name : `${name}.spinoml`)
   },
 
   closeActive: () => set({ activeFileId: null, dirty: false }),
@@ -409,7 +412,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     if (get().mode === 'tauri') {
       const parentRel = parentId === ROOT_ID ? '' : parentId
       const wantName = uniqueName(
-        name.endsWith('.mlforge') ? name : `${name}.mlforge`,
+        name.endsWith('.spinoml') ? name : `${name}.spinoml`,
         siblingNames(get().entries, parentId),
       )
       const relpath = joinRel(parentRel, wantName)
@@ -422,7 +425,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     }
     const id = newId()
     const wantName = uniqueName(
-      name.endsWith('.mlforge') ? name : `${name}.mlforge`,
+      name.endsWith('.spinoml') ? name : `${name}.spinoml`,
       siblingNames(get().entries, parentId),
     )
     const file: File = {
@@ -513,7 +516,12 @@ useWorkspaceStore.subscribe((s) => { if (s.mode === 'browser') persist(s) })
 let lastFingerprint: string | null = null
 
 function fingerprintCurrent(): string {
-  return JSON.stringify(captureStructuralSnapshot(useGraphStore.getState()))
+  // Fold to the root so edits made inside a subcanvas still register as dirty.
+  const root = captureRootSnapshot()
+  return JSON.stringify({
+    nodes: root.nodes.map((n) => ({ id: n.id, layerType: n.layerType, params: n.params })),
+    edges: root.edges.map((e) => ({ source: e.source, target: e.target })),
+  })
 }
 
 function fingerprintFile(file: File): string | null {

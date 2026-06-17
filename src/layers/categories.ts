@@ -10,9 +10,11 @@ export const CATEGORY_COLORS: Record<string, string> = {
   Regularize: '#9aa1a8',
   Attention: '#ff6b9d',
   Recurrent: '#ffd166',
+  Graph: '#34d399',
   Merge: '#ec4899',
   Reshape: '#a78bfa',
   IO: '#e6e8eb',
+  Custom: '#a3e635',
 }
 
 // A short glyph rendered in the node header. Kept ASCII-safe so it survives
@@ -26,9 +28,11 @@ export const CATEGORY_ICON: Record<string, string> = {
   Regularize: '✱',   // mask
   Attention: '◈',    // attend
   Recurrent: '↻',    // loop
+  Graph: '⬡',        // node graph
   Merge: '⋈',        // join
   Reshape: '⤧',      // rearrange
   IO: '◉',           // terminal
+  Custom: '{}',      // free-form code
 }
 
 export function iconForCategory(cat: string | undefined): string {

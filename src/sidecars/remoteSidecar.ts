@@ -19,7 +19,7 @@ export type RemoteSidecarStatus =
 
 type State = {
   status: RemoteSidecarStatus
-  ensure: (alias: string, root: string) => Promise<void>
+  ensure: (alias: string, root: string, force?: boolean) => Promise<void>
   stop: () => Promise<void>
   refresh: () => Promise<void>
 }
@@ -27,10 +27,11 @@ type State = {
 export const useRemoteSidecarStore = create<State>((set) => ({
   status: { kind: 'idle' },
 
-  ensure: async (alias, root) => {
+  ensure: async (alias, root, force = false) => {
     if (!isTauri()) return
+    if (force) set({ status: { kind: 'preparing', phase: 'probe', message: 'Neu verbinden…' } })
     try {
-      const s = await invoke<RemoteSidecarStatus>('ensure_remote_sidecar', { alias, root })
+      const s = await invoke<RemoteSidecarStatus>('ensure_remote_sidecar', { alias, root, force })
       set({ status: s })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)

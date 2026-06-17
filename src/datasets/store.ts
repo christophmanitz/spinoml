@@ -120,14 +120,33 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
     // Per-input dataset binding: if every Input node has a bound dataset (via
     // its 'dataset' param), use the multi-dataset smoke endpoint. Otherwise
     // fall back to broadcasting the clicked dataset to every input.
-    const inputNodes = nodes.filter((n) => n.data.layerType === 'Input')
+    // Input-kind nodes in node order = the codegen forward-arg order. Includes
+    // the whole-graph `Graph` node (kind input), which binds 1:1 to a graph
+    // dataset / manifest branch.
+    const inputNodes = nodes.filter((n) => n.data.layerType === 'Input' || n.data.layerType === 'Graph')
     const perInputDatasets = inputNodes.map((n) => String(n.data.params.dataset ?? ''))
     const perInputOptions = inputNodes.map((n) => {
+      // A Graph node pulls the WHOLE graph (x/edge_index/batch/edge_attr) from
+      // one source; the sidecar assembles a Data. `branch` selects the manifest
+      // branch ('ligand' → 'ligand.x', …); empty for single-graph datasets.
+      if (n.data.layerType === 'Graph') {
+        const branch = String(n.data.params.branch ?? '')
+        const opt: { graph: true; branch?: string } = { graph: true }
+        if (branch) opt.branch = branch
+        return opt
+      }
       const feats = n.data.params.features as string[] | undefined
       const target = n.data.params.target as string | undefined
-      const opt: { features?: string[]; target?: string } = {}
+      const opt: { features?: string[]; target?: string; field?: string } = {}
       if (Array.isArray(feats) && feats.length) opt.features = feats
       if (target) opt.target = target
+      // For graph datasets (e.g. molecule), the Input's name selects which field
+      // to pull (x / edge_index / batch). Manifest datasets need a fully-qualified
+      // slot ('<branch>.x'), which can't be the codegen-valid Input name, so it's
+      // stored separately in `bind_field` and wins when present. Ignored by
+      // non-graph dataset kinds.
+      const bindField = n.data.params.bind_field
+      opt.field = bindField ? String(bindField) : String(n.data.params.name ?? 'x')
       return opt
     })
     const allBound = inputs.length > 1 && perInputDatasets.every((d) => d.length > 0)

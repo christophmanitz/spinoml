@@ -26,7 +26,12 @@ export async function statsDataset(abspath: string) {
   return post<StatsResult>('/dataset/stats', { abspath })
 }
 
-export type InputOption = { features?: string[]; target?: string }
+export type InputOption = {
+  features?: string[]; target?: string; field?: string
+  // A whole-graph (Graph node) input: assemble a PyG Data from one source;
+  // `branch` selects the manifest branch (empty for single-graph datasets).
+  graph?: true; branch?: string
+}
 
 export async function smokeDataset(
   code: string, abspath: string,

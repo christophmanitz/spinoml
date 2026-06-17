@@ -24,6 +24,6 @@ out: {"ok": true, "torch": "2.12.0+cpu"}
 Start:
 
 ```bash
-conda activate mlforge-dev
+conda activate spinoml-dev
 python sidecar-torch/main.py     # or: npm run sidecar:torch
 ```

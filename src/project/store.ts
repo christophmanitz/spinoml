@@ -11,11 +11,12 @@ import {
 import { tauriSsh } from '../connections/tauri-ssh'
 import { sshTarget } from '../connections/store'
 import { useRemoteSidecarStore } from '../sidecars/remoteSidecar'
+import { addRecentWorkspace } from '../workspace/recentWorkspaces'
 
 export type ProjectStatus =
   | { kind: 'none' }
   | { kind: 'loading' }
-  | { kind: 'legacy'; root: string; legacy_mlforge_count: number }
+  | { kind: 'legacy'; root: string; legacy_spinoml_count: number }
   | { kind: 'remote-missing'; root: string; alias: string }  // user pointed to a remote dir that doesn't exist yet
   | { kind: 'loaded'; root: string; meta: ProjectMeta }
   | { kind: 'error'; error: string }
@@ -27,6 +28,7 @@ type State = {
   migrate: (name: string, description: string, goal: string) => Promise<void>
   patch: (p: ProjectMetaPatch) => Promise<void>
   pickFolder: () => Promise<void>
+  openLocalPath: (path: string) => Promise<void>
   openConnection: (connectionId: string) => Promise<void>
   closeProject: () => Promise<void>
 }
@@ -56,7 +58,7 @@ export const useProjectStore = create<State>((set, get) => ({
           set({ status: { kind: 'remote-missing', root: load.root, alias: conn.alias } })
         } else {
           // Root exists but no project.json: treat as needing init. We don't
-          // currently surface "legacy" on remote (no .mlforge migration story).
+          // currently surface "legacy" on remote (no .spinoml migration story).
           set({ status: { kind: 'remote-missing', root: load.root, alias: conn.alias } })
         }
         return
@@ -71,9 +73,9 @@ export const useProjectStore = create<State>((set, get) => ({
         set({ status: { kind: 'loaded', root: load.root, meta: load.meta } })
         await bootstrapWorkspace(load.root)
       } else if (load.hasLegacyFiles) {
-        set({ status: { kind: 'legacy', root: load.root, legacy_mlforge_count: load.legacyMlforgeCount } })
+        set({ status: { kind: 'legacy', root: load.root, legacy_spinoml_count: load.legacySpinomlCount } })
       } else {
-        set({ status: { kind: 'legacy', root: load.root, legacy_mlforge_count: 0 } })
+        set({ status: { kind: 'legacy', root: load.root, legacy_spinoml_count: 0 } })
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -115,6 +117,18 @@ export const useProjectStore = create<State>((set, get) => ({
     const root = await tauriFs.pickDir()
     if (!root) return
     await get().refresh()
+    if (get().status.kind !== 'error') addRecentWorkspace(root)
+  },
+
+  openLocalPath: async (path) => {
+    useConnectionsStore.getState().setCurrent('local')
+    try {
+      const root = await tauriFs.setDir(path)
+      await get().refresh()
+      if (get().status.kind !== 'error') addRecentWorkspace(root)
+    } catch (e) {
+      set({ status: { kind: 'error', error: e instanceof Error ? e.message : String(e) } })
+    }
   },
 
   openConnection: async (connectionId) => {

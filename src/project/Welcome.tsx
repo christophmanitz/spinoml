@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { useProjectStore, type ProjectStatus } from './store'
 import { isTauri } from '../workspace/tauri-fs'
+import { confirmDialog } from '../ui/confirm'
 import {
   useConnectionsStore,
   type RemoteSshConnection,
 } from '../connections/store'
 import type { SshTestResult } from '../connections/tauri-ssh'
+import { getRecentWorkspaces, removeRecentWorkspace } from '../workspace/recentWorkspaces'
 
 type View = 'main' | 'remote-picker' | 'remote-form'
 
@@ -17,19 +19,25 @@ export default function Welcome() {
   const refresh = useProjectStore((s) => s.refresh)
   const closeProject = useProjectStore((s) => s.closeProject)
   const openConnection = useProjectStore((s) => s.openConnection)
+  const openLocalPath = useProjectStore((s) => s.openLocalPath)
+
+  const [recents, setRecents] = useState(() => getRecentWorkspaces())
 
   const saved = useConnectionsStore((s) => s.saved)
   const addRemote = useConnectionsStore((s) => s.addRemote)
+  const updateRemote = useConnectionsStore((s) => s.updateRemote)
   const removeRemote = useConnectionsStore((s) => s.removeRemote)
   const testConnection = useConnectionsStore((s) => s.testConnection)
 
   const [view, setView] = useState<View>('main')
   const [showCreateFor, setShowCreateFor] = useState<null | 'new' | 'migrate'>(null)
+  // When set, the remote form opens in edit mode for this connection.
+  const [editing, setEditing] = useState<RemoteSshConnection | null>(null)
 
   if (!isTauri()) {
     return (
       <FullScreen>
-        <Card title="Browser-Modus" subtitle="MLForge läuft hier ohne echten Workspace.">
+        <Card title="Browser-Modus" subtitle="SpinoML läuft hier ohne echten Workspace.">
           <p className="text-sm leading-relaxed text-[#9aa1a8]">
             Projekte brauchen die Tauri-Desktop-App. Starte sie mit{' '}
             <code className="rounded bg-[#1f2429] px-1 py-0.5">npm run tauri dev</code>, oder
@@ -83,8 +91,8 @@ export default function Welcome() {
           <p className="mb-3 text-sm leading-relaxed text-[#9aa1a8]">
             Auf <code className="rounded bg-[#1f2429] px-1 py-0.5">{status.alias}</code>{' '}
             existiert unter <code className="rounded bg-[#1f2429] px-1 py-0.5">{status.root}</code>{' '}
-            noch kein MLForge-Projekt. Initialisiere eins — das legt
-            <code className="mx-1 rounded bg-[#1f2429] px-1 py-0.5">mlforge.project.json</code>
+            noch kein SpinoML-Projekt. Initialisiere eins — das legt
+            <code className="mx-1 rounded bg-[#1f2429] px-1 py-0.5">spinoml.project.json</code>
             + die Standardordner (<code>models/</code>, <code>datasets/</code>,{' '}
             <code>notes/</code>, <code>experiments/</code>) auf dem Remote an.
           </p>
@@ -100,27 +108,27 @@ export default function Welcome() {
   }
 
   if (status.kind === 'legacy') {
-    const hasFiles = status.legacy_mlforge_count > 0
+    const hasFiles = status.legacy_spinoml_count > 0
     return (
       <FullScreen>
         <Card
-          title={hasFiles ? 'Ordner mit losen .mlforge-Dateien' : 'Leerer Ordner'}
+          title={hasFiles ? 'Ordner mit losen .spinoml-Dateien' : 'Leerer Ordner'}
           subtitle={status.root}
         >
           {hasFiles ? (
             <p className="mb-3 text-sm leading-relaxed text-[#9aa1a8]">
-              Dieser Ordner enthält {status.legacy_mlforge_count}{' '}
-              <code className="rounded bg-[#1f2429] px-1 py-0.5">.mlforge</code>-Datei
-              {status.legacy_mlforge_count === 1 ? '' : 'en'}, aber noch keine
-              Projekt-Struktur. Konvertiere ihn in ein MLForge-Projekt — die Dateien
+              Dieser Ordner enthält {status.legacy_spinoml_count}{' '}
+              <code className="rounded bg-[#1f2429] px-1 py-0.5">.spinoml</code>-Datei
+              {status.legacy_spinoml_count === 1 ? '' : 'en'}, aber noch keine
+              Projekt-Struktur. Konvertiere ihn in ein SpinoML-Projekt — die Dateien
               landen in <code className="rounded bg-[#1f2429] px-1 py-0.5">models/</code>,
               und du bekommst <code>datasets/</code>, <code>notes/</code> und{' '}
               <code>experiments/</code> dazu.
             </p>
           ) : (
             <p className="mb-3 text-sm leading-relaxed text-[#9aa1a8]">
-              Initialisiere hier ein neues MLForge-Projekt — das legt
-              <code className="mx-1 rounded bg-[#1f2429] px-1 py-0.5">mlforge.project.json</code>
+              Initialisiere hier ein neues SpinoML-Projekt — das legt
+              <code className="mx-1 rounded bg-[#1f2429] px-1 py-0.5">spinoml.project.json</code>
               + die Standardordner an.
             </p>
           )}
@@ -140,16 +148,21 @@ export default function Welcome() {
   if (view === 'remote-form') {
     return (
       <RemoteConnectionForm
+        initial={editing}
         onTest={testConnection}
         onSave={(label, alias, root, user) => {
           const c = addRemote(label, alias, root, user)
           return c
         }}
+        onUpdate={(id, patch) => updateRemote(id, patch)}
         onOpen={async (c) => {
           await openConnection(c.id)
           setView('main')
         }}
-        onCancel={() => setView('remote-picker')}
+        onCancel={() => {
+          setEditing(null)
+          setView('remote-picker')
+        }}
       />
     )
   }
@@ -165,7 +178,7 @@ export default function Welcome() {
             <p className="mb-3 text-sm text-[#9aa1a8]">
               Noch keine Verbindungen gespeichert. Verbindungen nutzen deine
               vorhandene <code className="rounded bg-[#1f2429] px-1 py-0.5">~/.ssh/config</code>{' '}
-              + ssh-agent — MLForge speichert keine Passwörter oder Keys.
+              + ssh-agent — SpinoML speichert keine Passwörter oder Keys.
             </p>
           ) : (
             <div className="mb-3 space-y-1.5">
@@ -191,7 +204,17 @@ export default function Welcome() {
                   </Button>
                   <button
                     onClick={() => {
-                      if (confirm(`Verbindung „${c.label}" entfernen?`)) removeRemote(c.id)
+                      setEditing(c)
+                      setView('remote-form')
+                    }}
+                    title="Verbindung bearbeiten"
+                    className="rounded px-1.5 py-1 text-[#7a8088] hover:bg-[#2a3038] hover:text-[#6ab7ff]"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (await confirmDialog(`Verbindung „${c.label}" entfernen?`)) removeRemote(c.id)
                     }}
                     title="Verbindung löschen"
                     className="rounded px-1.5 py-1 text-[#7a8088] hover:bg-[#2a3038] hover:text-rose-300"
@@ -203,7 +226,7 @@ export default function Welcome() {
             </div>
           )}
           <div className="flex gap-2">
-            <Button primary onClick={() => setView('remote-form')}>
+            <Button primary onClick={() => { setEditing(null); setView('remote-form') }}>
               Neue Verbindung
             </Button>
             <Button onClick={() => setView('main')}>Zurück</Button>
@@ -212,7 +235,7 @@ export default function Welcome() {
             <strong>Voraussetzung:</strong> Der SSH-Alias muss in deiner
             <code className="mx-1 rounded bg-[#1f2429] px-1 py-0.5">~/.ssh/config</code>
             stehen und ohne Passwort-Prompt erreichbar sein (Key + Agent, GSSAPI,
-            ControlMaster, etc.). MLForge ruft systemweites <code>ssh</code> auf.
+            ControlMaster, etc.). SpinoML ruft systemweites <code>ssh</code> auf.
           </p>
         </Card>
       </FullScreen>
@@ -223,11 +246,11 @@ export default function Welcome() {
   return (
     <FullScreen>
       <Card
-        title="MLForge"
+        title="SpinoML"
         subtitle="Drag-and-drop PyTorch-Architektur, mit Claude an deiner Seite."
       >
         <p className="mb-4 text-sm leading-relaxed text-[#9aa1a8]">
-          Ein <strong>MLForge-Projekt</strong> ist ein Ordner mit deinen Modellen
+          Ein <strong>SpinoML-Projekt</strong> ist ein Ordner mit deinen Modellen
           (<code>models/</code>), Datensätzen (<code>datasets/</code>),
           Notizen (<code>notes/</code>) und Experiment-Logs (<code>experiments/</code>).
           Claude liest den Projektkontext bei jedem Chat, damit er fokussiert
@@ -241,6 +264,36 @@ export default function Welcome() {
             Remote-Workspace (SSH)
           </Button>
         </div>
+
+        {recents.length > 0 && (
+          <div className="mt-4">
+            <div className="mb-1.5 text-[10px] uppercase tracking-wider text-[#7a8088]">Zuletzt geöffnet</div>
+            <div className="space-y-1.5">
+              {recents.map((r) => (
+                <div
+                  key={r.path}
+                  className="flex items-center gap-2 rounded border border-[#2a3038] bg-[#1a1e22] px-2 py-1.5"
+                >
+                  <button
+                    className="min-w-0 flex-1 text-left"
+                    onClick={() => void openLocalPath(r.path)}
+                    title={`Öffnen: ${r.path}`}
+                  >
+                    <div className="truncate text-sm text-[#e6e8eb]">{r.name}</div>
+                    <div className="truncate text-[10px] text-[#7a8088]">{r.path}</div>
+                  </button>
+                  <button
+                    onClick={() => { removeRecentWorkspace(r.path); setRecents(getRecentWorkspaces()) }}
+                    title="Aus der Liste entfernen"
+                    className="rounded px-1.5 py-1 text-[#7a8088] hover:bg-[#2a3038] hover:text-rose-300"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {saved.length > 0 && (
           <p className="mt-3 text-[11px] text-[#7a8088]">
             {saved.length} Remote-Verbindung{saved.length === 1 ? '' : 'en'} gespeichert —{' '}
@@ -258,20 +311,26 @@ export default function Welcome() {
 }
 
 function RemoteConnectionForm({
+  initial,
   onTest,
   onSave,
+  onUpdate,
   onOpen,
   onCancel,
 }: {
+  initial?: RemoteSshConnection | null
   onTest: (target: string) => Promise<SshTestResult>
   onSave: (label: string, alias: string, root: string, user?: string) => RemoteSshConnection
+  onUpdate: (id: string, patch: Partial<RemoteSshConnection>) => void
   onOpen: (c: RemoteSshConnection) => Promise<void>
   onCancel: () => void
 }) {
-  const [label, setLabel] = useState('')
-  const [alias, setAlias] = useState('')
-  const [user, setUser] = useState('')
-  const [root, setRoot] = useState('~/mlforge')
+  const editMode = !!initial
+  const [label, setLabel] = useState(initial?.label ?? '')
+  const [alias, setAlias] = useState(initial?.alias ?? '')
+  const [user, setUser] = useState(initial?.user ?? '')
+  const [root, setRoot] = useState(initial?.root ?? '~/spinoml')
+  const [python, setPython] = useState(initial?.python ?? '')
   const [testing, setTesting] = useState(false)
   const [busy, setBusy] = useState(false)
   const [testResult, setTestResult] = useState<SshTestResult | null>(null)
@@ -286,7 +345,7 @@ function RemoteConnectionForm({
 
   return (
     <FullScreen>
-      <Card title="Neue SSH-Verbindung">
+      <Card title={editMode ? 'SSH-Verbindung bearbeiten' : 'Neue SSH-Verbindung'}>
         <div className="space-y-3">
           <Field label="Label" hint="Wie soll das in der Liste auftauchen?">
             <input
@@ -331,15 +390,26 @@ function RemoteConnectionForm({
           </Field>
           <Field
             label="Remote-Pfad"
-            hint="Absolut (/scratch/me/mlforge) oder Home-relativ (~/projects/mlforge)."
+            hint="Absolut (/scratch/me/spinoml) oder Home-relativ (~/projects/spinoml)."
           >
             <input
               value={root}
               onChange={(e) => setRoot(e.target.value)}
-              placeholder="~/mlforge"
+              placeholder="~/spinoml"
               className={`w-full rounded border bg-[#0e1115] px-2 py-1 text-sm text-[#e6e8eb] focus:outline-none ${
                 root && !validRoot ? 'border-rose-500' : 'border-[#2a3038] focus:border-[#6ab7ff]'
               }`}
+            />
+          </Field>
+          <Field
+            label="Python (optional)"
+            hint="Interpreter mit torch (+ pandas) für Trainings-Runs. Leer = <root>/.spinoml/venv/bin/python."
+          >
+            <input
+              value={python}
+              onChange={(e) => setPython(e.target.value)}
+              placeholder="~/spinoml/.spinoml/venv/bin/python"
+              className="w-full rounded border border-[#2a3038] bg-[#0e1115] px-2 py-1 text-sm text-[#e6e8eb] focus:border-[#6ab7ff] focus:outline-none"
             />
           </Field>
 
@@ -380,24 +450,49 @@ function RemoteConnectionForm({
             >
               {testing ? 'Teste…' : 'Verbindung testen'}
             </Button>
-            <Button
-              primary
-              disabled={!validAlias || !validUser || !validRoot || busy || !label.trim()}
-              onClick={async () => {
-                setBusy(true)
-                setError(null)
-                try {
-                  const c = onSave(label.trim(), alias.trim(), root.trim(), user.trim() || undefined)
-                  await onOpen(c)
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : String(e))
-                } finally {
-                  setBusy(false)
-                }
-              }}
-            >
-              {busy ? 'Öffne…' : 'Anlegen & öffnen'}
-            </Button>
+            {editMode ? (
+              <Button
+                primary
+                disabled={!validAlias || !validUser || !validRoot || busy || !label.trim()}
+                onClick={() => {
+                  setError(null)
+                  try {
+                    onUpdate(initial!.id, {
+                      label: label.trim(),
+                      alias: alias.trim(),
+                      user: user.trim() || undefined,
+                      root: root.trim(),
+                      python: python.trim() || undefined,
+                    })
+                    onCancel()
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e))
+                  }
+                }}
+              >
+                Speichern
+              </Button>
+            ) : (
+              <Button
+                primary
+                disabled={!validAlias || !validUser || !validRoot || busy || !label.trim()}
+                onClick={async () => {
+                  setBusy(true)
+                  setError(null)
+                  try {
+                    const c = onSave(label.trim(), alias.trim(), root.trim(), user.trim() || undefined)
+                    if (python.trim()) onUpdate(c.id, { python: python.trim() })
+                    await onOpen(c)
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e))
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+              >
+                {busy ? 'Öffne…' : 'Anlegen & öffnen'}
+              </Button>
+            )}
             <Button onClick={onCancel} disabled={busy}>Abbrechen</Button>
           </div>
         </div>

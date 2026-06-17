@@ -16,13 +16,16 @@ src-tauri/target
 sidecar-llm/dist
 sidecar-llm/node_modules
 
+# Runtime artifacts
+/pid
+
 # Python sidecar
 sidecar-torch/__pycache__
 sidecar-torch/*.pyc
 sidecar-torch/.venv
 
 # Project files
-*.mlforge
+*.spinoml
 
 # Secrets
 .env

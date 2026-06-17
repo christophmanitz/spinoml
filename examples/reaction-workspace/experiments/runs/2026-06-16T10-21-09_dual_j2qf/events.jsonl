@@ -1,0 +1,825 @@
+{"t": "2026-06-16T10:21:09.809Z", "kind": "run.start", "pid": 29387}
+{"t": "2026-06-16T10:21:11.100Z", "kind": "dataset.loaded", "n_rows": 10, "branches": ["ligand", "protein"], "task": "regression", "skipped": 0}
+{"t": "2026-06-16T10:21:11.231Z", "kind": "model.built", "n_params": 34369}
+{"t": "2026-06-16T10:21:11.241Z", "kind": "config.extras", "metrics": ["mse", "mae", "r2"], "grad_clip": null, "early_stopping": null, "amp": null}
+{"t": "2026-06-16T10:21:11.243Z", "kind": "epoch.start", "epoch": 0}
+{"t": "2026-06-16T10:21:11.251Z", "kind": "batch", "epoch": 0, "step": 1, "loss": 33.944653, "lr": 0.001}
+{"t": "2026-06-16T10:21:11.397Z", "kind": "batch", "epoch": 0, "step": 2, "loss": 22.014908, "lr": 0.001}
+{"t": "2026-06-16T10:21:11.549Z", "kind": "epoch.end", "epoch": 0, "train_loss": 27.97978, "val_loss": 49.283451, "val_acc": null, "metrics": {"mse": 49.283451, "mae": 7.011112, "r2": -390.060381}, "lr": 0.001}
+{"t": "2026-06-16T10:21:11.559Z", "kind": "checkpoint", "epoch": 0, "path": "checkpoints/best.pt", "val_loss": 49.283451, "is_best": true}
+{"t": "2026-06-16T10:21:11.562Z", "kind": "sample.preds", "epoch": 0, "rows": [{"pred": 0.6563, "truth": 7.31}, {"pred": 0.6515, "truth": 8.02}]}
+{"t": "2026-06-16T10:21:11.564Z", "kind": "epoch.start", "epoch": 1}
+{"t": "2026-06-16T10:21:11.589Z", "kind": "batch", "epoch": 1, "step": 1, "loss": 26.761873, "lr": 0.001}
+{"t": "2026-06-16T10:21:11.608Z", "kind": "batch", "epoch": 1, "step": 2, "loss": 20.731819, "lr": 0.001}
+{"t": "2026-06-16T10:21:11.613Z", "kind": "epoch.end", "epoch": 1, "train_loss": 23.746846, "val_loss": 43.237007, "val_acc": null, "metrics": {"mse": 43.237007, "mae": 6.565575, "r2": -342.082315}, "lr": 0.001}
+{"t": "2026-06-16T10:21:11.616Z", "kind": "checkpoint", "epoch": 1, "path": "checkpoints/best.pt", "val_loss": 43.237007, "is_best": true}
+{"t": "2026-06-16T10:21:11.619Z", "kind": "sample.preds", "epoch": 1, "rows": [{"pred": 1.1053, "truth": 7.31}, {"pred": 1.0936, "truth": 8.02}]}
+{"t": "2026-06-16T10:21:11.621Z", "kind": "epoch.start", "epoch": 2}
+{"t": "2026-06-16T10:21:11.628Z", "kind": "batch", "epoch": 2, "step": 1, "loss": 14.834072, "lr": 0.001}
+{"t": "2026-06-16T10:21:12.131Z", "kind": "batch", "epoch": 2, "step": 2, "loss": 24.061966, "lr": 0.001}
+{"t": "2026-06-16T10:21:12.180Z", "kind": "epoch.end", "epoch": 2, "train_loss": 19.448019, "val_loss": 36.841545, "val_acc": null, "metrics": {"mse": 36.841545, "mae": 6.059184, "r2": -291.334818}, "lr": 0.001}
+{"t": "2026-06-16T10:21:12.185Z", "kind": "checkpoint", "epoch": 2, "path": "checkpoints/best.pt", "val_loss": 36.841545, "is_best": true}
+{"t": "2026-06-16T10:21:12.188Z", "kind": "sample.preds", "epoch": 2, "rows": [{"pred": 1.6084, "truth": 7.31}, {"pred": 1.6033, "truth": 8.02}]}
+{"t": "2026-06-16T10:21:12.190Z", "kind": "epoch.start", "epoch": 3}
+{"t": "2026-06-16T10:21:12.212Z", "kind": "batch", "epoch": 3, "step": 1, "loss": 10.047667, "lr": 0.001}
+{"t": "2026-06-16T10:21:12.231Z", "kind": "batch", "epoch": 3, "step": 2, "loss": 20.405643, "lr": 0.001}
+{"t": "2026-06-16T10:21:12.256Z", "kind": "epoch.end", "epoch": 3, "train_loss": 15.226655, "val_loss": 30.043791, "val_acc": null, "metrics": {"mse": 30.043791, "mae": 5.469838, "r2": -237.395162}, "lr": 0.001}
+{"t": "2026-06-16T10:21:12.281Z", "kind": "checkpoint", "epoch": 3, "path": "checkpoints/best.pt", "val_loss": 30.043791, "is_best": true}
+{"t": "2026-06-16T10:21:12.291Z", "kind": "sample.preds", "epoch": 3, "rows": [{"pred": 2.1932, "truth": 7.31}, {"pred": 2.1971, "truth": 8.02}]}
+{"t": "2026-06-16T10:21:12.294Z", "kind": "epoch.start", "epoch": 4}
+{"t": "2026-06-16T10:21:12.301Z", "kind": "batch", "epoch": 4, "step": 1, "loss": 13.558238, "lr": 0.001}
+{"t": "2026-06-16T10:21:12.314Z", "kind": "batch", "epoch": 4, "step": 2, "loss": 8.97391, "lr": 0.001}
+{"t": "2026-06-16T10:21:12.322Z", "kind": "epoch.end", "epoch": 4, "train_loss": 11.266074, "val_loss": 22.66214, "val_acc": null, "metrics": {"mse": 22.66214, "mae": 4.747801, "r2": -178.822331}, "lr": 0.001}
+{"t": "2026-06-16T10:21:12.326Z", "kind": "checkpoint", "epoch": 4, "path": "checkpoints/best.pt", "val_loss": 22.66214, "is_best": true}
+{"t": "2026-06-16T10:21:12.328Z", "kind": "sample.preds", "epoch": 4, "rows": [{"pred": 2.9094, "truth": 7.31}, {"pred": 2.925, "truth": 8.02}]}
+{"t": "2026-06-16T10:21:12.329Z", "kind": "epoch.start", "epoch": 5}
+{"t": "2026-06-16T10:21:12.364Z", "kind": "batch", "epoch": 5, "step": 1, "loss": 7.89146, "lr": 0.001}
+{"t": "2026-06-16T10:21:13.087Z", "kind": "batch", "epoch": 5, "step": 2, "loss": 6.168805, "lr": 0.001}
+{"t": "2026-06-16T10:21:13.129Z", "kind": "epoch.end", "epoch": 5, "train_loss": 7.030133, "val_loss": 15.152741, "val_acc": null, "metrics": {"mse": 15.152741, "mae": 3.877896, "r2": -119.235834}, "lr": 0.001}
+{"t": "2026-06-16T10:21:13.135Z", "kind": "checkpoint", "epoch": 5, "path": "checkpoints/best.pt", "val_loss": 15.152741, "is_best": true}
+{"t": "2026-06-16T10:21:13.138Z", "kind": "sample.preds", "epoch": 5, "rows": [{"pred": 3.7707, "truth": 7.31}, {"pred": 3.8035, "truth": 8.02}]}
+{"t": "2026-06-16T10:21:13.140Z", "kind": "epoch.start", "epoch": 6}
+{"t": "2026-06-16T10:21:13.858Z", "kind": "batch", "epoch": 6, "step": 1, "loss": 3.237764, "lr": 0.001}
+{"t": "2026-06-16T10:21:13.914Z", "kind": "batch", "epoch": 6, "step": 2, "loss": 3.391782, "lr": 0.001}
+{"t": "2026-06-16T10:21:14.106Z", "kind": "epoch.end", "epoch": 6, "train_loss": 3.314773, "val_loss": 8.381421, "val_acc": null, "metrics": {"mse": 8.381421, "mae": 2.876303, "r2": -65.50593}, "lr": 0.001}
+{"t": "2026-06-16T10:21:14.114Z", "kind": "checkpoint", "epoch": 6, "path": "checkpoints/best.pt", "val_loss": 8.381421, "is_best": true}
+{"t": "2026-06-16T10:21:14.116Z", "kind": "sample.preds", "epoch": 6, "rows": [{"pred": 4.7628, "truth": 7.31}, {"pred": 4.8146, "truth": 8.02}]}
+{"t": "2026-06-16T10:21:14.118Z", "kind": "epoch.start", "epoch": 7}
+{"t": "2026-06-16T10:21:14.798Z", "kind": "batch", "epoch": 7, "step": 1, "loss": 1.190206, "lr": 0.001}
+{"t": "2026-06-16T10:21:15.227Z", "kind": "batch", "epoch": 7, "step": 2, "loss": 1.045973, "lr": 0.001}
+{"t": "2026-06-16T10:21:15.609Z", "kind": "epoch.end", "epoch": 7, "train_loss": 1.11809, "val_loss": 3.266991, "val_acc": null, "metrics": {"mse": 3.266991, "mae": 1.779408, "r2": -24.923323}, "lr": 0.001}
+{"t": "2026-06-16T10:21:15.620Z", "kind": "checkpoint", "epoch": 7, "path": "checkpoints/best.pt", "val_loss": 3.266991, "is_best": true}
+{"t": "2026-06-16T10:21:15.622Z", "kind": "sample.preds", "epoch": 7, "rows": [{"pred": 5.8479, "truth": 7.31}, {"pred": 5.9233, "truth": 8.02}]}
+{"t": "2026-06-16T10:21:15.624Z", "kind": "epoch.start", "epoch": 8}
+{"t": "2026-06-16T10:21:16.281Z", "kind": "batch", "epoch": 8, "step": 1, "loss": 0.766044, "lr": 0.001}
+{"t": "2026-06-16T10:21:16.336Z", "kind": "batch", "epoch": 8, "step": 2, "loss": 1.321882, "lr": 0.001}
+{"t": "2026-06-16T10:21:16.351Z", "kind": "epoch.end", "epoch": 8, "train_loss": 1.043963, "val_loss": 0.793177, "val_acc": null, "metrics": {"mse": 0.793177, "mae": 0.8362, "r2": -5.293799}, "lr": 0.001}
+{"t": "2026-06-16T10:21:16.357Z", "kind": "checkpoint", "epoch": 8, "path": "checkpoints/best.pt", "val_loss": 0.793177, "is_best": true}
+{"t": "2026-06-16T10:21:16.360Z", "kind": "sample.preds", "epoch": 8, "rows": [{"pred": 6.7803, "truth": 7.31}, {"pred": 6.8773, "truth": 8.02}]}
+{"t": "2026-06-16T10:21:16.362Z", "kind": "epoch.start", "epoch": 9}
+{"t": "2026-06-16T10:21:16.577Z", "kind": "batch", "epoch": 9, "step": 1, "loss": 1.472336, "lr": 0.001}
+{"t": "2026-06-16T10:21:16.603Z", "kind": "batch", "epoch": 9, "step": 2, "loss": 3.404417, "lr": 0.001}
+{"t": "2026-06-16T10:21:16.631Z", "kind": "epoch.end", "epoch": 9, "train_loss": 2.438376, "val_loss": 0.243833, "val_acc": null, "metrics": {"mse": 0.243833, "mae": 0.391049, "r2": -0.9348}, "lr": 0.001}
+{"t": "2026-06-16T10:21:16.645Z", "kind": "checkpoint", "epoch": 9, "path": "checkpoints/best.pt", "val_loss": 0.243833, "is_best": true}
+{"t": "2026-06-16T10:21:16.651Z", "kind": "sample.preds", "epoch": 9, "rows": [{"pred": 7.2205, "truth": 7.31}, {"pred": 7.3274, "truth": 8.02}]}
+{"t": "2026-06-16T10:21:16.653Z", "kind": "epoch.start", "epoch": 10}
+{"t": "2026-06-16T10:21:16.723Z", "kind": "batch", "epoch": 10, "step": 1, "loss": 2.518142, "lr": 0.001}
+{"t": "2026-06-16T10:21:16.746Z", "kind": "batch", "epoch": 10, "step": 2, "loss": 4.005543, "lr": 0.001}
+{"t": "2026-06-16T10:21:16.770Z", "kind": "epoch.end", "epoch": 10, "train_loss": 3.261842, "val_loss": 0.316752, "val_acc": null, "metrics": {"mse": 0.316752, "mae": 0.474327, "r2": -1.513401}, "lr": 0.001}
+{"t": "2026-06-16T10:21:16.772Z", "kind": "epoch.start", "epoch": 11}
+{"t": "2026-06-16T10:21:16.981Z", "kind": "batch", "epoch": 11, "step": 1, "loss": 2.975016, "lr": 0.001}
+{"t": "2026-06-16T10:21:17.035Z", "kind": "batch", "epoch": 11, "step": 2, "loss": 2.443273, "lr": 0.001}
+{"t": "2026-06-16T10:21:17.042Z", "kind": "epoch.end", "epoch": 11, "train_loss": 2.709144, "val_loss": 0.912109, "val_acc": null, "metrics": {"mse": 0.912109, "mae": 0.903584, "r2": -6.237515}, "lr": 0.001}
+{"t": "2026-06-16T10:21:17.044Z", "kind": "epoch.start", "epoch": 12}
+{"t": "2026-06-16T10:21:17.774Z", "kind": "batch", "epoch": 12, "step": 1, "loss": 1.303358, "lr": 0.001}
+{"t": "2026-06-16T10:21:17.817Z", "kind": "batch", "epoch": 12, "step": 2, "loss": 1.977169, "lr": 0.001}
+{"t": "2026-06-16T10:21:17.889Z", "kind": "epoch.end", "epoch": 12, "train_loss": 1.640263, "val_loss": 2.279364, "val_acc": null, "metrics": {"mse": 2.279364, "mae": 1.47615, "r2": -17.08658}, "lr": 0.001}
+{"t": "2026-06-16T10:21:17.895Z", "kind": "epoch.start", "epoch": 13}
+{"t": "2026-06-16T10:21:17.963Z", "kind": "batch", "epoch": 13, "step": 1, "loss": 0.959804, "lr": 0.001}
+{"t": "2026-06-16T10:21:17.992Z", "kind": "batch", "epoch": 13, "step": 2, "loss": 0.88142, "lr": 0.001}
+{"t": "2026-06-16T10:21:18.016Z", "kind": "epoch.end", "epoch": 13, "train_loss": 0.920612, "val_loss": 4.178329, "val_acc": null, "metrics": {"mse": 4.178329, "mae": 2.018114, "r2": -32.154722}, "lr": 0.001}
+{"t": "2026-06-16T10:21:18.017Z", "kind": "epoch.start", "epoch": 14}
+{"t": "2026-06-16T10:21:18.033Z", "kind": "batch", "epoch": 14, "step": 1, "loss": 1.012335, "lr": 0.001}
+{"t": "2026-06-16T10:21:18.044Z", "kind": "batch", "epoch": 14, "step": 2, "loss": 0.727227, "lr": 0.001}
+{"t": "2026-06-16T10:21:18.056Z", "kind": "epoch.end", "epoch": 14, "train_loss": 0.869781, "val_loss": 6.040834, "val_acc": null, "metrics": {"mse": 6.040834, "mae": 2.435407, "r2": -46.933551}, "lr": 0.001}
+{"t": "2026-06-16T10:21:18.058Z", "kind": "epoch.start", "epoch": 15}
+{"t": "2026-06-16T10:21:18.074Z", "kind": "batch", "epoch": 15, "step": 1, "loss": 1.586904, "lr": 0.001}
+{"t": "2026-06-16T10:21:18.090Z", "kind": "batch", "epoch": 15, "step": 2, "loss": 0.437257, "lr": 0.001}
+{"t": "2026-06-16T10:21:18.095Z", "kind": "epoch.end", "epoch": 15, "train_loss": 1.012081, "val_loss": 7.00562, "val_acc": null, "metrics": {"mse": 7.00562, "mae": 2.625589, "r2": -54.589058}, "lr": 0.001}
+{"t": "2026-06-16T10:21:18.098Z", "kind": "epoch.start", "epoch": 16}
+{"t": "2026-06-16T10:21:18.791Z", "kind": "batch", "epoch": 16, "step": 1, "loss": 1.365045, "lr": 0.001}
+{"t": "2026-06-16T10:21:18.835Z", "kind": "batch", "epoch": 16, "step": 2, "loss": 1.05862, "lr": 0.001}
+{"t": "2026-06-16T10:21:18.847Z", "kind": "epoch.end", "epoch": 16, "train_loss": 1.211833, "val_loss": 7.149063, "val_acc": null, "metrics": {"mse": 7.149063, "mae": 2.652549, "r2": -55.727264}, "lr": 0.001}
+{"t": "2026-06-16T10:21:18.850Z", "kind": "epoch.start", "epoch": 17}
+{"t": "2026-06-16T10:21:18.868Z", "kind": "batch", "epoch": 17, "step": 1, "loss": 1.191699, "lr": 0.001}
+{"t": "2026-06-16T10:21:18.885Z", "kind": "batch", "epoch": 17, "step": 2, "loss": 1.211579, "lr": 0.001}
+{"t": "2026-06-16T10:21:18.896Z", "kind": "epoch.end", "epoch": 17, "train_loss": 1.201639, "val_loss": 6.593817, "val_acc": null, "metrics": {"mse": 6.593817, "mae": 2.545741, "r2": -51.321427}, "lr": 0.001}
+{"t": "2026-06-16T10:21:18.899Z", "kind": "epoch.start", "epoch": 18}
+{"t": "2026-06-16T10:21:18.930Z", "kind": "batch", "epoch": 18, "step": 1, "loss": 1.511393, "lr": 0.001}
+{"t": "2026-06-16T10:21:19.030Z", "kind": "batch", "epoch": 18, "step": 2, "loss": 0.616381, "lr": 0.001}
+{"t": "2026-06-16T10:21:19.037Z", "kind": "epoch.end", "epoch": 18, "train_loss": 1.063887, "val_loss": 5.512661, "val_acc": null, "metrics": {"mse": 5.512661, "mae": 2.323892, "r2": -42.742543}, "lr": 0.001}
+{"t": "2026-06-16T10:21:19.042Z", "kind": "epoch.start", "epoch": 19}
+{"t": "2026-06-16T10:21:19.114Z", "kind": "batch", "epoch": 19, "step": 1, "loss": 0.567411, "lr": 0.001}
+{"t": "2026-06-16T10:21:19.796Z", "kind": "batch", "epoch": 19, "step": 2, "loss": 1.13371, "lr": 0.001}
+{"t": "2026-06-16T10:21:19.829Z", "kind": "epoch.end", "epoch": 19, "train_loss": 0.850561, "val_loss": 4.487047, "val_acc": null, "metrics": {"mse": 4.487047, "mae": 2.091871, "r2": -34.604369}, "lr": 0.001}
+{"t": "2026-06-16T10:21:19.832Z", "kind": "epoch.start", "epoch": 20}
+{"t": "2026-06-16T10:21:19.947Z", "kind": "batch", "epoch": 20, "step": 1, "loss": 0.482736, "lr": 0.001}
+{"t": "2026-06-16T10:21:19.996Z", "kind": "batch", "epoch": 20, "step": 2, "loss": 0.98955, "lr": 0.001}
+{"t": "2026-06-16T10:21:20.020Z", "kind": "epoch.end", "epoch": 20, "train_loss": 0.736143, "val_loss": 3.64959, "val_acc": null, "metrics": {"mse": 3.64959, "mae": 1.881291, "r2": -27.959217}, "lr": 0.001}
+{"t": "2026-06-16T10:21:20.023Z", "kind": "epoch.start", "epoch": 21}
+{"t": "2026-06-16T10:21:20.040Z", "kind": "batch", "epoch": 21, "step": 1, "loss": 0.388341, "lr": 0.001}
+{"t": "2026-06-16T10:21:20.068Z", "kind": "batch", "epoch": 21, "step": 2, "loss": 1.23243, "lr": 0.001}
+{"t": "2026-06-16T10:21:20.485Z", "kind": "epoch.end", "epoch": 21, "train_loss": 0.810385, "val_loss": 2.932069, "val_acc": null, "metrics": {"mse": 2.932069, "mae": 1.680053, "r2": -22.26574}, "lr": 0.001}
+{"t": "2026-06-16T10:21:20.493Z", "kind": "epoch.start", "epoch": 22}
+{"t": "2026-06-16T10:21:20.514Z", "kind": "batch", "epoch": 22, "step": 1, "loss": 1.020823, "lr": 0.001}
+{"t": "2026-06-16T10:21:20.576Z", "kind": "batch", "epoch": 22, "step": 2, "loss": 0.707045, "lr": 0.001}
+{"t": "2026-06-16T10:21:20.607Z", "kind": "epoch.end", "epoch": 22, "train_loss": 0.863934, "val_loss": 2.605417, "val_acc": null, "metrics": {"mse": 2.605417, "mae": 1.579829, "r2": -19.673787}, "lr": 0.001}
+{"t": "2026-06-16T10:21:20.609Z", "kind": "epoch.start", "epoch": 23}
+{"t": "2026-06-16T10:21:20.617Z", "kind": "batch", "epoch": 23, "step": 1, "loss": 0.330105, "lr": 0.001}
+{"t": "2026-06-16T10:21:20.631Z", "kind": "batch", "epoch": 23, "step": 2, "loss": 1.530273, "lr": 0.001}
+{"t": "2026-06-16T10:21:20.636Z", "kind": "epoch.end", "epoch": 23, "train_loss": 0.930189, "val_loss": 2.552958, "val_acc": null, "metrics": {"mse": 2.552958, "mae": 1.562977, "r2": -19.257523}, "lr": 0.001}
+{"t": "2026-06-16T10:21:20.637Z", "kind": "epoch.start", "epoch": 24}
+{"t": "2026-06-16T10:21:20.648Z", "kind": "batch", "epoch": 24, "step": 1, "loss": 0.549609, "lr": 0.001}
+{"t": "2026-06-16T10:21:20.654Z", "kind": "batch", "epoch": 24, "step": 2, "loss": 1.183334, "lr": 0.001}
+{"t": "2026-06-16T10:21:21.040Z", "kind": "epoch.end", "epoch": 24, "train_loss": 0.866472, "val_loss": 2.89971, "val_acc": null, "metrics": {"mse": 2.89971, "mae": 1.669844, "r2": -22.008977}, "lr": 0.001}
+{"t": "2026-06-16T10:21:21.047Z", "kind": "epoch.start", "epoch": 25}
+{"t": "2026-06-16T10:21:21.087Z", "kind": "batch", "epoch": 25, "step": 1, "loss": 1.268359, "lr": 0.001}
+{"t": "2026-06-16T10:21:21.100Z", "kind": "batch", "epoch": 25, "step": 2, "loss": 0.46635, "lr": 0.001}
+{"t": "2026-06-16T10:21:21.107Z", "kind": "epoch.end", "epoch": 25, "train_loss": 0.867354, "val_loss": 3.605027, "val_acc": null, "metrics": {"mse": 3.605027, "mae": 1.868649, "r2": -27.605609}, "lr": 0.0001}
+{"t": "2026-06-16T10:21:21.110Z", "kind": "epoch.start", "epoch": 26}
+{"t": "2026-06-16T10:21:21.348Z", "kind": "batch", "epoch": 26, "step": 1, "loss": 0.480073, "lr": 0.0001}
+{"t": "2026-06-16T10:21:21.409Z", "kind": "batch", "epoch": 26, "step": 2, "loss": 1.035735, "lr": 0.0001}
+{"t": "2026-06-16T10:21:21.417Z", "kind": "epoch.end", "epoch": 26, "train_loss": 0.757904, "val_loss": 3.665574, "val_acc": null, "metrics": {"mse": 3.665574, "mae": 1.88474, "r2": -28.086047}, "lr": 0.0001}
+{"t": "2026-06-16T10:21:21.419Z", "kind": "epoch.start", "epoch": 27}
+{"t": "2026-06-16T10:21:21.439Z", "kind": "batch", "epoch": 27, "step": 1, "loss": 0.533735, "lr": 0.0001}
+{"t": "2026-06-16T10:21:21.453Z", "kind": "batch", "epoch": 27, "step": 2, "loss": 0.97168, "lr": 0.0001}
+{"t": "2026-06-16T10:21:21.463Z", "kind": "epoch.end", "epoch": 27, "train_loss": 0.752708, "val_loss": 3.709367, "val_acc": null, "metrics": {"mse": 3.709367, "mae": 1.896286, "r2": -28.433539}, "lr": 0.0001}
+{"t": "2026-06-16T10:21:21.464Z", "kind": "epoch.start", "epoch": 28}
+{"t": "2026-06-16T10:21:21.485Z", "kind": "batch", "epoch": 28, "step": 1, "loss": 0.567877, "lr": 0.0001}
+{"t": "2026-06-16T10:21:21.497Z", "kind": "batch", "epoch": 28, "step": 2, "loss": 0.939886, "lr": 0.0001}
+{"t": "2026-06-16T10:21:21.505Z", "kind": "epoch.end", "epoch": 28, "train_loss": 0.753881, "val_loss": 3.757251, "val_acc": null, "metrics": {"mse": 3.757251, "mae": 1.908837, "r2": -28.813495}, "lr": 0.0001}
+{"t": "2026-06-16T10:21:21.507Z", "kind": "epoch.start", "epoch": 29}
+{"t": "2026-06-16T10:21:22.042Z", "kind": "batch", "epoch": 29, "step": 1, "loss": 0.568888, "lr": 0.0001}
+{"t": "2026-06-16T10:21:22.096Z", "kind": "batch", "epoch": 29, "step": 2, "loss": 0.936095, "lr": 0.0001}
+{"t": "2026-06-16T10:21:22.474Z", "kind": "epoch.end", "epoch": 29, "train_loss": 0.752492, "val_loss": 3.797616, "val_acc": null, "metrics": {"mse": 3.797616, "mae": 1.919351, "r2": -29.133792}, "lr": 0.0001}
+{"t": "2026-06-16T10:21:22.513Z", "kind": "epoch.start", "epoch": 30}
+{"t": "2026-06-16T10:21:22.527Z", "kind": "batch", "epoch": 30, "step": 1, "loss": 0.596665, "lr": 0.0001}
+{"t": "2026-06-16T10:21:22.540Z", "kind": "batch", "epoch": 30, "step": 2, "loss": 0.9054, "lr": 0.0001}
+{"t": "2026-06-16T10:21:22.546Z", "kind": "epoch.end", "epoch": 30, "train_loss": 0.751033, "val_loss": 3.814203, "val_acc": null, "metrics": {"mse": 3.814203, "mae": 1.923643, "r2": -29.265409}, "lr": 0.0001}
+{"t": "2026-06-16T10:21:22.551Z", "kind": "epoch.start", "epoch": 31}
+{"t": "2026-06-16T10:21:22.585Z", "kind": "batch", "epoch": 31, "step": 1, "loss": 0.699978, "lr": 0.0001}
+{"t": "2026-06-16T10:21:22.604Z", "kind": "batch", "epoch": 31, "step": 2, "loss": 0.809078, "lr": 0.0001}
+{"t": "2026-06-16T10:21:22.624Z", "kind": "epoch.end", "epoch": 31, "train_loss": 0.754528, "val_loss": 3.854957, "val_acc": null, "metrics": {"mse": 3.854957, "mae": 1.934171, "r2": -29.588783}, "lr": 0.0001}
+{"t": "2026-06-16T10:21:22.627Z", "kind": "epoch.start", "epoch": 32}
+{"t": "2026-06-16T10:21:22.644Z", "kind": "batch", "epoch": 32, "step": 1, "loss": 0.951626, "lr": 0.0001}
+{"t": "2026-06-16T10:21:22.652Z", "kind": "batch", "epoch": 32, "step": 2, "loss": 0.550924, "lr": 0.0001}
+{"t": "2026-06-16T10:21:22.657Z", "kind": "epoch.end", "epoch": 32, "train_loss": 0.751275, "val_loss": 3.879859, "val_acc": null, "metrics": {"mse": 3.879859, "mae": 1.940571, "r2": -29.786382}, "lr": 0.0001}
+{"t": "2026-06-16T10:21:22.658Z", "kind": "epoch.start", "epoch": 33}
+{"t": "2026-06-16T10:21:22.669Z", "kind": "batch", "epoch": 33, "step": 1, "loss": 0.549039, "lr": 0.0001}
+{"t": "2026-06-16T10:21:22.680Z", "kind": "batch", "epoch": 33, "step": 2, "loss": 0.952785, "lr": 0.0001}
+{"t": "2026-06-16T10:21:22.713Z", "kind": "epoch.end", "epoch": 33, "train_loss": 0.750912, "val_loss": 3.89906, "val_acc": null, "metrics": {"mse": 3.89906, "mae": 1.945491, "r2": -29.93874}, "lr": 0.0001}
+{"t": "2026-06-16T10:21:22.717Z", "kind": "epoch.start", "epoch": 34}
+{"t": "2026-06-16T10:21:23.435Z", "kind": "batch", "epoch": 34, "step": 1, "loss": 1.283055, "lr": 0.0001}
+{"t": "2026-06-16T10:21:23.523Z", "kind": "batch", "epoch": 34, "step": 2, "loss": 0.217297, "lr": 0.0001}
+{"t": "2026-06-16T10:21:23.911Z", "kind": "epoch.end", "epoch": 34, "train_loss": 0.750176, "val_loss": 3.90833, "val_acc": null, "metrics": {"mse": 3.90833, "mae": 1.947849, "r2": -30.012297}, "lr": 0.0001}
+{"t": "2026-06-16T10:21:23.924Z", "kind": "epoch.start", "epoch": 35}
+{"t": "2026-06-16T10:21:23.970Z", "kind": "batch", "epoch": 35, "step": 1, "loss": 0.861509, "lr": 0.0001}
+{"t": "2026-06-16T10:21:23.987Z", "kind": "batch", "epoch": 35, "step": 2, "loss": 0.640477, "lr": 0.0001}
+{"t": "2026-06-16T10:21:23.996Z", "kind": "epoch.end", "epoch": 35, "train_loss": 0.750993, "val_loss": 3.922185, "val_acc": null, "metrics": {"mse": 3.922185, "mae": 1.95138, "r2": -30.122237}, "lr": 0.0001}
+{"t": "2026-06-16T10:21:23.998Z", "kind": "epoch.start", "epoch": 36}
+{"t": "2026-06-16T10:21:24.013Z", "kind": "batch", "epoch": 36, "step": 1, "loss": 0.757544, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.023Z", "kind": "batch", "epoch": 36, "step": 2, "loss": 0.743136, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.030Z", "kind": "epoch.end", "epoch": 36, "train_loss": 0.75034, "val_loss": 3.929644, "val_acc": null, "metrics": {"mse": 3.929644, "mae": 1.953271, "r2": -30.181419}, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.034Z", "kind": "epoch.start", "epoch": 37}
+{"t": "2026-06-16T10:21:24.279Z", "kind": "batch", "epoch": 37, "step": 1, "loss": 1.20154, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.306Z", "kind": "batch", "epoch": 37, "step": 2, "loss": 0.299787, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.318Z", "kind": "epoch.end", "epoch": 37, "train_loss": 0.750664, "val_loss": 3.936418, "val_acc": null, "metrics": {"mse": 3.936418, "mae": 1.954981, "r2": -30.235174}, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.325Z", "kind": "epoch.start", "epoch": 38}
+{"t": "2026-06-16T10:21:24.381Z", "kind": "batch", "epoch": 38, "step": 1, "loss": 0.785614, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.398Z", "kind": "batch", "epoch": 38, "step": 2, "loss": 0.718766, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.403Z", "kind": "epoch.end", "epoch": 38, "train_loss": 0.75219, "val_loss": 3.946171, "val_acc": null, "metrics": {"mse": 3.946171, "mae": 1.957454, "r2": -30.312561}, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.405Z", "kind": "epoch.start", "epoch": 39}
+{"t": "2026-06-16T10:21:24.414Z", "kind": "batch", "epoch": 39, "step": 1, "loss": 0.839748, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.424Z", "kind": "batch", "epoch": 39, "step": 2, "loss": 0.65828, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.430Z", "kind": "epoch.end", "epoch": 39, "train_loss": 0.749014, "val_loss": 3.936037, "val_acc": null, "metrics": {"mse": 3.936037, "mae": 1.954851, "r2": -30.232148}, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.431Z", "kind": "epoch.start", "epoch": 40}
+{"t": "2026-06-16T10:21:24.446Z", "kind": "batch", "epoch": 40, "step": 1, "loss": 0.664542, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.473Z", "kind": "batch", "epoch": 40, "step": 2, "loss": 0.834907, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.524Z", "kind": "epoch.end", "epoch": 40, "train_loss": 0.749725, "val_loss": 3.934681, "val_acc": null, "metrics": {"mse": 3.934681, "mae": 1.954487, "r2": -30.22139}, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.526Z", "kind": "epoch.start", "epoch": 41}
+{"t": "2026-06-16T10:21:24.533Z", "kind": "batch", "epoch": 41, "step": 1, "loss": 0.645237, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.567Z", "kind": "batch", "epoch": 41, "step": 2, "loss": 0.85112, "lr": 0.0001}
+{"t": "2026-06-16T10:21:24.965Z", "kind": "epoch.end", "epoch": 41, "train_loss": 0.748178, "val_loss": 3.917943, "val_acc": null, "metrics": {"mse": 3.917943, "mae": 1.950191, "r2": -30.088573}, "lr": 1e-05}
+{"t": "2026-06-16T10:21:24.971Z", "kind": "epoch.start", "epoch": 42}
+{"t": "2026-06-16T10:21:25.055Z", "kind": "batch", "epoch": 42, "step": 1, "loss": 1.090364, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.159Z", "kind": "batch", "epoch": 42, "step": 2, "loss": 0.405348, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.168Z", "kind": "epoch.end", "epoch": 42, "train_loss": 0.747856, "val_loss": 3.916661, "val_acc": null, "metrics": {"mse": 3.916661, "mae": 1.949861, "r2": -30.078405}, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.170Z", "kind": "epoch.start", "epoch": 43}
+{"t": "2026-06-16T10:21:25.181Z", "kind": "batch", "epoch": 43, "step": 1, "loss": 0.428347, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.193Z", "kind": "batch", "epoch": 43, "step": 2, "loss": 1.067285, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.198Z", "kind": "epoch.end", "epoch": 43, "train_loss": 0.747816, "val_loss": 3.915606, "val_acc": null, "metrics": {"mse": 3.915606, "mae": 1.949589, "r2": -30.070028}, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.199Z", "kind": "epoch.start", "epoch": 44}
+{"t": "2026-06-16T10:21:25.213Z", "kind": "batch", "epoch": 44, "step": 1, "loss": 1.055897, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.228Z", "kind": "batch", "epoch": 44, "step": 2, "loss": 0.439841, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.235Z", "kind": "epoch.end", "epoch": 44, "train_loss": 0.747869, "val_loss": 3.913053, "val_acc": null, "metrics": {"mse": 3.913053, "mae": 1.948933, "r2": -30.04977}, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.236Z", "kind": "epoch.start", "epoch": 45}
+{"t": "2026-06-16T10:21:25.245Z", "kind": "batch", "epoch": 45, "step": 1, "loss": 0.742038, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.279Z", "kind": "batch", "epoch": 45, "step": 2, "loss": 0.75351, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.298Z", "kind": "epoch.end", "epoch": 45, "train_loss": 0.747774, "val_loss": 3.912528, "val_acc": null, "metrics": {"mse": 3.912528, "mae": 1.948797, "r2": -30.045604}, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.299Z", "kind": "epoch.start", "epoch": 46}
+{"t": "2026-06-16T10:21:25.318Z", "kind": "batch", "epoch": 46, "step": 1, "loss": 0.627738, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.327Z", "kind": "batch", "epoch": 46, "step": 2, "loss": 0.867847, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.457Z", "kind": "epoch.end", "epoch": 46, "train_loss": 0.747793, "val_loss": 3.909864, "val_acc": null, "metrics": {"mse": 3.909864, "mae": 1.948112, "r2": -30.024469}, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.462Z", "kind": "epoch.start", "epoch": 47}
+{"t": "2026-06-16T10:21:25.499Z", "kind": "batch", "epoch": 47, "step": 1, "loss": 0.516319, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.511Z", "kind": "batch", "epoch": 47, "step": 2, "loss": 0.979035, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.519Z", "kind": "epoch.end", "epoch": 47, "train_loss": 0.747677, "val_loss": 3.90769, "val_acc": null, "metrics": {"mse": 3.90769, "mae": 1.947554, "r2": -30.007215}, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.557Z", "kind": "epoch.start", "epoch": 48}
+{"t": "2026-06-16T10:21:25.575Z", "kind": "batch", "epoch": 48, "step": 1, "loss": 0.964269, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.590Z", "kind": "batch", "epoch": 48, "step": 2, "loss": 0.530945, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.602Z", "kind": "epoch.end", "epoch": 48, "train_loss": 0.747607, "val_loss": 3.905763, "val_acc": null, "metrics": {"mse": 3.905763, "mae": 1.947058, "r2": -29.991929}, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.604Z", "kind": "epoch.start", "epoch": 49}
+{"t": "2026-06-16T10:21:25.613Z", "kind": "batch", "epoch": 49, "step": 1, "loss": 0.728764, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.646Z", "kind": "batch", "epoch": 49, "step": 2, "loss": 0.766305, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.655Z", "kind": "epoch.end", "epoch": 49, "train_loss": 0.747535, "val_loss": 3.904084, "val_acc": null, "metrics": {"mse": 3.904084, "mae": 1.946626, "r2": -29.978603}, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.658Z", "kind": "epoch.start", "epoch": 50}
+{"t": "2026-06-16T10:21:25.671Z", "kind": "batch", "epoch": 50, "step": 1, "loss": 0.924872, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.685Z", "kind": "batch", "epoch": 50, "step": 2, "loss": 0.570532, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.691Z", "kind": "epoch.end", "epoch": 50, "train_loss": 0.747702, "val_loss": 3.901381, "val_acc": null, "metrics": {"mse": 3.901381, "mae": 1.945931, "r2": -29.957161}, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.694Z", "kind": "epoch.start", "epoch": 51}
+{"t": "2026-06-16T10:21:25.707Z", "kind": "batch", "epoch": 51, "step": 1, "loss": 0.70044, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.719Z", "kind": "batch", "epoch": 51, "step": 2, "loss": 0.795285, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.729Z", "kind": "epoch.end", "epoch": 51, "train_loss": 0.747863, "val_loss": 3.898279, "val_acc": null, "metrics": {"mse": 3.898279, "mae": 1.945133, "r2": -29.932545}, "lr": 1e-05}
+{"t": "2026-06-16T10:21:25.732Z", "kind": "epoch.start", "epoch": 52}
+{"t": "2026-06-16T10:21:26.377Z", "kind": "batch", "epoch": 52, "step": 1, "loss": 0.755432, "lr": 1e-05}
+{"t": "2026-06-16T10:21:27.059Z", "kind": "batch", "epoch": 52, "step": 2, "loss": 0.739432, "lr": 1e-05}
+{"t": "2026-06-16T10:21:27.221Z", "kind": "epoch.end", "epoch": 52, "train_loss": 0.747432, "val_loss": 3.898641, "val_acc": null, "metrics": {"mse": 3.898641, "mae": 1.945224, "r2": -29.935414}, "lr": 1e-05}
+{"t": "2026-06-16T10:21:27.227Z", "kind": "epoch.start", "epoch": 53}
+{"t": "2026-06-16T10:21:27.397Z", "kind": "batch", "epoch": 53, "step": 1, "loss": 0.784327, "lr": 1e-05}
+{"t": "2026-06-16T10:21:27.419Z", "kind": "batch", "epoch": 53, "step": 2, "loss": 0.711034, "lr": 1e-05}
+{"t": "2026-06-16T10:21:27.440Z", "kind": "epoch.end", "epoch": 53, "train_loss": 0.747681, "val_loss": 3.899777, "val_acc": null, "metrics": {"mse": 3.899777, "mae": 1.945513, "r2": -29.944429}, "lr": 1e-05}
+{"t": "2026-06-16T10:21:27.443Z", "kind": "epoch.start", "epoch": 54}
+{"t": "2026-06-16T10:21:27.458Z", "kind": "batch", "epoch": 54, "step": 1, "loss": 0.923737, "lr": 1e-05}
+{"t": "2026-06-16T10:21:27.470Z", "kind": "batch", "epoch": 54, "step": 2, "loss": 0.571337, "lr": 1e-05}
+{"t": "2026-06-16T10:21:27.479Z", "kind": "epoch.end", "epoch": 54, "train_loss": 0.747537, "val_loss": 3.896913, "val_acc": null, "metrics": {"mse": 3.896913, "mae": 1.944776, "r2": -29.921701}, "lr": 1e-05}
+{"t": "2026-06-16T10:21:27.481Z", "kind": "epoch.start", "epoch": 55}
+{"t": "2026-06-16T10:21:28.158Z", "kind": "batch", "epoch": 55, "step": 1, "loss": 0.654572, "lr": 1e-05}
+{"t": "2026-06-16T10:21:28.195Z", "kind": "batch", "epoch": 55, "step": 2, "loss": 0.839969, "lr": 1e-05}
+{"t": "2026-06-16T10:21:28.583Z", "kind": "epoch.end", "epoch": 55, "train_loss": 0.747271, "val_loss": 3.896666, "val_acc": null, "metrics": {"mse": 3.896666, "mae": 1.944711, "r2": -29.919744}, "lr": 1e-05}
+{"t": "2026-06-16T10:21:28.591Z", "kind": "epoch.start", "epoch": 56}
+{"t": "2026-06-16T10:21:28.604Z", "kind": "batch", "epoch": 56, "step": 1, "loss": 0.867161, "lr": 1e-05}
+{"t": "2026-06-16T10:21:28.718Z", "kind": "batch", "epoch": 56, "step": 2, "loss": 0.627238, "lr": 1e-05}
+{"t": "2026-06-16T10:21:28.740Z", "kind": "epoch.end", "epoch": 56, "train_loss": 0.7472, "val_loss": 3.895133, "val_acc": null, "metrics": {"mse": 3.895133, "mae": 1.944315, "r2": -29.90758}, "lr": 1e-05}
+{"t": "2026-06-16T10:21:28.742Z", "kind": "epoch.start", "epoch": 57}
+{"t": "2026-06-16T10:21:28.754Z", "kind": "batch", "epoch": 57, "step": 1, "loss": 0.643972, "lr": 1e-05}
+{"t": "2026-06-16T10:21:28.769Z", "kind": "batch", "epoch": 57, "step": 2, "loss": 0.850433, "lr": 1e-05}
+{"t": "2026-06-16T10:21:28.777Z", "kind": "epoch.end", "epoch": 57, "train_loss": 0.747203, "val_loss": 3.894897, "val_acc": null, "metrics": {"mse": 3.894897, "mae": 1.944252, "r2": -29.905705}, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:28.779Z", "kind": "epoch.start", "epoch": 58}
+{"t": "2026-06-16T10:21:28.795Z", "kind": "batch", "epoch": 58, "step": 1, "loss": 0.512426, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:28.821Z", "kind": "batch", "epoch": 58, "step": 2, "loss": 0.981861, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:28.874Z", "kind": "epoch.end", "epoch": 58, "train_loss": 0.747144, "val_loss": 3.894586, "val_acc": null, "metrics": {"mse": 3.894586, "mae": 1.944173, "r2": -29.90324}, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:28.914Z", "kind": "epoch.start", "epoch": 59}
+{"t": "2026-06-16T10:21:28.929Z", "kind": "batch", "epoch": 59, "step": 1, "loss": 0.990433, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:28.958Z", "kind": "batch", "epoch": 59, "step": 2, "loss": 0.503783, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:28.996Z", "kind": "epoch.end", "epoch": 59, "train_loss": 0.747108, "val_loss": 3.894505, "val_acc": null, "metrics": {"mse": 3.894505, "mae": 1.944152, "r2": -29.902599}, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:28.999Z", "kind": "epoch.start", "epoch": 60}
+{"t": "2026-06-16T10:21:29.706Z", "kind": "batch", "epoch": 60, "step": 1, "loss": 0.544241, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:29.746Z", "kind": "batch", "epoch": 60, "step": 2, "loss": 0.949968, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:30.136Z", "kind": "epoch.end", "epoch": 60, "train_loss": 0.747105, "val_loss": 3.894433, "val_acc": null, "metrics": {"mse": 3.894433, "mae": 1.944133, "r2": -29.902026}, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:30.142Z", "kind": "epoch.start", "epoch": 61}
+{"t": "2026-06-16T10:21:30.856Z", "kind": "batch", "epoch": 61, "step": 1, "loss": 0.840454, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:30.911Z", "kind": "batch", "epoch": 61, "step": 2, "loss": 0.653745, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:30.921Z", "kind": "epoch.end", "epoch": 61, "train_loss": 0.747099, "val_loss": 3.894333, "val_acc": null, "metrics": {"mse": 3.894333, "mae": 1.944107, "r2": -29.901235}, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:30.940Z", "kind": "epoch.start", "epoch": 62}
+{"t": "2026-06-16T10:21:30.953Z", "kind": "batch", "epoch": 62, "step": 1, "loss": 0.544248, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:30.968Z", "kind": "batch", "epoch": 62, "step": 2, "loss": 0.949943, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:30.981Z", "kind": "epoch.end", "epoch": 62, "train_loss": 0.747096, "val_loss": 3.894243, "val_acc": null, "metrics": {"mse": 3.894243, "mae": 1.944084, "r2": -29.90052}, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:30.985Z", "kind": "epoch.start", "epoch": 63}
+{"t": "2026-06-16T10:21:31.645Z", "kind": "batch", "epoch": 63, "step": 1, "loss": 0.9628, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:31.659Z", "kind": "batch", "epoch": 63, "step": 2, "loss": 0.531391, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:31.669Z", "kind": "epoch.end", "epoch": 63, "train_loss": 0.747095, "val_loss": 3.894042, "val_acc": null, "metrics": {"mse": 3.894042, "mae": 1.944032, "r2": -29.898923}, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:31.671Z", "kind": "epoch.start", "epoch": 64}
+{"t": "2026-06-16T10:21:31.688Z", "kind": "batch", "epoch": 64, "step": 1, "loss": 1.08065, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:31.701Z", "kind": "batch", "epoch": 64, "step": 2, "loss": 0.413525, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:32.090Z", "kind": "epoch.end", "epoch": 64, "train_loss": 0.747088, "val_loss": 3.893973, "val_acc": null, "metrics": {"mse": 3.893973, "mae": 1.944014, "r2": -29.898378}, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:32.125Z", "kind": "epoch.start", "epoch": 65}
+{"t": "2026-06-16T10:21:32.151Z", "kind": "batch", "epoch": 65, "step": 1, "loss": 0.697796, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:32.210Z", "kind": "batch", "epoch": 65, "step": 2, "loss": 0.796474, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:32.233Z", "kind": "epoch.end", "epoch": 65, "train_loss": 0.747135, "val_loss": 3.8936, "val_acc": null, "metrics": {"mse": 3.8936, "mae": 1.943918, "r2": -29.895415}, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:32.255Z", "kind": "epoch.start", "epoch": 66}
+{"t": "2026-06-16T10:21:32.284Z", "kind": "batch", "epoch": 66, "step": 1, "loss": 0.736568, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:32.302Z", "kind": "batch", "epoch": 66, "step": 2, "loss": 0.757601, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:32.313Z", "kind": "epoch.end", "epoch": 66, "train_loss": 0.747084, "val_loss": 3.893405, "val_acc": null, "metrics": {"mse": 3.893405, "mae": 1.943868, "r2": -29.893868}, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:32.315Z", "kind": "epoch.start", "epoch": 67}
+{"t": "2026-06-16T10:21:32.328Z", "kind": "batch", "epoch": 67, "step": 1, "loss": 0.330563, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:32.356Z", "kind": "batch", "epoch": 67, "step": 2, "loss": 1.163578, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:32.777Z", "kind": "epoch.end", "epoch": 67, "train_loss": 0.74707, "val_loss": 3.893278, "val_acc": null, "metrics": {"mse": 3.893278, "mae": 1.943835, "r2": -29.892861}, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:32.825Z", "kind": "epoch.start", "epoch": 68}
+{"t": "2026-06-16T10:21:32.841Z", "kind": "batch", "epoch": 68, "step": 1, "loss": 0.358775, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:32.900Z", "kind": "batch", "epoch": 68, "step": 2, "loss": 1.135372, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:32.932Z", "kind": "epoch.end", "epoch": 68, "train_loss": 0.747074, "val_loss": 3.893302, "val_acc": null, "metrics": {"mse": 3.893302, "mae": 1.943841, "r2": -29.893053}, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:32.934Z", "kind": "epoch.start", "epoch": 69}
+{"t": "2026-06-16T10:21:32.952Z", "kind": "batch", "epoch": 69, "step": 1, "loss": 0.503661, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:33.049Z", "kind": "batch", "epoch": 69, "step": 2, "loss": 0.990468, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:33.443Z", "kind": "epoch.end", "epoch": 69, "train_loss": 0.747064, "val_loss": 3.893131, "val_acc": null, "metrics": {"mse": 3.893131, "mae": 1.943797, "r2": -29.891696}, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:33.450Z", "kind": "epoch.start", "epoch": 70}
+{"t": "2026-06-16T10:21:34.147Z", "kind": "batch", "epoch": 70, "step": 1, "loss": 0.858606, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:34.867Z", "kind": "batch", "epoch": 70, "step": 2, "loss": 0.635517, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:35.188Z", "kind": "epoch.end", "epoch": 70, "train_loss": 0.747062, "val_loss": 3.893119, "val_acc": null, "metrics": {"mse": 3.893119, "mae": 1.943794, "r2": -29.8916}, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:35.194Z", "kind": "epoch.start", "epoch": 71}
+{"t": "2026-06-16T10:21:35.234Z", "kind": "batch", "epoch": 71, "step": 1, "loss": 1.06258, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:35.253Z", "kind": "batch", "epoch": 71, "step": 2, "loss": 0.431523, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:35.262Z", "kind": "epoch.end", "epoch": 71, "train_loss": 0.747052, "val_loss": 3.892987, "val_acc": null, "metrics": {"mse": 3.892987, "mae": 1.943759, "r2": -29.890553}, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:35.264Z", "kind": "epoch.start", "epoch": 72}
+{"t": "2026-06-16T10:21:35.286Z", "kind": "batch", "epoch": 72, "step": 1, "loss": 0.939035, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:35.314Z", "kind": "batch", "epoch": 72, "step": 2, "loss": 0.555068, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:35.327Z", "kind": "epoch.end", "epoch": 72, "train_loss": 0.747051, "val_loss": 3.8928, "val_acc": null, "metrics": {"mse": 3.8928, "mae": 1.943711, "r2": -29.88907}, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:35.331Z", "kind": "epoch.start", "epoch": 73}
+{"t": "2026-06-16T10:21:35.344Z", "kind": "batch", "epoch": 73, "step": 1, "loss": 1.063139, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:35.379Z", "kind": "batch", "epoch": 73, "step": 2, "loss": 0.430966, "lr": 1.0000000000000002e-06}
+{"t": "2026-06-16T10:21:35.385Z", "kind": "epoch.end", "epoch": 73, "train_loss": 0.747053, "val_loss": 3.89257, "val_acc": null, "metrics": {"mse": 3.89257, "mae": 1.943652, "r2": -29.887239}, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:35.387Z", "kind": "epoch.start", "epoch": 74}
+{"t": "2026-06-16T10:21:35.398Z", "kind": "batch", "epoch": 74, "step": 1, "loss": 0.531452, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:35.414Z", "kind": "batch", "epoch": 74, "step": 2, "loss": 0.962622, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:35.424Z", "kind": "epoch.end", "epoch": 74, "train_loss": 0.747037, "val_loss": 3.892564, "val_acc": null, "metrics": {"mse": 3.892564, "mae": 1.94365, "r2": -29.887194}, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:35.425Z", "kind": "epoch.start", "epoch": 75}
+{"t": "2026-06-16T10:21:35.450Z", "kind": "batch", "epoch": 75, "step": 1, "loss": 0.552587, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:35.515Z", "kind": "batch", "epoch": 75, "step": 2, "loss": 0.941487, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:35.897Z", "kind": "epoch.end", "epoch": 75, "train_loss": 0.747037, "val_loss": 3.892547, "val_acc": null, "metrics": {"mse": 3.892547, "mae": 1.943646, "r2": -29.887057}, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:35.905Z", "kind": "epoch.start", "epoch": 76}
+{"t": "2026-06-16T10:21:36.222Z", "kind": "batch", "epoch": 76, "step": 1, "loss": 0.624673, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:36.270Z", "kind": "batch", "epoch": 76, "step": 2, "loss": 0.8694, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:36.651Z", "kind": "epoch.end", "epoch": 76, "train_loss": 0.747037, "val_loss": 3.892528, "val_acc": null, "metrics": {"mse": 3.892528, "mae": 1.943641, "r2": -29.88691}, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:36.657Z", "kind": "epoch.start", "epoch": 77}
+{"t": "2026-06-16T10:21:36.675Z", "kind": "batch", "epoch": 77, "step": 1, "loss": 0.430976, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:36.692Z", "kind": "batch", "epoch": 77, "step": 2, "loss": 1.063094, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:36.703Z", "kind": "epoch.end", "epoch": 77, "train_loss": 0.747035, "val_loss": 3.892527, "val_acc": null, "metrics": {"mse": 3.892527, "mae": 1.943641, "r2": -29.886902}, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:36.707Z", "kind": "epoch.start", "epoch": 78}
+{"t": "2026-06-16T10:21:37.113Z", "kind": "batch", "epoch": 78, "step": 1, "loss": 0.941487, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:37.138Z", "kind": "batch", "epoch": 78, "step": 2, "loss": 0.552583, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:37.151Z", "kind": "epoch.end", "epoch": 78, "train_loss": 0.747035, "val_loss": 3.892523, "val_acc": null, "metrics": {"mse": 3.892523, "mae": 1.94364, "r2": -29.886868}, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:37.153Z", "kind": "epoch.start", "epoch": 79}
+{"t": "2026-06-16T10:21:37.193Z", "kind": "batch", "epoch": 79, "step": 1, "loss": 0.54435, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:37.210Z", "kind": "batch", "epoch": 79, "step": 2, "loss": 0.94972, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:37.220Z", "kind": "epoch.end", "epoch": 79, "train_loss": 0.747035, "val_loss": 3.892514, "val_acc": null, "metrics": {"mse": 3.892514, "mae": 1.943637, "r2": -29.886796}, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:37.222Z", "kind": "epoch.start", "epoch": 80}
+{"t": "2026-06-16T10:21:37.230Z", "kind": "batch", "epoch": 80, "step": 1, "loss": 0.938987, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:37.264Z", "kind": "batch", "epoch": 80, "step": 2, "loss": 0.555082, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:37.312Z", "kind": "epoch.end", "epoch": 80, "train_loss": 0.747034, "val_loss": 3.892498, "val_acc": null, "metrics": {"mse": 3.892498, "mae": 1.943633, "r2": -29.886671}, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:37.318Z", "kind": "epoch.start", "epoch": 81}
+{"t": "2026-06-16T10:21:38.017Z", "kind": "batch", "epoch": 81, "step": 1, "loss": 0.840494, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:38.098Z", "kind": "batch", "epoch": 81, "step": 2, "loss": 0.653573, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:38.174Z", "kind": "epoch.end", "epoch": 81, "train_loss": 0.747034, "val_loss": 3.892489, "val_acc": null, "metrics": {"mse": 3.892489, "mae": 1.943631, "r2": -29.886603}, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:38.182Z", "kind": "epoch.start", "epoch": 82}
+{"t": "2026-06-16T10:21:38.221Z", "kind": "batch", "epoch": 82, "step": 1, "loss": 1.204327, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:38.275Z", "kind": "batch", "epoch": 82, "step": 2, "loss": 0.28974, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:38.292Z", "kind": "epoch.end", "epoch": 82, "train_loss": 0.747034, "val_loss": 3.892488, "val_acc": null, "metrics": {"mse": 3.892488, "mae": 1.94363, "r2": -29.886592}, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:38.296Z", "kind": "epoch.start", "epoch": 83}
+{"t": "2026-06-16T10:21:38.422Z", "kind": "batch", "epoch": 83, "step": 1, "loss": 1.062566, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:39.112Z", "kind": "batch", "epoch": 83, "step": 2, "loss": 0.431499, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:39.164Z", "kind": "epoch.end", "epoch": 83, "train_loss": 0.747032, "val_loss": 3.892473, "val_acc": null, "metrics": {"mse": 3.892473, "mae": 1.943627, "r2": -29.886473}, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:39.204Z", "kind": "epoch.start", "epoch": 84}
+{"t": "2026-06-16T10:21:39.255Z", "kind": "batch", "epoch": 84, "step": 1, "loss": 0.849756, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:39.314Z", "kind": "batch", "epoch": 84, "step": 2, "loss": 0.644311, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:39.330Z", "kind": "epoch.end", "epoch": 84, "train_loss": 0.747034, "val_loss": 3.892443, "val_acc": null, "metrics": {"mse": 3.892443, "mae": 1.943619, "r2": -29.886232}, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:39.332Z", "kind": "epoch.start", "epoch": 85}
+{"t": "2026-06-16T10:21:39.340Z", "kind": "batch", "epoch": 85, "step": 1, "loss": 0.768411, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:39.347Z", "kind": "batch", "epoch": 85, "step": 2, "loss": 0.725652, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:39.389Z", "kind": "epoch.end", "epoch": 85, "train_loss": 0.747032, "val_loss": 3.892438, "val_acc": null, "metrics": {"mse": 3.892438, "mae": 1.943618, "r2": -29.886195}, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:39.428Z", "kind": "epoch.start", "epoch": 86}
+{"t": "2026-06-16T10:21:40.144Z", "kind": "batch", "epoch": 86, "step": 1, "loss": 0.330502, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:40.185Z", "kind": "batch", "epoch": 86, "step": 2, "loss": 1.16356, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:40.231Z", "kind": "epoch.end", "epoch": 86, "train_loss": 0.747031, "val_loss": 3.892419, "val_acc": null, "metrics": {"mse": 3.892419, "mae": 1.943613, "r2": -29.886047}, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:40.233Z", "kind": "epoch.start", "epoch": 87}
+{"t": "2026-06-16T10:21:40.253Z", "kind": "batch", "epoch": 87, "step": 1, "loss": 0.921827, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:40.878Z", "kind": "batch", "epoch": 87, "step": 2, "loss": 0.572239, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:41.270Z", "kind": "epoch.end", "epoch": 87, "train_loss": 0.747033, "val_loss": 3.892389, "val_acc": null, "metrics": {"mse": 3.892389, "mae": 1.943605, "r2": -29.885807}, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:41.277Z", "kind": "epoch.start", "epoch": 88}
+{"t": "2026-06-16T10:21:41.297Z", "kind": "batch", "epoch": 88, "step": 1, "loss": 0.644321, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:41.312Z", "kind": "batch", "epoch": 88, "step": 2, "loss": 0.849741, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:41.319Z", "kind": "epoch.end", "epoch": 88, "train_loss": 0.747031, "val_loss": 3.892391, "val_acc": null, "metrics": {"mse": 3.892391, "mae": 1.943605, "r2": -29.885822}, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:41.321Z", "kind": "epoch.start", "epoch": 89}
+{"t": "2026-06-16T10:21:41.337Z", "kind": "batch", "epoch": 89, "step": 1, "loss": 0.766426, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:41.352Z", "kind": "batch", "epoch": 89, "step": 2, "loss": 0.727633, "lr": 1.0000000000000002e-07}
+{"t": "2026-06-16T10:21:41.358Z", "kind": "epoch.end", "epoch": 89, "train_loss": 0.74703, "val_loss": 3.892381, "val_acc": null, "metrics": {"mse": 3.892381, "mae": 1.943603, "r2": -29.885743}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:41.362Z", "kind": "epoch.start", "epoch": 90}
+{"t": "2026-06-16T10:21:41.382Z", "kind": "batch", "epoch": 90, "step": 1, "loss": 1.052339, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:41.392Z", "kind": "batch", "epoch": 90, "step": 2, "loss": 0.44172, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:41.402Z", "kind": "epoch.end", "epoch": 90, "train_loss": 0.747029, "val_loss": 3.892381, "val_acc": null, "metrics": {"mse": 3.892381, "mae": 1.943603, "r2": -29.885743}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:41.404Z", "kind": "epoch.start", "epoch": 91}
+{"t": "2026-06-16T10:21:41.418Z", "kind": "batch", "epoch": 91, "step": 1, "loss": 0.217133, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:41.431Z", "kind": "batch", "epoch": 91, "step": 2, "loss": 1.276925, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:41.440Z", "kind": "epoch.end", "epoch": 91, "train_loss": 0.747029, "val_loss": 3.892381, "val_acc": null, "metrics": {"mse": 3.892381, "mae": 1.943603, "r2": -29.885743}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:41.441Z", "kind": "epoch.start", "epoch": 92}
+{"t": "2026-06-16T10:21:41.458Z", "kind": "batch", "epoch": 92, "step": 1, "loss": 0.624648, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:41.469Z", "kind": "batch", "epoch": 92, "step": 2, "loss": 0.869411, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:41.476Z", "kind": "epoch.end", "epoch": 92, "train_loss": 0.747029, "val_loss": 3.89238, "val_acc": null, "metrics": {"mse": 3.89238, "mae": 1.943603, "r2": -29.885735}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:41.478Z", "kind": "epoch.start", "epoch": 93}
+{"t": "2026-06-16T10:21:41.489Z", "kind": "batch", "epoch": 93, "step": 1, "loss": 1.091479, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:41.747Z", "kind": "batch", "epoch": 93, "step": 2, "loss": 0.402579, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:42.065Z", "kind": "epoch.end", "epoch": 93, "train_loss": 0.747029, "val_loss": 3.89238, "val_acc": null, "metrics": {"mse": 3.89238, "mae": 1.943603, "r2": -29.885735}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:42.075Z", "kind": "epoch.start", "epoch": 94}
+{"t": "2026-06-16T10:21:42.097Z", "kind": "batch", "epoch": 94, "step": 1, "loss": 1.17593, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:42.425Z", "kind": "batch", "epoch": 94, "step": 2, "loss": 0.318128, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:42.470Z", "kind": "epoch.end", "epoch": 94, "train_loss": 0.747029, "val_loss": 3.89238, "val_acc": null, "metrics": {"mse": 3.89238, "mae": 1.943603, "r2": -29.885735}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:42.481Z", "kind": "epoch.start", "epoch": 95}
+{"t": "2026-06-16T10:21:42.512Z", "kind": "batch", "epoch": 95, "step": 1, "loss": 1.063067, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:42.567Z", "kind": "batch", "epoch": 95, "step": 2, "loss": 0.430991, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:42.878Z", "kind": "epoch.end", "epoch": 95, "train_loss": 0.747029, "val_loss": 3.89238, "val_acc": null, "metrics": {"mse": 3.89238, "mae": 1.943603, "r2": -29.885735}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:42.893Z", "kind": "epoch.start", "epoch": 96}
+{"t": "2026-06-16T10:21:43.001Z", "kind": "batch", "epoch": 96, "step": 1, "loss": 0.413307, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.025Z", "kind": "batch", "epoch": 96, "step": 2, "loss": 1.080751, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.039Z", "kind": "epoch.end", "epoch": 96, "train_loss": 0.747029, "val_loss": 3.892378, "val_acc": null, "metrics": {"mse": 3.892378, "mae": 1.943602, "r2": -29.885722}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.041Z", "kind": "epoch.start", "epoch": 97}
+{"t": "2026-06-16T10:21:43.109Z", "kind": "batch", "epoch": 97, "step": 1, "loss": 0.756045, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.508Z", "kind": "batch", "epoch": 97, "step": 2, "loss": 0.738013, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.531Z", "kind": "epoch.end", "epoch": 97, "train_loss": 0.747029, "val_loss": 3.89238, "val_acc": null, "metrics": {"mse": 3.89238, "mae": 1.943603, "r2": -29.885735}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.533Z", "kind": "epoch.start", "epoch": 98}
+{"t": "2026-06-16T10:21:43.545Z", "kind": "batch", "epoch": 98, "step": 1, "loss": 0.572241, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.564Z", "kind": "batch", "epoch": 98, "step": 2, "loss": 0.921816, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.577Z", "kind": "epoch.end", "epoch": 98, "train_loss": 0.747029, "val_loss": 3.89238, "val_acc": null, "metrics": {"mse": 3.89238, "mae": 1.943603, "r2": -29.885735}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.580Z", "kind": "epoch.start", "epoch": 99}
+{"t": "2026-06-16T10:21:43.598Z", "kind": "batch", "epoch": 99, "step": 1, "loss": 0.555085, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.610Z", "kind": "batch", "epoch": 99, "step": 2, "loss": 0.938972, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.619Z", "kind": "epoch.end", "epoch": 99, "train_loss": 0.747029, "val_loss": 3.89238, "val_acc": null, "metrics": {"mse": 3.89238, "mae": 1.943603, "r2": -29.885735}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.620Z", "kind": "epoch.start", "epoch": 100}
+{"t": "2026-06-16T10:21:43.640Z", "kind": "batch", "epoch": 100, "step": 1, "loss": 0.430991, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.667Z", "kind": "batch", "epoch": 100, "step": 2, "loss": 1.063066, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.681Z", "kind": "epoch.end", "epoch": 100, "train_loss": 0.747029, "val_loss": 3.892378, "val_acc": null, "metrics": {"mse": 3.892378, "mae": 1.943602, "r2": -29.885718}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.691Z", "kind": "epoch.start", "epoch": 101}
+{"t": "2026-06-16T10:21:43.739Z", "kind": "batch", "epoch": 101, "step": 1, "loss": 0.757686, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.869Z", "kind": "batch", "epoch": 101, "step": 2, "loss": 0.736371, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.907Z", "kind": "epoch.end", "epoch": 101, "train_loss": 0.747029, "val_loss": 3.892377, "val_acc": null, "metrics": {"mse": 3.892377, "mae": 1.943602, "r2": -29.885714}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.909Z", "kind": "epoch.start", "epoch": 102}
+{"t": "2026-06-16T10:21:43.931Z", "kind": "batch", "epoch": 102, "step": 1, "loss": 0.627165, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.972Z", "kind": "batch", "epoch": 102, "step": 2, "loss": 0.866892, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.983Z", "kind": "epoch.end", "epoch": 102, "train_loss": 0.747028, "val_loss": 3.892377, "val_acc": null, "metrics": {"mse": 3.892377, "mae": 1.943602, "r2": -29.885714}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:43.986Z", "kind": "epoch.start", "epoch": 103}
+{"t": "2026-06-16T10:21:44.641Z", "kind": "batch", "epoch": 103, "step": 1, "loss": 0.820821, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:44.681Z", "kind": "batch", "epoch": 103, "step": 2, "loss": 0.673237, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:44.700Z", "kind": "epoch.end", "epoch": 103, "train_loss": 0.747029, "val_loss": 3.892377, "val_acc": null, "metrics": {"mse": 3.892377, "mae": 1.943602, "r2": -29.885714}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:44.724Z", "kind": "epoch.start", "epoch": 104}
+{"t": "2026-06-16T10:21:44.740Z", "kind": "batch", "epoch": 104, "step": 1, "loss": 0.979755, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:44.773Z", "kind": "batch", "epoch": 104, "step": 2, "loss": 0.514302, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:44.799Z", "kind": "epoch.end", "epoch": 104, "train_loss": 0.747029, "val_loss": 3.892377, "val_acc": null, "metrics": {"mse": 3.892377, "mae": 1.943602, "r2": -29.885714}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:44.801Z", "kind": "epoch.start", "epoch": 105}
+{"t": "2026-06-16T10:21:44.820Z", "kind": "batch", "epoch": 105, "step": 1, "loss": 0.938972, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:45.534Z", "kind": "batch", "epoch": 105, "step": 2, "loss": 0.555086, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:45.813Z", "kind": "epoch.end", "epoch": 105, "train_loss": 0.747029, "val_loss": 3.892376, "val_acc": null, "metrics": {"mse": 3.892376, "mae": 1.943602, "r2": -29.885703}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:45.819Z", "kind": "epoch.start", "epoch": 106}
+{"t": "2026-06-16T10:21:45.875Z", "kind": "batch", "epoch": 106, "step": 1, "loss": 0.982274, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:45.900Z", "kind": "batch", "epoch": 106, "step": 2, "loss": 0.511784, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:45.912Z", "kind": "epoch.end", "epoch": 106, "train_loss": 0.747029, "val_loss": 3.892377, "val_acc": null, "metrics": {"mse": 3.892377, "mae": 1.943602, "r2": -29.885714}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:45.920Z", "kind": "epoch.start", "epoch": 107}
+{"t": "2026-06-16T10:21:45.947Z", "kind": "batch", "epoch": 107, "step": 1, "loss": 1.204342, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:45.973Z", "kind": "batch", "epoch": 107, "step": 2, "loss": 0.289715, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:46.024Z", "kind": "epoch.end", "epoch": 107, "train_loss": 0.747029, "val_loss": 3.892377, "val_acc": null, "metrics": {"mse": 3.892377, "mae": 1.943602, "r2": -29.885714}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:46.028Z", "kind": "epoch.start", "epoch": 108}
+{"t": "2026-06-16T10:21:46.097Z", "kind": "batch", "epoch": 108, "step": 1, "loss": 0.330499, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:46.129Z", "kind": "batch", "epoch": 108, "step": 2, "loss": 1.163559, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:46.519Z", "kind": "epoch.end", "epoch": 108, "train_loss": 0.747029, "val_loss": 3.892376, "val_acc": null, "metrics": {"mse": 3.892376, "mae": 1.943602, "r2": -29.885703}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:46.525Z", "kind": "epoch.start", "epoch": 109}
+{"t": "2026-06-16T10:21:46.692Z", "kind": "batch", "epoch": 109, "step": 1, "loss": 1.062564, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:46.744Z", "kind": "batch", "epoch": 109, "step": 2, "loss": 0.431494, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:46.761Z", "kind": "epoch.end", "epoch": 109, "train_loss": 0.747029, "val_loss": 3.892376, "val_acc": null, "metrics": {"mse": 3.892376, "mae": 1.943602, "r2": -29.885703}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:46.763Z", "kind": "epoch.start", "epoch": 110}
+{"t": "2026-06-16T10:21:46.858Z", "kind": "batch", "epoch": 110, "step": 1, "loss": 0.44172, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:46.962Z", "kind": "batch", "epoch": 110, "step": 2, "loss": 1.052336, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:47.012Z", "kind": "epoch.end", "epoch": 110, "train_loss": 0.747028, "val_loss": 3.892376, "val_acc": null, "metrics": {"mse": 3.892376, "mae": 1.943602, "r2": -29.885703}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:47.016Z", "kind": "epoch.start", "epoch": 111}
+{"t": "2026-06-16T10:21:47.657Z", "kind": "batch", "epoch": 111, "step": 1, "loss": 0.869411, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:48.368Z", "kind": "batch", "epoch": 111, "step": 2, "loss": 0.624646, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:48.710Z", "kind": "epoch.end", "epoch": 111, "train_loss": 0.747028, "val_loss": 3.892375, "val_acc": null, "metrics": {"mse": 3.892375, "mae": 1.943601, "r2": -29.885699}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:48.717Z", "kind": "epoch.start", "epoch": 112}
+{"t": "2026-06-16T10:21:49.422Z", "kind": "batch", "epoch": 112, "step": 1, "loss": 0.74874, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:49.435Z", "kind": "batch", "epoch": 112, "step": 2, "loss": 0.745317, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:49.450Z", "kind": "epoch.end", "epoch": 112, "train_loss": 0.747029, "val_loss": 3.892374, "val_acc": null, "metrics": {"mse": 3.892374, "mae": 1.943601, "r2": -29.885684}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:49.452Z", "kind": "epoch.start", "epoch": 113}
+{"t": "2026-06-16T10:21:49.487Z", "kind": "batch", "epoch": 113, "step": 1, "loss": 0.624646, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:49.541Z", "kind": "batch", "epoch": 113, "step": 2, "loss": 0.869411, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:49.579Z", "kind": "epoch.end", "epoch": 113, "train_loss": 0.747029, "val_loss": 3.892374, "val_acc": null, "metrics": {"mse": 3.892374, "mae": 1.943601, "r2": -29.885684}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:49.587Z", "kind": "epoch.start", "epoch": 114}
+{"t": "2026-06-16T10:21:49.607Z", "kind": "batch", "epoch": 114, "step": 1, "loss": 0.766426, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:50.264Z", "kind": "batch", "epoch": 114, "step": 2, "loss": 0.727632, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:50.652Z", "kind": "epoch.end", "epoch": 114, "train_loss": 0.747029, "val_loss": 3.892374, "val_acc": null, "metrics": {"mse": 3.892374, "mae": 1.943601, "r2": -29.885684}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:50.658Z", "kind": "epoch.start", "epoch": 115}
+{"t": "2026-06-16T10:21:50.751Z", "kind": "batch", "epoch": 115, "step": 1, "loss": 0.627165, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:51.331Z", "kind": "batch", "epoch": 115, "step": 2, "loss": 0.866892, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:51.537Z", "kind": "epoch.end", "epoch": 115, "train_loss": 0.747028, "val_loss": 3.892374, "val_acc": null, "metrics": {"mse": 3.892374, "mae": 1.943601, "r2": -29.885684}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:51.559Z", "kind": "epoch.start", "epoch": 116}
+{"t": "2026-06-16T10:21:51.578Z", "kind": "batch", "epoch": 116, "step": 1, "loss": 0.777154, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:51.589Z", "kind": "batch", "epoch": 116, "step": 2, "loss": 0.716903, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:51.600Z", "kind": "epoch.end", "epoch": 116, "train_loss": 0.747028, "val_loss": 3.892374, "val_acc": null, "metrics": {"mse": 3.892374, "mae": 1.943601, "r2": -29.885684}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:51.605Z", "kind": "epoch.start", "epoch": 117}
+{"t": "2026-06-16T10:21:51.627Z", "kind": "batch", "epoch": 117, "step": 1, "loss": 0.921814, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:51.680Z", "kind": "batch", "epoch": 117, "step": 2, "loss": 0.572243, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:52.076Z", "kind": "epoch.end", "epoch": 117, "train_loss": 0.747029, "val_loss": 3.89237, "val_acc": null, "metrics": {"mse": 3.89237, "mae": 1.9436, "r2": -29.885654}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:52.082Z", "kind": "epoch.start", "epoch": 118}
+{"t": "2026-06-16T10:21:52.119Z", "kind": "batch", "epoch": 118, "step": 1, "loss": 0.431494, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:52.837Z", "kind": "batch", "epoch": 118, "step": 2, "loss": 1.062563, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:52.864Z", "kind": "epoch.end", "epoch": 118, "train_loss": 0.747028, "val_loss": 3.89237, "val_acc": null, "metrics": {"mse": 3.89237, "mae": 1.9436, "r2": -29.885654}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:52.866Z", "kind": "epoch.start", "epoch": 119}
+{"t": "2026-06-16T10:21:52.904Z", "kind": "batch", "epoch": 119, "step": 1, "loss": 0.544357, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:52.927Z", "kind": "batch", "epoch": 119, "step": 2, "loss": 0.9497, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:52.936Z", "kind": "epoch.end", "epoch": 119, "train_loss": 0.747028, "val_loss": 3.89237, "val_acc": null, "metrics": {"mse": 3.89237, "mae": 1.9436, "r2": -29.885654}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:52.938Z", "kind": "epoch.start", "epoch": 120}
+{"t": "2026-06-16T10:21:52.958Z", "kind": "batch", "epoch": 120, "step": 1, "loss": 0.697227, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:52.983Z", "kind": "batch", "epoch": 120, "step": 2, "loss": 0.796831, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:53.016Z", "kind": "epoch.end", "epoch": 120, "train_loss": 0.747029, "val_loss": 3.89237, "val_acc": null, "metrics": {"mse": 3.89237, "mae": 1.9436, "r2": -29.885654}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:53.018Z", "kind": "epoch.start", "epoch": 121}
+{"t": "2026-06-16T10:21:53.725Z", "kind": "batch", "epoch": 121, "step": 1, "loss": 0.820818, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:53.769Z", "kind": "batch", "epoch": 121, "step": 2, "loss": 0.673239, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:53.829Z", "kind": "epoch.end", "epoch": 121, "train_loss": 0.747028, "val_loss": 3.892368, "val_acc": null, "metrics": {"mse": 3.892368, "mae": 1.943599, "r2": -29.885638}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:53.838Z", "kind": "epoch.start", "epoch": 122}
+{"t": "2026-06-16T10:21:54.562Z", "kind": "batch", "epoch": 122, "step": 1, "loss": 0.748738, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:55.240Z", "kind": "batch", "epoch": 122, "step": 2, "loss": 0.745318, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:55.624Z", "kind": "epoch.end", "epoch": 122, "train_loss": 0.747028, "val_loss": 3.892366, "val_acc": null, "metrics": {"mse": 3.892366, "mae": 1.943599, "r2": -29.885627}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:55.632Z", "kind": "epoch.start", "epoch": 123}
+{"t": "2026-06-16T10:21:56.367Z", "kind": "batch", "epoch": 123, "step": 1, "loss": 0.627165, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.069Z", "kind": "batch", "epoch": 123, "step": 2, "loss": 0.866891, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.466Z", "kind": "epoch.end", "epoch": 123, "train_loss": 0.747028, "val_loss": 3.892367, "val_acc": null, "metrics": {"mse": 3.892367, "mae": 1.943599, "r2": -29.885635}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.471Z", "kind": "epoch.start", "epoch": 124}
+{"t": "2026-06-16T10:21:57.534Z", "kind": "batch", "epoch": 124, "step": 1, "loss": 0.796831, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.579Z", "kind": "batch", "epoch": 124, "step": 2, "loss": 0.697226, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.591Z", "kind": "epoch.end", "epoch": 124, "train_loss": 0.747028, "val_loss": 3.892369, "val_acc": null, "metrics": {"mse": 3.892369, "mae": 1.9436, "r2": -29.88565}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.594Z", "kind": "epoch.start", "epoch": 125}
+{"t": "2026-06-16T10:21:57.612Z", "kind": "batch", "epoch": 125, "step": 1, "loss": 0.552566, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.625Z", "kind": "batch", "epoch": 125, "step": 2, "loss": 0.94149, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.631Z", "kind": "epoch.end", "epoch": 125, "train_loss": 0.747028, "val_loss": 3.892366, "val_acc": null, "metrics": {"mse": 3.892366, "mae": 1.943599, "r2": -29.885627}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.636Z", "kind": "epoch.start", "epoch": 126}
+{"t": "2026-06-16T10:21:57.646Z", "kind": "batch", "epoch": 126, "step": 1, "loss": 0.73801, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.654Z", "kind": "batch", "epoch": 126, "step": 2, "loss": 0.756046, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.662Z", "kind": "epoch.end", "epoch": 126, "train_loss": 0.747028, "val_loss": 3.892366, "val_acc": null, "metrics": {"mse": 3.892366, "mae": 1.943599, "r2": -29.885627}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.664Z", "kind": "epoch.start", "epoch": 127}
+{"t": "2026-06-16T10:21:57.675Z", "kind": "batch", "epoch": 127, "step": 1, "loss": 0.441721, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.683Z", "kind": "batch", "epoch": 127, "step": 2, "loss": 1.052336, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.690Z", "kind": "epoch.end", "epoch": 127, "train_loss": 0.747028, "val_loss": 3.892366, "val_acc": null, "metrics": {"mse": 3.892366, "mae": 1.943599, "r2": -29.885627}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.694Z", "kind": "epoch.start", "epoch": 128}
+{"t": "2026-06-16T10:21:57.708Z", "kind": "batch", "epoch": 128, "step": 1, "loss": 1.052335, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.719Z", "kind": "batch", "epoch": 128, "step": 2, "loss": 0.441721, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.729Z", "kind": "epoch.end", "epoch": 128, "train_loss": 0.747028, "val_loss": 3.892366, "val_acc": null, "metrics": {"mse": 3.892366, "mae": 1.943599, "r2": -29.885627}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.731Z", "kind": "epoch.start", "epoch": 129}
+{"t": "2026-06-16T10:21:57.738Z", "kind": "batch", "epoch": 129, "step": 1, "loss": 0.949699, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.752Z", "kind": "batch", "epoch": 129, "step": 2, "loss": 0.544357, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.762Z", "kind": "epoch.end", "epoch": 129, "train_loss": 0.747028, "val_loss": 3.892366, "val_acc": null, "metrics": {"mse": 3.892366, "mae": 1.943599, "r2": -29.885627}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.764Z", "kind": "epoch.start", "epoch": 130}
+{"t": "2026-06-16T10:21:57.785Z", "kind": "batch", "epoch": 130, "step": 1, "loss": 0.766425, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.822Z", "kind": "batch", "epoch": 130, "step": 2, "loss": 0.727631, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.834Z", "kind": "epoch.end", "epoch": 130, "train_loss": 0.747028, "val_loss": 3.892365, "val_acc": null, "metrics": {"mse": 3.892365, "mae": 1.943599, "r2": -29.88562}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:57.836Z", "kind": "epoch.start", "epoch": 131}
+{"t": "2026-06-16T10:21:58.287Z", "kind": "batch", "epoch": 131, "step": 1, "loss": 1.276923, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:58.303Z", "kind": "batch", "epoch": 131, "step": 2, "loss": 0.217133, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:58.314Z", "kind": "epoch.end", "epoch": 131, "train_loss": 0.747028, "val_loss": 3.892365, "val_acc": null, "metrics": {"mse": 3.892365, "mae": 1.943599, "r2": -29.88562}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:58.316Z", "kind": "epoch.start", "epoch": 132}
+{"t": "2026-06-16T10:21:58.669Z", "kind": "batch", "epoch": 132, "step": 1, "loss": 0.858683, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:58.691Z", "kind": "batch", "epoch": 132, "step": 2, "loss": 0.635373, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:58.703Z", "kind": "epoch.end", "epoch": 132, "train_loss": 0.747028, "val_loss": 3.892366, "val_acc": null, "metrics": {"mse": 3.892366, "mae": 1.943599, "r2": -29.885627}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:58.705Z", "kind": "epoch.start", "epoch": 133}
+{"t": "2026-06-16T10:21:58.724Z", "kind": "batch", "epoch": 133, "step": 1, "loss": 0.727631, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:58.752Z", "kind": "batch", "epoch": 133, "step": 2, "loss": 0.766425, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:58.794Z", "kind": "epoch.end", "epoch": 133, "train_loss": 0.747028, "val_loss": 3.892366, "val_acc": null, "metrics": {"mse": 3.892366, "mae": 1.943599, "r2": -29.885627}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:58.796Z", "kind": "epoch.start", "epoch": 134}
+{"t": "2026-06-16T10:21:58.837Z", "kind": "batch", "epoch": 134, "step": 1, "loss": 1.091479, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:58.856Z", "kind": "batch", "epoch": 134, "step": 2, "loss": 0.402577, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:59.226Z", "kind": "epoch.end", "epoch": 134, "train_loss": 0.747028, "val_loss": 3.892365, "val_acc": null, "metrics": {"mse": 3.892365, "mae": 1.943599, "r2": -29.88562}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:59.232Z", "kind": "epoch.start", "epoch": 135}
+{"t": "2026-06-16T10:21:59.552Z", "kind": "batch", "epoch": 135, "step": 1, "loss": 0.756047, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:59.696Z", "kind": "batch", "epoch": 135, "step": 2, "loss": 0.738009, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:59.711Z", "kind": "epoch.end", "epoch": 135, "train_loss": 0.747028, "val_loss": 3.892365, "val_acc": null, "metrics": {"mse": 3.892365, "mae": 1.943599, "r2": -29.88562}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:21:59.713Z", "kind": "epoch.start", "epoch": 136}
+{"t": "2026-06-16T10:21:59.958Z", "kind": "batch", "epoch": 136, "step": 1, "loss": 1.276923, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:00.392Z", "kind": "batch", "epoch": 136, "step": 2, "loss": 0.217133, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:00.406Z", "kind": "epoch.end", "epoch": 136, "train_loss": 0.747028, "val_loss": 3.892364, "val_acc": null, "metrics": {"mse": 3.892364, "mae": 1.943599, "r2": -29.88561}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:00.409Z", "kind": "epoch.start", "epoch": 137}
+{"t": "2026-06-16T10:22:00.420Z", "kind": "batch", "epoch": 137, "step": 1, "loss": 0.727631, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:00.435Z", "kind": "batch", "epoch": 137, "step": 2, "loss": 0.766426, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:00.589Z", "kind": "epoch.end", "epoch": 137, "train_loss": 0.747028, "val_loss": 3.892364, "val_acc": null, "metrics": {"mse": 3.892364, "mae": 1.943599, "r2": -29.88561}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:00.622Z", "kind": "epoch.start", "epoch": 138}
+{"t": "2026-06-16T10:22:00.674Z", "kind": "batch", "epoch": 138, "step": 1, "loss": 0.644322, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:00.726Z", "kind": "batch", "epoch": 138, "step": 2, "loss": 0.849733, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:00.736Z", "kind": "epoch.end", "epoch": 138, "train_loss": 0.747028, "val_loss": 3.892364, "val_acc": null, "metrics": {"mse": 3.892364, "mae": 1.943599, "r2": -29.88561}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:00.739Z", "kind": "epoch.start", "epoch": 139}
+{"t": "2026-06-16T10:22:00.805Z", "kind": "batch", "epoch": 139, "step": 1, "loss": 0.330497, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.465Z", "kind": "batch", "epoch": 139, "step": 2, "loss": 1.163558, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.481Z", "kind": "epoch.end", "epoch": 139, "train_loss": 0.747028, "val_loss": 3.892363, "val_acc": null, "metrics": {"mse": 3.892363, "mae": 1.943598, "r2": -29.885601}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.485Z", "kind": "epoch.start", "epoch": 140}
+{"t": "2026-06-16T10:22:01.498Z", "kind": "batch", "epoch": 140, "step": 1, "loss": 1.204343, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.506Z", "kind": "batch", "epoch": 140, "step": 2, "loss": 0.289712, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.541Z", "kind": "epoch.end", "epoch": 140, "train_loss": 0.747028, "val_loss": 3.892362, "val_acc": null, "metrics": {"mse": 3.892362, "mae": 1.943598, "r2": -29.885595}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.543Z", "kind": "epoch.start", "epoch": 141}
+{"t": "2026-06-16T10:22:01.554Z", "kind": "batch", "epoch": 141, "step": 1, "loss": 1.052334, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.566Z", "kind": "batch", "epoch": 141, "step": 2, "loss": 0.441721, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.575Z", "kind": "epoch.end", "epoch": 141, "train_loss": 0.747028, "val_loss": 3.892363, "val_acc": null, "metrics": {"mse": 3.892363, "mae": 1.943598, "r2": -29.885597}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.577Z", "kind": "epoch.start", "epoch": 142}
+{"t": "2026-06-16T10:22:01.590Z", "kind": "batch", "epoch": 142, "step": 1, "loss": 0.868911, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.603Z", "kind": "batch", "epoch": 142, "step": 2, "loss": 0.625144, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.607Z", "kind": "epoch.end", "epoch": 142, "train_loss": 0.747028, "val_loss": 3.892363, "val_acc": null, "metrics": {"mse": 3.892363, "mae": 1.943598, "r2": -29.885597}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.609Z", "kind": "epoch.start", "epoch": 143}
+{"t": "2026-06-16T10:22:01.625Z", "kind": "batch", "epoch": 143, "step": 1, "loss": 0.962597, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.634Z", "kind": "batch", "epoch": 143, "step": 2, "loss": 0.531458, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.641Z", "kind": "epoch.end", "epoch": 143, "train_loss": 0.747028, "val_loss": 3.892362, "val_acc": null, "metrics": {"mse": 3.892362, "mae": 1.943598, "r2": -29.885589}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.644Z", "kind": "epoch.start", "epoch": 144}
+{"t": "2026-06-16T10:22:01.655Z", "kind": "batch", "epoch": 144, "step": 1, "loss": 0.707951, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.671Z", "kind": "batch", "epoch": 144, "step": 2, "loss": 0.786105, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.675Z", "kind": "epoch.end", "epoch": 144, "train_loss": 0.747028, "val_loss": 3.89236, "val_acc": null, "metrics": {"mse": 3.89236, "mae": 1.943597, "r2": -29.885574}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.676Z", "kind": "epoch.start", "epoch": 145}
+{"t": "2026-06-16T10:22:01.683Z", "kind": "batch", "epoch": 145, "step": 1, "loss": 0.441721, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.697Z", "kind": "batch", "epoch": 145, "step": 2, "loss": 1.052334, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.705Z", "kind": "epoch.end", "epoch": 145, "train_loss": 0.747027, "val_loss": 3.89236, "val_acc": null, "metrics": {"mse": 3.89236, "mae": 1.943597, "r2": -29.885574}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:01.708Z", "kind": "epoch.start", "epoch": 146}
+{"t": "2026-06-16T10:22:02.411Z", "kind": "batch", "epoch": 146, "step": 1, "loss": 0.736367, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:03.102Z", "kind": "batch", "epoch": 146, "step": 2, "loss": 0.757687, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:03.497Z", "kind": "epoch.end", "epoch": 146, "train_loss": 0.747027, "val_loss": 3.89236, "val_acc": null, "metrics": {"mse": 3.89236, "mae": 1.943597, "r2": -29.885574}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:03.504Z", "kind": "epoch.start", "epoch": 147}
+{"t": "2026-06-16T10:22:03.777Z", "kind": "batch", "epoch": 147, "step": 1, "loss": 0.5143, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:03.894Z", "kind": "batch", "epoch": 147, "step": 2, "loss": 0.979756, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:03.920Z", "kind": "epoch.end", "epoch": 147, "train_loss": 0.747028, "val_loss": 3.892358, "val_acc": null, "metrics": {"mse": 3.892358, "mae": 1.943597, "r2": -29.885559}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:03.925Z", "kind": "epoch.start", "epoch": 148}
+{"t": "2026-06-16T10:22:03.971Z", "kind": "batch", "epoch": 148, "step": 1, "loss": 0.840495, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:03.991Z", "kind": "batch", "epoch": 148, "step": 2, "loss": 0.653561, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:03.998Z", "kind": "epoch.end", "epoch": 148, "train_loss": 0.747028, "val_loss": 3.892357, "val_acc": null, "metrics": {"mse": 3.892357, "mae": 1.943597, "r2": -29.885553}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:03.999Z", "kind": "epoch.start", "epoch": 149}
+{"t": "2026-06-16T10:22:04.013Z", "kind": "batch", "epoch": 149, "step": 1, "loss": 1.052334, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.029Z", "kind": "batch", "epoch": 149, "step": 2, "loss": 0.441722, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.038Z", "kind": "epoch.end", "epoch": 149, "train_loss": 0.747028, "val_loss": 3.892357, "val_acc": null, "metrics": {"mse": 3.892357, "mae": 1.943597, "r2": -29.885553}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.041Z", "kind": "epoch.start", "epoch": 150}
+{"t": "2026-06-16T10:22:04.054Z", "kind": "batch", "epoch": 150, "step": 1, "loss": 0.572244, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.069Z", "kind": "batch", "epoch": 150, "step": 2, "loss": 0.921811, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.079Z", "kind": "epoch.end", "epoch": 150, "train_loss": 0.747028, "val_loss": 3.892356, "val_acc": null, "metrics": {"mse": 3.892356, "mae": 1.943596, "r2": -29.885546}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.082Z", "kind": "epoch.start", "epoch": 151}
+{"t": "2026-06-16T10:22:04.169Z", "kind": "batch", "epoch": 151, "step": 1, "loss": 0.697222, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.200Z", "kind": "batch", "epoch": 151, "step": 2, "loss": 0.796834, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.217Z", "kind": "epoch.end", "epoch": 151, "train_loss": 0.747028, "val_loss": 3.892355, "val_acc": null, "metrics": {"mse": 3.892355, "mae": 1.943596, "r2": -29.885536}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.220Z", "kind": "epoch.start", "epoch": 152}
+{"t": "2026-06-16T10:22:04.237Z", "kind": "batch", "epoch": 152, "step": 1, "loss": 0.768416, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.254Z", "kind": "batch", "epoch": 152, "step": 2, "loss": 0.725639, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.263Z", "kind": "epoch.end", "epoch": 152, "train_loss": 0.747027, "val_loss": 3.892354, "val_acc": null, "metrics": {"mse": 3.892354, "mae": 1.943596, "r2": -29.885531}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.265Z", "kind": "epoch.start", "epoch": 153}
+{"t": "2026-06-16T10:22:04.278Z", "kind": "batch", "epoch": 153, "step": 1, "loss": 0.796834, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.302Z", "kind": "batch", "epoch": 153, "step": 2, "loss": 0.697221, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.410Z", "kind": "epoch.end", "epoch": 153, "train_loss": 0.747027, "val_loss": 3.892356, "val_acc": null, "metrics": {"mse": 3.892356, "mae": 1.943596, "r2": -29.885546}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.414Z", "kind": "epoch.start", "epoch": 154}
+{"t": "2026-06-16T10:22:04.447Z", "kind": "batch", "epoch": 154, "step": 1, "loss": 1.062562, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.467Z", "kind": "batch", "epoch": 154, "step": 2, "loss": 0.431493, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.474Z", "kind": "epoch.end", "epoch": 154, "train_loss": 0.747027, "val_loss": 3.892354, "val_acc": null, "metrics": {"mse": 3.892354, "mae": 1.943596, "r2": -29.885531}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:04.510Z", "kind": "epoch.start", "epoch": 155}
+{"t": "2026-06-16T10:22:05.181Z", "kind": "batch", "epoch": 155, "step": 1, "loss": 0.644323, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:05.865Z", "kind": "batch", "epoch": 155, "step": 2, "loss": 0.849731, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:06.266Z", "kind": "epoch.end", "epoch": 155, "train_loss": 0.747027, "val_loss": 3.892354, "val_acc": null, "metrics": {"mse": 3.892354, "mae": 1.943596, "r2": -29.885531}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:06.272Z", "kind": "epoch.start", "epoch": 156}
+{"t": "2026-06-16T10:22:06.293Z", "kind": "batch", "epoch": 156, "step": 1, "loss": 0.840494, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:06.601Z", "kind": "batch", "epoch": 156, "step": 2, "loss": 0.65356, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:06.991Z", "kind": "epoch.end", "epoch": 156, "train_loss": 0.747027, "val_loss": 3.892354, "val_acc": null, "metrics": {"mse": 3.892354, "mae": 1.943596, "r2": -29.885531}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:06.997Z", "kind": "epoch.start", "epoch": 157}
+{"t": "2026-06-16T10:22:07.012Z", "kind": "batch", "epoch": 157, "step": 1, "loss": 0.627164, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.022Z", "kind": "batch", "epoch": 157, "step": 2, "loss": 0.86689, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.034Z", "kind": "epoch.end", "epoch": 157, "train_loss": 0.747027, "val_loss": 3.892354, "val_acc": null, "metrics": {"mse": 3.892354, "mae": 1.943596, "r2": -29.885531}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.040Z", "kind": "epoch.start", "epoch": 158}
+{"t": "2026-06-16T10:22:07.048Z", "kind": "batch", "epoch": 158, "step": 1, "loss": 1.091479, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.062Z", "kind": "batch", "epoch": 158, "step": 2, "loss": 0.402575, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.069Z", "kind": "epoch.end", "epoch": 158, "train_loss": 0.747027, "val_loss": 3.892354, "val_acc": null, "metrics": {"mse": 3.892354, "mae": 1.943596, "r2": -29.885531}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.071Z", "kind": "epoch.start", "epoch": 159}
+{"t": "2026-06-16T10:22:07.095Z", "kind": "batch", "epoch": 159, "step": 1, "loss": 0.624643, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.148Z", "kind": "batch", "epoch": 159, "step": 2, "loss": 0.869411, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.215Z", "kind": "epoch.end", "epoch": 159, "train_loss": 0.747027, "val_loss": 3.892353, "val_acc": null, "metrics": {"mse": 3.892353, "mae": 1.943595, "r2": -29.885517}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.222Z", "kind": "epoch.start", "epoch": 160}
+{"t": "2026-06-16T10:22:07.677Z", "kind": "batch", "epoch": 160, "step": 1, "loss": 0.625141, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.719Z", "kind": "batch", "epoch": 160, "step": 2, "loss": 0.868913, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.727Z", "kind": "epoch.end", "epoch": 160, "train_loss": 0.747027, "val_loss": 3.892351, "val_acc": null, "metrics": {"mse": 3.892351, "mae": 1.943595, "r2": -29.885502}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.729Z", "kind": "epoch.start", "epoch": 161}
+{"t": "2026-06-16T10:22:07.744Z", "kind": "batch", "epoch": 161, "step": 1, "loss": 0.65356, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.755Z", "kind": "batch", "epoch": 161, "step": 2, "loss": 0.840494, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.813Z", "kind": "epoch.end", "epoch": 161, "train_loss": 0.747027, "val_loss": 3.89235, "val_acc": null, "metrics": {"mse": 3.89235, "mae": 1.943595, "r2": -29.885495}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.836Z", "kind": "epoch.start", "epoch": 162}
+{"t": "2026-06-16T10:22:07.853Z", "kind": "batch", "epoch": 162, "step": 1, "loss": 0.402575, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.870Z", "kind": "batch", "epoch": 162, "step": 2, "loss": 1.09148, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.880Z", "kind": "epoch.end", "epoch": 162, "train_loss": 0.747027, "val_loss": 3.89235, "val_acc": null, "metrics": {"mse": 3.89235, "mae": 1.943595, "r2": -29.885495}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.882Z", "kind": "epoch.start", "epoch": 163}
+{"t": "2026-06-16T10:22:07.897Z", "kind": "batch", "epoch": 163, "step": 1, "loss": 0.503571, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:07.912Z", "kind": "batch", "epoch": 163, "step": 2, "loss": 0.990484, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:08.301Z", "kind": "epoch.end", "epoch": 163, "train_loss": 0.747027, "val_loss": 3.89235, "val_acc": null, "metrics": {"mse": 3.89235, "mae": 1.943595, "r2": -29.885495}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:08.307Z", "kind": "epoch.start", "epoch": 164}
+{"t": "2026-06-16T10:22:08.323Z", "kind": "batch", "epoch": 164, "step": 1, "loss": 1.276922, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:08.946Z", "kind": "batch", "epoch": 164, "step": 2, "loss": 0.217133, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:08.982Z", "kind": "epoch.end", "epoch": 164, "train_loss": 0.747027, "val_loss": 3.89235, "val_acc": null, "metrics": {"mse": 3.89235, "mae": 1.943595, "r2": -29.885495}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:09.027Z", "kind": "epoch.start", "epoch": 165}
+{"t": "2026-06-16T10:22:09.085Z", "kind": "batch", "epoch": 165, "step": 1, "loss": 0.858683, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:09.760Z", "kind": "batch", "epoch": 165, "step": 2, "loss": 0.635371, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:10.152Z", "kind": "epoch.end", "epoch": 165, "train_loss": 0.747027, "val_loss": 3.89235, "val_acc": null, "metrics": {"mse": 3.89235, "mae": 1.943595, "r2": -29.885495}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:10.160Z", "kind": "epoch.start", "epoch": 166}
+{"t": "2026-06-16T10:22:10.233Z", "kind": "batch", "epoch": 166, "step": 1, "loss": 0.962596, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:10.876Z", "kind": "batch", "epoch": 166, "step": 2, "loss": 0.531458, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:11.269Z", "kind": "epoch.end", "epoch": 166, "train_loss": 0.747027, "val_loss": 3.89235, "val_acc": null, "metrics": {"mse": 3.89235, "mae": 1.943595, "r2": -29.885495}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:11.275Z", "kind": "epoch.start", "epoch": 167}
+{"t": "2026-06-16T10:22:11.633Z", "kind": "batch", "epoch": 167, "step": 1, "loss": 0.74532, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:11.738Z", "kind": "batch", "epoch": 167, "step": 2, "loss": 0.748734, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:11.771Z", "kind": "epoch.end", "epoch": 167, "train_loss": 0.747027, "val_loss": 3.89235, "val_acc": null, "metrics": {"mse": 3.89235, "mae": 1.943595, "r2": -29.885495}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:11.776Z", "kind": "epoch.start", "epoch": 168}
+{"t": "2026-06-16T10:22:11.855Z", "kind": "batch", "epoch": 168, "step": 1, "loss": 0.511776, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:12.397Z", "kind": "batch", "epoch": 168, "step": 2, "loss": 0.982278, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:12.788Z", "kind": "epoch.end", "epoch": 168, "train_loss": 0.747027, "val_loss": 3.892347, "val_acc": null, "metrics": {"mse": 3.892347, "mae": 1.943594, "r2": -29.885472}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:12.794Z", "kind": "epoch.start", "epoch": 169}
+{"t": "2026-06-16T10:22:12.838Z", "kind": "batch", "epoch": 169, "step": 1, "loss": 0.756048, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:12.869Z", "kind": "batch", "epoch": 169, "step": 2, "loss": 0.738005, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:13.261Z", "kind": "epoch.end", "epoch": 169, "train_loss": 0.747027, "val_loss": 3.892347, "val_acc": null, "metrics": {"mse": 3.892347, "mae": 1.943594, "r2": -29.885476}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:13.314Z", "kind": "epoch.start", "epoch": 170}
+{"t": "2026-06-16T10:22:13.354Z", "kind": "batch", "epoch": 170, "step": 1, "loss": 0.962595, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:13.519Z", "kind": "batch", "epoch": 170, "step": 2, "loss": 0.531458, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:13.905Z", "kind": "epoch.end", "epoch": 170, "train_loss": 0.747027, "val_loss": 3.892346, "val_acc": null, "metrics": {"mse": 3.892346, "mae": 1.943594, "r2": -29.885466}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:13.912Z", "kind": "epoch.start", "epoch": 171}
+{"t": "2026-06-16T10:22:13.970Z", "kind": "batch", "epoch": 171, "step": 1, "loss": 0.866889, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:14.366Z", "kind": "batch", "epoch": 171, "step": 2, "loss": 0.627164, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:14.645Z", "kind": "epoch.end", "epoch": 171, "train_loss": 0.747027, "val_loss": 3.892346, "val_acc": null, "metrics": {"mse": 3.892346, "mae": 1.943594, "r2": -29.885466}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:14.653Z", "kind": "epoch.start", "epoch": 172}
+{"t": "2026-06-16T10:22:14.728Z", "kind": "batch", "epoch": 172, "step": 1, "loss": 0.820811, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:15.351Z", "kind": "batch", "epoch": 172, "step": 2, "loss": 0.673242, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:15.799Z", "kind": "epoch.end", "epoch": 172, "train_loss": 0.747027, "val_loss": 3.892345, "val_acc": null, "metrics": {"mse": 3.892345, "mae": 1.943594, "r2": -29.885461}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:15.805Z", "kind": "epoch.start", "epoch": 173}
+{"t": "2026-06-16T10:22:15.846Z", "kind": "batch", "epoch": 173, "step": 1, "loss": 0.413302, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:16.477Z", "kind": "batch", "epoch": 173, "step": 2, "loss": 1.080751, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:16.497Z", "kind": "epoch.end", "epoch": 173, "train_loss": 0.747027, "val_loss": 3.892345, "val_acc": null, "metrics": {"mse": 3.892345, "mae": 1.943594, "r2": -29.885461}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:16.499Z", "kind": "epoch.start", "epoch": 174}
+{"t": "2026-06-16T10:22:16.703Z", "kind": "batch", "epoch": 174, "step": 1, "loss": 1.062561, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:17.401Z", "kind": "batch", "epoch": 174, "step": 2, "loss": 0.431492, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:17.414Z", "kind": "epoch.end", "epoch": 174, "train_loss": 0.747027, "val_loss": 3.892344, "val_acc": null, "metrics": {"mse": 3.892344, "mae": 1.943593, "r2": -29.885453}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:17.417Z", "kind": "epoch.start", "epoch": 175}
+{"t": "2026-06-16T10:22:17.616Z", "kind": "batch", "epoch": 175, "step": 1, "loss": 0.786108, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:17.849Z", "kind": "batch", "epoch": 175, "step": 2, "loss": 0.707945, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:17.887Z", "kind": "epoch.end", "epoch": 175, "train_loss": 0.747027, "val_loss": 3.892346, "val_acc": null, "metrics": {"mse": 3.892346, "mae": 1.943594, "r2": -29.885466}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:17.919Z", "kind": "epoch.start", "epoch": 176}
+{"t": "2026-06-16T10:22:17.930Z", "kind": "batch", "epoch": 176, "step": 1, "loss": 0.318128, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:17.954Z", "kind": "batch", "epoch": 176, "step": 2, "loss": 1.175924, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:17.979Z", "kind": "epoch.end", "epoch": 176, "train_loss": 0.747026, "val_loss": 3.892346, "val_acc": null, "metrics": {"mse": 3.892346, "mae": 1.943594, "r2": -29.885466}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:17.981Z", "kind": "epoch.start", "epoch": 177}
+{"t": "2026-06-16T10:22:18.629Z", "kind": "batch", "epoch": 177, "step": 1, "loss": 0.625139, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:18.646Z", "kind": "batch", "epoch": 177, "step": 2, "loss": 0.868915, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:18.653Z", "kind": "epoch.end", "epoch": 177, "train_loss": 0.747027, "val_loss": 3.892344, "val_acc": null, "metrics": {"mse": 3.892344, "mae": 1.943593, "r2": -29.885445}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:18.655Z", "kind": "epoch.start", "epoch": 178}
+{"t": "2026-06-16T10:22:18.672Z", "kind": "batch", "epoch": 178, "step": 1, "loss": 1.276921, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:18.685Z", "kind": "batch", "epoch": 178, "step": 2, "loss": 0.217132, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:18.690Z", "kind": "epoch.end", "epoch": 178, "train_loss": 0.747027, "val_loss": 3.892343, "val_acc": null, "metrics": {"mse": 3.892343, "mae": 1.943593, "r2": -29.885438}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:18.692Z", "kind": "epoch.start", "epoch": 179}
+{"t": "2026-06-16T10:22:18.708Z", "kind": "batch", "epoch": 179, "step": 1, "loss": 0.624641, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:18.722Z", "kind": "batch", "epoch": 179, "step": 2, "loss": 0.869412, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:18.976Z", "kind": "epoch.end", "epoch": 179, "train_loss": 0.747026, "val_loss": 3.892341, "val_acc": null, "metrics": {"mse": 3.892341, "mae": 1.943593, "r2": -29.885427}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:18.986Z", "kind": "epoch.start", "epoch": 180}
+{"t": "2026-06-16T10:22:19.002Z", "kind": "batch", "epoch": 180, "step": 1, "loss": 0.757688, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:19.022Z", "kind": "batch", "epoch": 180, "step": 2, "loss": 0.736364, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:19.035Z", "kind": "epoch.end", "epoch": 180, "train_loss": 0.747026, "val_loss": 3.892342, "val_acc": null, "metrics": {"mse": 3.892342, "mae": 1.943593, "r2": -29.88543}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:19.039Z", "kind": "epoch.start", "epoch": 181}
+{"t": "2026-06-16T10:22:19.071Z", "kind": "batch", "epoch": 181, "step": 1, "loss": 0.7169, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:19.746Z", "kind": "batch", "epoch": 181, "step": 2, "loss": 0.777153, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:19.799Z", "kind": "epoch.end", "epoch": 181, "train_loss": 0.747026, "val_loss": 3.892342, "val_acc": null, "metrics": {"mse": 3.892342, "mae": 1.943593, "r2": -29.88543}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:19.802Z", "kind": "epoch.start", "epoch": 182}
+{"t": "2026-06-16T10:22:19.866Z", "kind": "batch", "epoch": 182, "step": 1, "loss": 0.430995, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:19.949Z", "kind": "batch", "epoch": 182, "step": 2, "loss": 1.063058, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:20.336Z", "kind": "epoch.end", "epoch": 182, "train_loss": 0.747026, "val_loss": 3.892342, "val_acc": null, "metrics": {"mse": 3.892342, "mae": 1.943593, "r2": -29.88543}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:20.342Z", "kind": "epoch.start", "epoch": 183}
+{"t": "2026-06-16T10:22:20.439Z", "kind": "batch", "epoch": 183, "step": 1, "loss": 0.555086, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:20.456Z", "kind": "batch", "epoch": 183, "step": 2, "loss": 0.938967, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:20.547Z", "kind": "epoch.end", "epoch": 183, "train_loss": 0.747026, "val_loss": 3.892341, "val_acc": null, "metrics": {"mse": 3.892341, "mae": 1.943592, "r2": -29.885425}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:20.575Z", "kind": "epoch.start", "epoch": 184}
+{"t": "2026-06-16T10:22:20.588Z", "kind": "batch", "epoch": 184, "step": 1, "loss": 0.796837, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:20.627Z", "kind": "batch", "epoch": 184, "step": 2, "loss": 0.697216, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:21.016Z", "kind": "epoch.end", "epoch": 184, "train_loss": 0.747027, "val_loss": 3.892342, "val_acc": null, "metrics": {"mse": 3.892342, "mae": 1.943593, "r2": -29.88543}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:21.022Z", "kind": "epoch.start", "epoch": 185}
+{"t": "2026-06-16T10:22:21.051Z", "kind": "batch", "epoch": 185, "step": 1, "loss": 0.757688, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:21.722Z", "kind": "batch", "epoch": 185, "step": 2, "loss": 0.736364, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:22.117Z", "kind": "epoch.end", "epoch": 185, "train_loss": 0.747026, "val_loss": 3.892343, "val_acc": null, "metrics": {"mse": 3.892343, "mae": 1.943593, "r2": -29.885438}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:22.123Z", "kind": "epoch.start", "epoch": 186}
+{"t": "2026-06-16T10:22:22.142Z", "kind": "batch", "epoch": 186, "step": 1, "loss": 0.50357, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:22.846Z", "kind": "batch", "epoch": 186, "step": 2, "loss": 0.990483, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:22.899Z", "kind": "epoch.end", "epoch": 186, "train_loss": 0.747026, "val_loss": 3.89234, "val_acc": null, "metrics": {"mse": 3.89234, "mae": 1.943592, "r2": -29.885415}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:22.922Z", "kind": "epoch.start", "epoch": 187}
+{"t": "2026-06-16T10:22:22.964Z", "kind": "batch", "epoch": 187, "step": 1, "loss": 0.358917, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:23.055Z", "kind": "batch", "epoch": 187, "step": 2, "loss": 1.135136, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:23.446Z", "kind": "epoch.end", "epoch": 187, "train_loss": 0.747026, "val_loss": 3.892339, "val_acc": null, "metrics": {"mse": 3.892339, "mae": 1.943592, "r2": -29.885408}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:23.452Z", "kind": "epoch.start", "epoch": 188}
+{"t": "2026-06-16T10:22:24.177Z", "kind": "batch", "epoch": 188, "step": 1, "loss": 0.768416, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:24.297Z", "kind": "batch", "epoch": 188, "step": 2, "loss": 0.725636, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:24.319Z", "kind": "epoch.end", "epoch": 188, "train_loss": 0.747026, "val_loss": 3.892339, "val_acc": null, "metrics": {"mse": 3.892339, "mae": 1.943592, "r2": -29.885408}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:24.321Z", "kind": "epoch.start", "epoch": 189}
+{"t": "2026-06-16T10:22:24.344Z", "kind": "batch", "epoch": 189, "step": 1, "loss": 0.413301, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:24.380Z", "kind": "batch", "epoch": 189, "step": 2, "loss": 1.080752, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:24.388Z", "kind": "epoch.end", "epoch": 189, "train_loss": 0.747026, "val_loss": 3.892339, "val_acc": null, "metrics": {"mse": 3.892339, "mae": 1.943592, "r2": -29.885408}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:24.391Z", "kind": "epoch.start", "epoch": 190}
+{"t": "2026-06-16T10:22:24.516Z", "kind": "batch", "epoch": 190, "step": 1, "loss": 0.644325, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:24.561Z", "kind": "batch", "epoch": 190, "step": 2, "loss": 0.849727, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:24.570Z", "kind": "epoch.end", "epoch": 190, "train_loss": 0.747026, "val_loss": 3.892339, "val_acc": null, "metrics": {"mse": 3.892339, "mae": 1.943592, "r2": -29.885408}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:24.572Z", "kind": "epoch.start", "epoch": 191}
+{"t": "2026-06-16T10:22:24.580Z", "kind": "batch", "epoch": 191, "step": 1, "loss": 0.413302, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:24.594Z", "kind": "batch", "epoch": 191, "step": 2, "loss": 1.080751, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:24.982Z", "kind": "epoch.end", "epoch": 191, "train_loss": 0.747026, "val_loss": 3.892337, "val_acc": null, "metrics": {"mse": 3.892337, "mae": 1.943591, "r2": -29.885396}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:24.989Z", "kind": "epoch.start", "epoch": 192}
+{"t": "2026-06-16T10:22:25.008Z", "kind": "batch", "epoch": 192, "step": 1, "loss": 0.921805, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:25.043Z", "kind": "batch", "epoch": 192, "step": 2, "loss": 0.572248, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:25.088Z", "kind": "epoch.end", "epoch": 192, "train_loss": 0.747026, "val_loss": 3.892335, "val_acc": null, "metrics": {"mse": 3.892335, "mae": 1.943591, "r2": -29.885377}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:25.090Z", "kind": "epoch.start", "epoch": 193}
+{"t": "2026-06-16T10:22:25.102Z", "kind": "batch", "epoch": 193, "step": 1, "loss": 0.796839, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:25.113Z", "kind": "batch", "epoch": 193, "step": 2, "loss": 0.697214, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:25.497Z", "kind": "epoch.end", "epoch": 193, "train_loss": 0.747026, "val_loss": 3.892336, "val_acc": null, "metrics": {"mse": 3.892336, "mae": 1.943591, "r2": -29.885385}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:25.503Z", "kind": "epoch.start", "epoch": 194}
+{"t": "2026-06-16T10:22:25.579Z", "kind": "batch", "epoch": 194, "step": 1, "loss": 1.062561, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:26.255Z", "kind": "batch", "epoch": 194, "step": 2, "loss": 0.431492, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:26.347Z", "kind": "epoch.end", "epoch": 194, "train_loss": 0.747026, "val_loss": 3.892336, "val_acc": null, "metrics": {"mse": 3.892336, "mae": 1.943591, "r2": -29.885385}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:26.350Z", "kind": "epoch.start", "epoch": 195}
+{"t": "2026-06-16T10:22:26.414Z", "kind": "batch", "epoch": 195, "step": 1, "loss": 0.838999, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:26.436Z", "kind": "batch", "epoch": 195, "step": 2, "loss": 0.655053, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:26.491Z", "kind": "epoch.end", "epoch": 195, "train_loss": 0.747026, "val_loss": 3.892335, "val_acc": null, "metrics": {"mse": 3.892335, "mae": 1.943591, "r2": -29.885377}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:26.494Z", "kind": "epoch.start", "epoch": 196}
+{"t": "2026-06-16T10:22:27.156Z", "kind": "batch", "epoch": 196, "step": 1, "loss": 0.756049, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:27.200Z", "kind": "batch", "epoch": 196, "step": 2, "loss": 0.738003, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:27.245Z", "kind": "epoch.end", "epoch": 196, "train_loss": 0.747026, "val_loss": 3.892336, "val_acc": null, "metrics": {"mse": 3.892336, "mae": 1.943591, "r2": -29.885385}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:27.247Z", "kind": "epoch.start", "epoch": 197}
+{"t": "2026-06-16T10:22:27.296Z", "kind": "batch", "epoch": 197, "step": 1, "loss": 0.358917, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:27.470Z", "kind": "batch", "epoch": 197, "step": 2, "loss": 1.135134, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:27.486Z", "kind": "epoch.end", "epoch": 197, "train_loss": 0.747026, "val_loss": 3.892335, "val_acc": null, "metrics": {"mse": 3.892335, "mae": 1.943591, "r2": -29.885377}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:27.488Z", "kind": "epoch.start", "epoch": 198}
+{"t": "2026-06-16T10:22:27.586Z", "kind": "batch", "epoch": 198, "step": 1, "loss": 0.358918, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:27.953Z", "kind": "batch", "epoch": 198, "step": 2, "loss": 1.135135, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:27.972Z", "kind": "epoch.end", "epoch": 198, "train_loss": 0.747026, "val_loss": 3.892335, "val_acc": null, "metrics": {"mse": 3.892335, "mae": 1.943591, "r2": -29.885377}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:27.974Z", "kind": "epoch.start", "epoch": 199}
+{"t": "2026-06-16T10:22:28.074Z", "kind": "batch", "epoch": 199, "step": 1, "loss": 0.624639, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:28.146Z", "kind": "batch", "epoch": 199, "step": 2, "loss": 0.869412, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:28.179Z", "kind": "epoch.end", "epoch": 199, "train_loss": 0.747026, "val_loss": 3.892334, "val_acc": null, "metrics": {"mse": 3.892334, "mae": 1.94359, "r2": -29.885366}, "lr": 1.0000000000000004e-08}
+{"t": "2026-06-16T10:22:28.199Z", "kind": "run.done", "total_seconds": 78.39, "best_val_loss": 0.243833}

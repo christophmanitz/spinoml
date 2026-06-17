@@ -11,6 +11,26 @@ html, body, #root {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Native <select> popups under Linux/webkit2gtk ignore the element's Tailwind
+   bg/text classes and render the option list with the OS light theme — light
+   text on white, unreadable. color-scheme:dark makes the native control draw
+   dark, and we also pin the option colors explicitly as a belt-and-suspenders. */
+select {
+  color-scheme: dark;
+}
+select option {
+  background-color: #14181c;
+  color: #e6e8eb;
+}
+
+/* Faint-but-readable placeholders on dark inputs (the browser default is too
+   dim, which made the sweep value hint look empty). */
+input::placeholder,
+textarea::placeholder {
+  color: #6a727b;
+  opacity: 1;
+}
+
 /* Force webkit2gtk to give the React Flow viewport its own GPU layer.
    Without this, subpixel CSS transforms during pan/zoom blur the nodes. */
 .react-flow__viewport,

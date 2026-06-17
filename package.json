@@ -1,8 +1,10 @@
 {
-  "name": "mlforge",
+  "name": "spinoml",
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "Christoph Manitz <christoph.manitz@uni-leipzig.de>",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -10,6 +12,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "verify:codegen": "tsx scripts/verify-codegen.ts",
+    "verify:traingen": "tsx scripts/verify-traingen.ts",
     "verify:sidecar": "tsx scripts/verify-sidecar.ts",
     "sidecar:torch": "python sidecar-torch/main.py",
     "sidecar:llm": "node sidecar-llm/main.mjs"

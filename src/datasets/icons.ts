@@ -8,6 +8,9 @@ export function iconFor(kind: DatasetKind): string {
     case 'protein': return 'PDB'
     case 'molecule': return 'SMI'
     case 'huggingface': return 'HF'
+    case 'pyg': return 'PYG'
+    case 'graph_folder': return 'GPH'
+    case 'manifest': return 'PAIR'
     default: return '???'
   }
 }
@@ -20,6 +23,9 @@ export function colorFor(kind: DatasetKind): string {
     case 'protein': return 'bg-rose-900/40 text-rose-300'
     case 'molecule': return 'bg-violet-900/40 text-violet-300'
     case 'huggingface': return 'bg-fuchsia-900/40 text-fuchsia-300'
+    case 'pyg': return 'bg-teal-900/40 text-teal-300'
+    case 'graph_folder': return 'bg-teal-900/40 text-teal-300'
+    case 'manifest': return 'bg-indigo-900/40 text-indigo-300'
     default: return 'bg-[#1f2429] text-[#7a8088]'
   }
 }
@@ -32,6 +38,8 @@ export function guessKindFromName(name: string, isDir: boolean): DatasetKind {
   if (lower.endsWith('.pdb')) return 'protein'
   if (lower.endsWith('.smi') || lower.endsWith('.smiles')) return 'molecule'
   if (lower.endsWith('.hf')) return 'huggingface'
+  if (lower.endsWith('.pyg')) return 'pyg'
+  if (lower.endsWith('.manifest')) return 'manifest'
   return 'unknown'
 }
 

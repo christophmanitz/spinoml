@@ -15,6 +15,10 @@ export type ChatRequest = {
     nodes: { id: string; layerType: string; params: Record<string, unknown> }[]
     edges: { source: string; target: string }[]
   }
+  training_graph?: {
+    nodes: { id: string; trainingType: string; params: Record<string, unknown> }[]
+    edges: { source: string; target: string }[]
+  }
   error?: { message: string; failingNodeId?: string | null; failingNodeLayerType?: string | null }
   project?: {
     root: string
@@ -25,6 +29,13 @@ export type ChatRequest = {
     active_dataset: string | null
     active_dataset_inspect?: unknown
     recent_notes?: { name: string; excerpt: string }[]
+  }
+  /** LLM source selection. Omitted → sidecar defaults to the subscription path. */
+  llm?: {
+    kind: 'subscription' | 'anthropic' | 'openai-compat'
+    model?: string
+    apiKey?: string
+    baseUrl?: string
   }
 }
 

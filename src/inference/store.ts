@@ -47,6 +47,7 @@ export const useInferenceStore = create<InferenceState>((set) => ({
       const { nodes, edges } = useGraphStore.getState()
       const { code, issues, attrMap, inputs, order } = generate(nodes, edges)
       const inputShapes = inputs.map((i) => i.shape)
+      const inputDtypes = inputs.map((i) => i.dtype)
 
       const hasInput = nodes.some((n) => n.data.layerType === 'Input')
       if (!hasInput || issues.some((i) => i.startsWith('Cycle'))) {
@@ -67,7 +68,7 @@ export const useInferenceStore = create<InferenceState>((set) => ({
 
       let result: InferResult | { ok: false; error: string; offline: true; shapes: Record<string, number[]> }
       try {
-        result = await inferShapes(code, inputShapes, ctrl.signal)
+        result = await inferShapes(code, inputShapes, inputDtypes, ctrl.signal)
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return
         throw e
@@ -153,9 +154,12 @@ function applyShapesToNodes(
   const predOf = new Map<string, string>()
   for (const e of edges) if (!predOf.has(e.target)) predOf.set(e.target, e.source)
 
+  // Input-kind nodes (Input, Graph) carry their shape directly. A Graph node's
+  // shape is its node-feature matrix [N, F] — what the first GNN layer sees.
+  const isInputKind = (lt: string) => lt === 'Input' || lt === 'Graph'
   const inputShapeFor = (id: string): number[] | undefined => {
     const n = graph.nodes.find((m) => m.id === id)
-    if (!n || n.data.layerType !== 'Input') return undefined
+    if (!n || !isInputKind(n.data.layerType)) return undefined
     return (n.data.params.shape as number[] | undefined) ?? undefined
   }
 
@@ -171,11 +175,11 @@ function applyShapesToNodes(
     const data = { ...n.data }
     let changed = false
 
-    const inShape = n.data.layerType === 'Input' ? inputShapeFor(n.id) : (() => {
+    const inShape = isInputKind(n.data.layerType) ? inputShapeFor(n.id) : (() => {
       const pid = predOf.get(n.id)
       return pid ? outputOf(pid) : undefined
     })()
-    const outShape = n.data.layerType === 'Input' ? inputShapeFor(n.id) : outputOf(n.id)
+    const outShape = isInputKind(n.data.layerType) ? inputShapeFor(n.id) : outputOf(n.id)
     const isFailing = failingId === n.id
 
     if (!shapesEqual(data.inferredInputShape, inShape)) {

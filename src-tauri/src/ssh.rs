@@ -1,6 +1,6 @@
 // SSH-backed remote workspace. Mirrors every local FS command as an `ssh_*`
 // variant, transported via system `ssh` (so it uses ~/.ssh/config, agent,
-// ProxyJump, GSSAPI, etc. — no secrets stored in MLForge itself).
+// ProxyJump, GSSAPI, etc. — no secrets stored in SpinoML itself).
 //
 // Each call forks an ssh subprocess. That's ~50-200ms per op against most
 // hops; acceptable for interactive editing of small files but NOT for hot
@@ -8,7 +8,7 @@
 // `sftp -b` session pool — but the API here stays the same.
 //
 // Path safety: remote_root can be either absolute (`/scratch/...`) or
-// tilde-prefixed (`~/projects/mlforge`). Relpaths reuse the same component
+// tilde-prefixed (`~/projects/spinoml`). Relpaths reuse the same component
 // rules as the local resolver (no `..`, no absolute paths). Everything
 // emitted into a shell command goes through `shell_quote_path()`, which
 // handles `~/` by substituting `"$HOME"` (which IS expanded outside single
@@ -20,8 +20,10 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::State;
+use serde_json::Value;
+use tauri::{AppHandle, State};
 
+use crate::training;
 use crate::{now_iso, PROJECT_FILE, SUBDIRS};
 
 #[derive(Default)]
@@ -162,8 +164,46 @@ pub(crate) const SSH_OPTS_INTERACTIVE: &[&str] = &[
     "-o", "ServerAliveCountMax=3",
 ];
 
-fn ssh_exec(alias: &str, remote_cmd: &str, stdin_data: Option<&[u8]>) -> Result<String, String> {
+/// Async wrapper: the ssh subprocess blocks (connect + remote exec can take
+/// seconds on an HPC login node), so it runs on tokio's blocking pool instead
+/// of the caller's thread. Combined with `async` commands this keeps the GTK
+/// main thread — and therefore the whole GUI — responsive while ssh is in
+/// flight. Without this, every ssh_* command froze the webview ("not
+/// responding") for the duration of the call.
+async fn ssh_exec(alias: &str, remote_cmd: &str, stdin_data: Option<&[u8]>) -> Result<String, String> {
+    let alias = alias.to_string();
+    let remote_cmd = remote_cmd.to_string();
+    let stdin_data = stdin_data.map(|d| d.to_vec());
+    tauri::async_runtime::spawn_blocking(move || ssh_exec_blocking(&alias, &remote_cmd, stdin_data.as_deref()))
+        .await
+        .map_err(|e| format!("ssh task join: {e}"))?
+}
+
+/// Connection-multiplexing options. SpinoML fires many short ssh commands (list
+/// / status / tail / gpu-stats / readFile, several per polling tick); without
+/// multiplexing each is a full TCP+KEX+auth handshake, and the burst trips the
+/// server's MaxStartups / fail2ban → "kex_exchange_identification: Connection
+/// reset by peer" (ssh exit 255). ControlMaster=auto makes the first call open a
+/// shared master connection that the rest reuse as cheap channels; ControlPersist
+/// keeps it alive ~2 min after the last use so polling bursts share one TCP
+/// connection. %C is a short hash of the connection params → a filesystem-safe,
+/// length-bounded socket name. Falls back to a fresh connection if the master is
+/// gone, so it's purely additive.
+fn control_args() -> Vec<String> {
+    let dir = std::env::temp_dir().join("spinoml-ssh");
+    let _ = std::fs::create_dir_all(&dir); // best effort; ssh won't mkdir for us
+    vec![
+        "-o".into(), "ControlMaster=auto".into(),
+        "-o".into(), format!("ControlPath={}/%C", dir.display()),
+        "-o".into(), "ControlPersist=120".into(),
+    ]
+}
+
+fn ssh_exec_blocking(alias: &str, remote_cmd: &str, stdin_data: Option<&[u8]>) -> Result<String, String> {
     let mut cmd = Command::new("ssh");
+    for o in control_args() {
+        cmd.arg(o);
+    }
     for o in SSH_OPTS {
         cmd.arg(o);
     }
@@ -211,20 +251,20 @@ pub struct SshTestResult {
 }
 
 #[tauri::command]
-pub fn ssh_test_connection(alias: String) -> Result<SshTestResult, String> {
+pub async fn ssh_test_connection(alias: String) -> Result<SshTestResult, String> {
     validate_alias(&alias)?;
     let out = ssh_exec(
         &alias,
-        "echo MLFORGE_OK && uname -srm && echo \"HOME=$HOME\"",
+        "echo SPINOML_OK && uname -srm && echo \"HOME=$HOME\"",
         None,
-    )?;
-    if !out.contains("MLFORGE_OK") {
-        return Err(format!("unexpected reply (no MLFORGE_OK marker): {}", out.trim()));
+    ).await?;
+    if !out.contains("SPINOML_OK") {
+        return Err(format!("unexpected reply (no SPINOML_OK marker): {}", out.trim()));
     }
     let mut uname = String::new();
     let mut home = String::new();
     for line in out.lines() {
-        if line == "MLFORGE_OK" {
+        if line == "SPINOML_OK" {
             continue;
         }
         if let Some(rest) = line.strip_prefix("HOME=") {
@@ -242,12 +282,12 @@ pub struct RemoteProjectLoad {
     pub meta: Option<serde_json::Value>,
     pub root_exists: bool,
     pub has_legacy_files: bool,
-    pub legacy_mlforge_count: usize,
+    pub legacy_spinoml_count: usize,
 }
 
 #[tauri::command]
-pub fn ssh_load_project(
-    state: State<RemoteWorkspaceState>,
+pub async fn ssh_load_project(
+    state: State<'_, RemoteWorkspaceState>,
     alias: String,
     root: String,
 ) -> Result<RemoteProjectLoad, String> {
@@ -256,15 +296,15 @@ pub fn ssh_load_project(
     let proj_path = join_remote(&root, PROJECT_FILE);
     let root_q = shell_quote_path(&root);
     let proj_q = shell_quote_path(&proj_path);
-    // One round-trip: check root, list .mlforge files, dump project.json if present.
+    // One round-trip: check root, list .spinoml files, dump project.json if present.
     let cmd = format!(
         "if [ -d {root_q} ]; then \
             echo ROOT_EXISTS; \
-            ls -1 {root_q} 2>/dev/null | grep -i '\\.mlforge$' | wc -l; \
+            ls -1 {root_q} 2>/dev/null | grep -i '\\.spinoml$' | wc -l; \
             if [ -f {proj_q} ]; then echo PROJECT_BEGIN; cat {proj_q}; echo; echo PROJECT_END; fi; \
          else echo ROOT_MISSING; fi"
     );
-    let out = ssh_exec(&alias, &cmd, None)?;
+    let out = ssh_exec(&alias, &cmd, None).await?;
     let mut root_exists = false;
     let mut legacy_count: usize = 0;
     let mut meta_lines: Vec<&str> = Vec::new();
@@ -305,13 +345,13 @@ pub fn ssh_load_project(
         meta,
         root_exists,
         has_legacy_files: legacy_count > 0,
-        legacy_mlforge_count: legacy_count,
+        legacy_spinoml_count: legacy_count,
     })
 }
 
 #[tauri::command]
-pub fn ssh_init_project(
-    state: State<RemoteWorkspaceState>,
+pub async fn ssh_init_project(
+    state: State<'_, RemoteWorkspaceState>,
     alias: String,
     root: String,
     name: String,
@@ -342,14 +382,14 @@ pub fn ssh_init_project(
         "mkdir -p {root_q} {subs} && if [ -f {proj_q} ]; then echo PROJECT_EXISTS >&2; exit 2; else cat > {proj_q}; fi",
         subs = subdir_qs.join(" "),
     );
-    ssh_exec(&alias, &cmd, Some(pretty.as_bytes()))?;
+    ssh_exec(&alias, &cmd, Some(pretty.as_bytes())).await?;
     *state.current.lock().map_err(|e| e.to_string())? =
         Some(RemoteWorkspace { alias: alias.clone(), root: root.clone() });
     Ok(meta)
 }
 
 #[tauri::command]
-pub fn ssh_update_project_meta(
+pub async fn ssh_update_project_meta(
     alias: String,
     root: String,
     patch: serde_json::Value,
@@ -357,7 +397,7 @@ pub fn ssh_update_project_meta(
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     let proj_q = shell_quote_path(&join_remote(&root, PROJECT_FILE));
-    let body = ssh_exec(&alias, &format!("cat {proj_q}"), None)?;
+    let body = ssh_exec(&alias, &format!("cat {proj_q}"), None).await?;
     let mut meta: serde_json::Value = serde_json::from_str(&body)
         .map_err(|e| format!("parse remote project.json: {e}"))?;
     let map = meta
@@ -370,10 +410,11 @@ pub fn ssh_update_project_meta(
     }
     map.insert("updated_at".into(), serde_json::Value::String(now_iso()));
     let pretty = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
-    ssh_exec(&alias, &format!("cat > {proj_q}"), Some(pretty.as_bytes()))?;
+    ssh_exec(&alias, &format!("cat > {proj_q}"), Some(pretty.as_bytes())).await?;
     Ok(meta)
 }
 
+// Sync: no ssh, just a mutex flip — stays off the async runtime.
 #[tauri::command]
 pub fn ssh_close(state: State<RemoteWorkspaceState>) -> Result<(), String> {
     *state.current.lock().map_err(|e| e.to_string())? = None;
@@ -386,6 +427,7 @@ pub struct CurrentRemote {
     pub root: String,
 }
 
+// Sync: no ssh, just reads the mutex.
 #[tauri::command]
 pub fn ssh_current(state: State<RemoteWorkspaceState>) -> Option<CurrentRemote> {
     let g = state.current.lock().ok()?;
@@ -403,7 +445,7 @@ pub struct RemoteFsEntry {
 }
 
 #[tauri::command]
-pub fn ssh_walk(alias: String, root: String) -> Result<Vec<RemoteFsEntry>, String> {
+pub async fn ssh_walk(alias: String, root: String) -> Result<Vec<RemoteFsEntry>, String> {
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     let root_q = shell_quote_path(&root);
@@ -415,7 +457,7 @@ pub fn ssh_walk(alias: String, root: String) -> Result<Vec<RemoteFsEntry>, Strin
               ! -path '*/.*' -printf '%y\\t%P\\n' 2>/dev/null; \
          fi"
     );
-    let out = ssh_exec(&alias, &cmd, None)?;
+    let out = ssh_exec(&alias, &cmd, None).await?;
     let mut entries: Vec<RemoteFsEntry> = Vec::new();
     for line in out.lines() {
         let mut it = line.splitn(2, '\t');
@@ -438,16 +480,16 @@ pub fn ssh_walk(alias: String, root: String) -> Result<Vec<RemoteFsEntry>, Strin
 }
 
 #[tauri::command]
-pub fn ssh_read_file(alias: String, root: String, relpath: String) -> Result<String, String> {
+pub async fn ssh_read_file(alias: String, root: String, relpath: String) -> Result<String, String> {
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     validate_relpath(&relpath)?;
     let p_q = shell_quote_path(&join_remote(&root, &relpath));
-    ssh_exec(&alias, &format!("cat {p_q}"), None)
+    ssh_exec(&alias, &format!("cat {p_q}"), None).await
 }
 
 #[tauri::command]
-pub fn ssh_write_file(
+pub async fn ssh_write_file(
     alias: String,
     root: String,
     relpath: String,
@@ -468,11 +510,12 @@ pub fn ssh_write_file(
         &format!("mkdir -p {parent_q} && cat > {p_q}"),
         Some(content.as_bytes()),
     )
+    .await
     .map(|_| ())
 }
 
 #[tauri::command]
-pub fn ssh_delete_path(alias: String, root: String, relpath: String) -> Result<(), String> {
+pub async fn ssh_delete_path(alias: String, root: String, relpath: String) -> Result<(), String> {
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     validate_relpath(&relpath)?;
@@ -480,20 +523,20 @@ pub fn ssh_delete_path(alias: String, root: String, relpath: String) -> Result<(
         return Err("refusing to delete workspace root".into());
     }
     let p_q = shell_quote_path(&join_remote(&root, &relpath));
-    ssh_exec(&alias, &format!("rm -rf -- {p_q}"), None).map(|_| ())
+    ssh_exec(&alias, &format!("rm -rf -- {p_q}"), None).await.map(|_| ())
 }
 
 #[tauri::command]
-pub fn ssh_mkdir(alias: String, root: String, relpath: String) -> Result<(), String> {
+pub async fn ssh_mkdir(alias: String, root: String, relpath: String) -> Result<(), String> {
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     validate_relpath(&relpath)?;
     let p_q = shell_quote_path(&join_remote(&root, &relpath));
-    ssh_exec(&alias, &format!("mkdir -p {p_q}"), None).map(|_| ())
+    ssh_exec(&alias, &format!("mkdir -p {p_q}"), None).await.map(|_| ())
 }
 
 #[tauri::command]
-pub fn ssh_rename(
+pub async fn ssh_rename(
     alias: String,
     root: String,
     from_rel: String,
@@ -516,6 +559,7 @@ pub fn ssh_rename(
         &format!("mkdir -p {to_parent_q} && mv -- {from_q} {to_q}"),
         None,
     )
+    .await
     .map(|_| ())
 }
 
@@ -548,7 +592,7 @@ fn strip_iso_nanos(s: &str) -> String {
 }
 
 #[tauri::command]
-pub fn ssh_list_notes(alias: String, root: String) -> Result<Vec<RemoteNoteEntry>, String> {
+pub async fn ssh_list_notes(alias: String, root: String) -> Result<Vec<RemoteNoteEntry>, String> {
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     let dir_q = shell_quote_path(&join_remote(&root, "notes"));
@@ -557,7 +601,7 @@ pub fn ssh_list_notes(alias: String, root: String) -> Result<Vec<RemoteNoteEntry
            \\( -name '*.md' -o -name '*.txt' \\) \
            -printf '%f\\t%s\\t%TY-%Tm-%TdT%TH:%TM:%TSZ\\n' 2>/dev/null"
     );
-    let out = ssh_exec(&alias, &cmd, None)?;
+    let out = ssh_exec(&alias, &cmd, None).await?;
     let mut entries: Vec<RemoteNoteEntry> = Vec::new();
     for line in out.lines() {
         let parts: Vec<&str> = line.splitn(3, '\t').collect();
@@ -582,16 +626,16 @@ pub fn ssh_list_notes(alias: String, root: String) -> Result<Vec<RemoteNoteEntry
 }
 
 #[tauri::command]
-pub fn ssh_read_note(alias: String, root: String, name: String) -> Result<String, String> {
+pub async fn ssh_read_note(alias: String, root: String, name: String) -> Result<String, String> {
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     validate_plain_filename(&name, "note")?;
     let p_q = shell_quote_path(&format!("{}/notes/{}", root.trim_end_matches('/'), name));
-    ssh_exec(&alias, &format!("cat {p_q}"), None)
+    ssh_exec(&alias, &format!("cat {p_q}"), None).await
 }
 
 #[tauri::command]
-pub fn ssh_write_note(
+pub async fn ssh_write_note(
     alias: String,
     root: String,
     name: String,
@@ -607,11 +651,12 @@ pub fn ssh_write_note(
         &format!("mkdir -p {dir_q} && cat > {p_q}"),
         Some(content.as_bytes()),
     )
+    .await
     .map(|_| ())
 }
 
 #[tauri::command]
-pub fn ssh_append_note(
+pub async fn ssh_append_note(
     alias: String,
     root: String,
     name: String,
@@ -627,13 +672,14 @@ pub fn ssh_append_note(
         &format!("mkdir -p {dir_q} && cat >> {p_q}"),
         Some(content.as_bytes()),
     )
+    .await
     .map(|_| ())
 }
 
 // ─── experiments ──────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn ssh_append_experiment(
+pub async fn ssh_append_experiment(
     alias: String,
     root: String,
     filename: String,
@@ -657,11 +703,12 @@ pub fn ssh_append_experiment(
         &format!("mkdir -p {dir_q} && cat >> {p_q}"),
         Some(&payload),
     )
+    .await
     .map(|_| ())
 }
 
 #[tauri::command]
-pub fn ssh_read_experiment(
+pub async fn ssh_read_experiment(
     alias: String,
     root: String,
     filename: String,
@@ -675,7 +722,7 @@ pub fn ssh_read_experiment(
         filename
     ));
     // Tolerate missing file: emit empty.
-    ssh_exec(&alias, &format!("if [ -f {p_q} ]; then cat {p_q}; fi"), None)
+    ssh_exec(&alias, &format!("if [ -f {p_q} ]; then cat {p_q}; fi"), None).await
 }
 
 // ─── datasets ─────────────────────────────────────────────────────────────
@@ -690,7 +737,7 @@ pub struct RemoteDatasetEntry {
 }
 
 #[tauri::command]
-pub fn ssh_list_datasets(
+pub async fn ssh_list_datasets(
     alias: String,
     root: String,
 ) -> Result<Vec<RemoteDatasetEntry>, String> {
@@ -711,7 +758,7 @@ pub fn ssh_list_datasets(
            printf 'D\\t%s\\t%s\\n' \"$bn\" \"$sz\"; \
          done"
     );
-    let out = ssh_exec(&alias, &cmd, None)?;
+    let out = ssh_exec(&alias, &cmd, None).await?;
     let mut entries: Vec<RemoteDatasetEntry> = Vec::new();
     // For abspath we need the *expanded* root if it was ~/-prefixed. The
     // shell did the expansion; we don't know HOME locally. Easiest: emit
@@ -748,4 +795,558 @@ pub fn ssh_list_datasets(
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
     Ok(entries)
+}
+
+// ─── remote training executor (Phase 16: ssh-direct) ──────────────────────
+//
+// Mirrors src/training.rs over ssh. A run is the SAME self-contained directory
+// (experiments/runs/<run_id>/) on the remote host; we ship the frozen files in,
+// launch the trainer detached (`nohup setsid` → survives both the ssh session
+// AND the SpinoML app), and afterwards only read files + `kill -0` over ssh.
+// No SLURM here — that's Phase 17.
+
+/// The python interpreter on the remote is user-configured per connection. Keep
+/// it a tame token (path or bare name) — it's pasted into a shell command.
+fn validate_python(p: &str) -> Result<(), String> {
+    if p.is_empty() || p.len() > 512 {
+        return Err("python path must be 1..512 chars".into());
+    }
+    if p.chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/' | '~'))
+    {
+        Ok(())
+    } else {
+        Err("python path may only contain [A-Za-z0-9._/~-] (no spaces/metachars)".into())
+    }
+}
+
+fn remote_runs_dir(root: &str) -> String {
+    join_remote(root, "experiments/runs")
+}
+fn remote_run_dir(root: &str, run_id: &str) -> String {
+    join_remote(root, &format!("experiments/runs/{run_id}"))
+}
+
+async fn write_remote_run_file(alias: &str, dir: &str, name: &str, content: &[u8]) -> Result<(), String> {
+    let p_q = shell_quote_path(&format!("{dir}/{name}"));
+    ssh_exec(alias, &format!("cat > {p_q}"), Some(content)).await.map(|_| ())
+}
+
+#[tauri::command]
+pub async fn ssh_start_training_run(
+    app: AppHandle,
+    alias: String,
+    root: String,
+    run_id: String,
+    python: String,
+    run_json: String,
+    model_spinoml: String,
+    model_py: String,
+) -> Result<(), String> {
+    validate_alias(&alias)?;
+    validate_remote_root(&root)?;
+    training::validate_run_id(&run_id)?;
+    let python = {
+        let t = python.trim();
+        if t.is_empty() { "python".to_string() } else { t.to_string() }
+    };
+    validate_python(&python)?;
+
+    let dir = remote_run_dir(&root, &run_id);
+    let dir_q = shell_quote_path(&dir);
+    let ckpt_q = shell_quote_path(&format!("{dir}/checkpoints"));
+    let python_q = shell_quote_path(&python);
+
+    // refuse to clobber an existing run
+    let exists = ssh_exec(&alias, &format!("if [ -d {dir_q} ]; then echo EXISTS; fi"), None).await?;
+    if exists.contains("EXISTS") {
+        return Err(format!("run {run_id} already exists on {alias}"));
+    }
+    ssh_exec(&alias, &format!("mkdir -p {ckpt_q}"), None).await?;
+
+    // frozen snapshots
+    write_remote_run_file(&alias, &dir, "run.json", run_json.as_bytes()).await?;
+    write_remote_run_file(&alias, &dir, "model.spinoml", model_spinoml.as_bytes()).await?;
+    write_remote_run_file(&alias, &dir, "model.py", model_py.as_bytes()).await?;
+
+    // ship the shared trainer in as train.py (read from the local bundle)
+    let template = crate::sidecar_root_pub(&app)
+        .join("sidecar-torch")
+        .join("training_template.py");
+    let trainer = std::fs::read_to_string(&template).map_err(|e| {
+        format!(
+            "training template missing at {} ({e}). SpinoML bundle may be incomplete.",
+            template.display()
+        )
+    })?;
+    write_remote_run_file(&alias, &dir, "train.py", trainer.as_bytes()).await?;
+    write_remote_run_file(&alias, &dir, "status", b"queued\n").await?;
+
+    // Pick the launch path from the frozen backend in run.json: SLURM → sbatch,
+    // anything else → direct detached process (Phase 16).
+    let cfg: Value = serde_json::from_str(&run_json).unwrap_or(Value::Null);
+    let backend_kind = cfg
+        .get("backend")
+        .and_then(|b| b.get("kind"))
+        .and_then(|k| k.as_str())
+        .unwrap_or("local");
+
+    if backend_kind == "slurm" {
+        let slurm = cfg.get("backend").and_then(|b| b.get("slurm"));
+        let sbatch = build_sbatch(&run_id, &python_q, slurm);
+        write_remote_run_file(&alias, &dir, "train.sbatch", sbatch.as_bytes()).await?;
+        // Submit; parse "Submitted batch job <id>"; freeze pid as slurm:<id>.
+        let submit = format!(
+            "cd {dir_q} && out=$(sbatch train.sbatch 2>&1); echo \"$out\"; \
+             jid=$(printf '%s' \"$out\" | grep -oE 'job [0-9]+' | grep -oE '[0-9]+' | tail -1); \
+             if [ -n \"$jid\" ]; then printf 'slurm:%s\\n' \"$jid\" > pid; echo \"MLF_JOBID $jid\"; \
+             else echo MLF_SUBMIT_FAILED; fi"
+        );
+        let out = ssh_exec(&alias, &submit, None).await?;
+        if !out.contains("MLF_JOBID") {
+            // surface sbatch's own error text (everything before our markers)
+            let msg: String = out
+                .lines()
+                .filter(|l| !l.starts_with("MLF_"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(format!("sbatch failed: {}", msg.trim()));
+        }
+        eprintln!("[spinoml] slurm run {run_id} submitted on {alias}");
+    } else {
+        // Detached launch. setsid → own session (immune to the ssh-channel HUP
+        // and app close); nohup → belt-and-suspenders; stdio to files; stdin
+        // /dev/null. The remote command shell has job control off, so setsid
+        // execs in place and $! is the python pid.
+        //
+        // The `{ … & echo $! > pid; }` brace group is load-bearing: without it,
+        // `cd dir && nohup … & echo $! > pid` is parsed as
+        // `{ cd dir && nohup … & } ; echo $! > pid`, so the pid file lands in the
+        // ssh login cwd ($HOME), not the run dir, AND $! is the transient
+        // subshell, not python. The run-list then can't find/trust the pid and
+        // reports a live run as "failed" on re-open. The group binds both the
+        // background launch and the pid write to the post-`cd` run dir.
+        let launch = format!(
+            "cd {dir_q} && {{ nohup setsid {python_q} -u train.py > stdout.log 2> stderr.log < /dev/null & echo $! > pid; }}"
+        );
+        ssh_exec(&alias, &launch, None).await?;
+        eprintln!("[spinoml] remote training run {run_id} launched on {alias} ({python})");
+    }
+    Ok(())
+}
+
+/// Emit a train.sbatch from the SLURM config (a serde_json object). Values are
+/// written into a file (not pasted into our shell command), and run on the
+/// user's own cluster — so simple fields are lightly sanitised and the module
+/// list / pre_run_script are free-form by design (the plan calls for it).
+fn build_sbatch(run_id: &str, python_q: &str, slurm: Option<&Value>) -> String {
+    let s = |k: &str| slurm.and_then(|v| v.get(k)).and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    let n = |k: &str| slurm.and_then(|v| v.get(k)).and_then(|x| x.as_u64());
+
+    // job name: a short, tame slug from the run id
+    let job: String = run_id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .take(64)
+        .collect();
+
+    let mut out = String::from("#!/bin/bash\n");
+    out.push_str(&format!("#SBATCH --job-name=spinoml-{job}\n"));
+    let partition = s("partition");
+    if !partition.is_empty() {
+        out.push_str(&format!("#SBATCH --partition={partition}\n"));
+    }
+    let time = s("time");
+    out.push_str(&format!("#SBATCH --time={}\n", if time.is_empty() { "04:00:00".into() } else { time }));
+    let mem = s("mem");
+    if !mem.is_empty() {
+        out.push_str(&format!("#SBATCH --mem={mem}\n"));
+    }
+    let cpus = n("cpus_per_task").unwrap_or(8);
+    out.push_str(&format!("#SBATCH --cpus-per-task={cpus}\n"));
+    let gres = s("gres");
+    if !gres.is_empty() {
+        out.push_str(&format!("#SBATCH --gres={gres}\n"));
+    }
+    let account = s("account");
+    if !account.is_empty() {
+        out.push_str(&format!("#SBATCH --account={account}\n"));
+    }
+    let qos = s("qos");
+    if !qos.is_empty() {
+        out.push_str(&format!("#SBATCH --qos={qos}\n"));
+    }
+    out.push_str("#SBATCH --output=slurm-%j.out\n");
+    out.push_str("#SBATCH --error=slurm-%j.err\n\n");
+
+    if let Some(mods) = slurm.and_then(|v| v.get("modules")).and_then(|x| x.as_array()) {
+        for m in mods {
+            if let Some(name) = m.as_str() {
+                let name = name.trim();
+                if !name.is_empty() {
+                    out.push_str(&format!("module load {name}\n"));
+                }
+            }
+        }
+    }
+    let pre = s("pre_run_script");
+    if !pre.is_empty() {
+        out.push_str(&pre);
+        out.push('\n');
+    }
+    out.push('\n');
+    // train.py writes events.jsonl/status itself; -u so SLURM's buffered stdout
+    // isn't the only signal. We still cd via SLURM_SUBMIT_DIR for safety.
+    out.push_str("cd \"$SLURM_SUBMIT_DIR\"\n");
+    out.push_str(&format!("{python_q} -u train.py\n"));
+    out
+}
+
+struct ParsedRun {
+    id: String,
+    alive: bool,
+    has_checkpoint: bool,
+    status: String,
+    run_json: String,
+    metrics: String,
+}
+
+#[tauri::command]
+pub async fn ssh_list_training_runs(
+    alias: String,
+    root: String,
+) -> Result<Vec<training::RunSummary>, String> {
+    validate_alias(&alias)?;
+    validate_remote_root(&root)?;
+    let runs_q = shell_quote_path(&remote_runs_dir(&root));
+    // One round-trip: for each run dir emit liveness + status + run.json +
+    // metrics.json between line-delimited markers.
+    let cmd = format!(
+        "RUNS={runs_q}; \
+         if [ -d \"$RUNS\" ]; then \
+           for d in \"$RUNS\"/*/; do \
+             [ -d \"$d\" ] || continue; \
+             name=$(basename \"$d\"); \
+             case \"$name\" in .*) continue;; esac; \
+             echo \"MLF_RUN $name\"; \
+             pid=$(cat \"$d/pid\" 2>/dev/null); \
+             case \"$pid\" in \
+               slurm:*) jid=${{pid#slurm:}}; if squeue -j \"$jid\" -h -o '%T' 2>/dev/null | grep -q .; then echo 'MLF_ALIVE 1'; else echo 'MLF_ALIVE 0'; fi ;; \
+               '') echo 'MLF_ALIVE 0' ;; \
+               *) if kill -0 \"$pid\" 2>/dev/null; then echo 'MLF_ALIVE 1'; else echo 'MLF_ALIVE 0'; fi ;; \
+             esac; \
+             if [ -f \"$d/checkpoints/best.pt\" ]; then echo 'MLF_CKPT 1'; else echo 'MLF_CKPT 0'; fi; \
+             echo MLF_STATUS_BEGIN; cat \"$d/status\" 2>/dev/null; echo; echo MLF_STATUS_END; \
+             echo MLF_RUNJSON_BEGIN; cat \"$d/run.json\" 2>/dev/null; echo; echo MLF_RUNJSON_END; \
+             echo MLF_METRICS_BEGIN; cat \"$d/metrics.json\" 2>/dev/null; echo; echo MLF_METRICS_END; \
+           done; \
+         fi"
+    );
+    let out = ssh_exec(&alias, &cmd, None).await?;
+
+    let mut parsed: Vec<ParsedRun> = Vec::new();
+    let mut cur: Option<ParsedRun> = None;
+    let mut section = "";
+    for line in out.lines() {
+        if let Some(name) = line.strip_prefix("MLF_RUN ") {
+            if let Some(r) = cur.take() {
+                parsed.push(r);
+            }
+            cur = Some(ParsedRun {
+                id: name.to_string(),
+                alive: false,
+                has_checkpoint: false,
+                status: String::new(),
+                run_json: String::new(),
+                metrics: String::new(),
+            });
+            section = "";
+            continue;
+        }
+        if let Some(a) = line.strip_prefix("MLF_ALIVE ") {
+            if let Some(r) = cur.as_mut() {
+                r.alive = a.trim() == "1";
+            }
+            continue;
+        }
+        if let Some(c) = line.strip_prefix("MLF_CKPT ") {
+            if let Some(r) = cur.as_mut() {
+                r.has_checkpoint = c.trim() == "1";
+            }
+            continue;
+        }
+        match line {
+            "MLF_STATUS_BEGIN" => { section = "status"; continue; }
+            "MLF_RUNJSON_BEGIN" => { section = "runjson"; continue; }
+            "MLF_METRICS_BEGIN" => { section = "metrics"; continue; }
+            "MLF_STATUS_END" | "MLF_RUNJSON_END" | "MLF_METRICS_END" => { section = ""; continue; }
+            _ => {}
+        }
+        if let Some(r) = cur.as_mut() {
+            match section {
+                "status" => { r.status.push_str(line); r.status.push('\n'); }
+                "runjson" => { r.run_json.push_str(line); r.run_json.push('\n'); }
+                "metrics" => { r.metrics.push_str(line); r.metrics.push('\n'); }
+                _ => {}
+            }
+        }
+    }
+    if let Some(r) = cur.take() {
+        parsed.push(r);
+    }
+
+    // run_id is timestamp-prefixed → lexical-desc == newest-first.
+    parsed.sort_by(|a, b| b.id.cmp(&a.id));
+    Ok(parsed
+        .into_iter()
+        .map(|r| {
+            training::RunSummary::from_parts(
+                &r.id,
+                r.run_json.trim(),
+                r.metrics.trim(),
+                r.status.trim(),
+                r.alive,
+                r.has_checkpoint,
+            )
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn ssh_training_run_status(
+    alias: String,
+    root: String,
+    run_id: String,
+) -> Result<training::RunStatus, String> {
+    validate_alias(&alias)?;
+    validate_remote_root(&root)?;
+    training::validate_run_id(&run_id)?;
+    let dir_q = shell_quote_path(&remote_run_dir(&root, &run_id));
+    // For SLURM jobs we also fetch the live squeue state (%T) and, once the job
+    // has left the queue, the sacct accounting state — so a scheduler-killed job
+    // (TIMEOUT/OOM/scancel) is reported precisely instead of just "failed".
+    let cmd = format!(
+        "d={dir_q}; pid=$(cat \"$d/pid\" 2>/dev/null); \
+         case \"$pid\" in \
+           slurm:*) jid=${{pid#slurm:}}; \
+             st=$(squeue -j \"$jid\" -h -o '%T' 2>/dev/null | head -1); \
+             if [ -n \"$st\" ]; then echo 'MLF_ALIVE 1'; echo \"MLF_SQUEUE $st\"; \
+             else echo 'MLF_ALIVE 0'; \
+               sa=$(sacct -j \"$jid\" -n -X -o State%30 2>/dev/null | head -1); \
+               echo \"MLF_SACCT $sa\"; fi ;; \
+           '') echo 'MLF_ALIVE 0' ;; \
+           *) if kill -0 \"$pid\" 2>/dev/null; then echo 'MLF_ALIVE 1'; else echo 'MLF_ALIVE 0'; fi ;; \
+         esac; \
+         echo \"MLF_PID $pid\"; \
+         echo MLF_STATUS_BEGIN; cat \"$d/status\" 2>/dev/null; echo; echo MLF_STATUS_END"
+    );
+    let out = ssh_exec(&alias, &cmd, None).await?;
+    let mut alive = false;
+    let mut pid: Option<i32> = None;
+    let mut is_slurm = false;
+    let mut squeue_state = String::new();
+    let mut sacct_state = String::new();
+    let mut status = String::new();
+    let mut in_status = false;
+    for line in out.lines() {
+        if let Some(a) = line.strip_prefix("MLF_ALIVE ") {
+            alive = a.trim() == "1";
+        } else if let Some(s) = line.strip_prefix("MLF_SQUEUE ") {
+            is_slurm = true;
+            squeue_state = s.trim().to_string();
+        } else if let Some(s) = line.strip_prefix("MLF_SACCT ") {
+            is_slurm = true;
+            sacct_state = s.trim().to_string();
+        } else if let Some(p) = line.strip_prefix("MLF_PID ") {
+            let p = p.trim();
+            if p.starts_with("slurm:") {
+                is_slurm = true;
+            }
+            pid = p.parse::<i32>().ok();
+        } else if line == "MLF_STATUS_BEGIN" {
+            in_status = true;
+        } else if line == "MLF_STATUS_END" {
+            in_status = false;
+        } else if in_status {
+            status.push_str(line);
+            status.push('\n');
+        }
+    }
+    if is_slurm {
+        let st = training::reconcile_slurm_status(status.trim(), &squeue_state, &sacct_state);
+        Ok(training::RunStatus::new_with_status(st, alive, pid))
+    } else {
+        Ok(training::RunStatus::new(status.trim(), alive, pid))
+    }
+}
+
+#[tauri::command]
+pub async fn ssh_read_training_run_file(
+    alias: String,
+    root: String,
+    run_id: String,
+    name: String,
+) -> Result<String, String> {
+    validate_alias(&alias)?;
+    validate_remote_root(&root)?;
+    training::validate_run_id(&run_id)?;
+    if !training::READABLE.contains(&name.as_str()) {
+        return Err(format!("file {name:?} is not readable from a run dir"));
+    }
+    let p_q = shell_quote_path(&format!("{}/{}", remote_run_dir(&root, &run_id), name));
+    ssh_exec(&alias, &format!("if [ -f {p_q} ]; then cat {p_q}; fi"), None).await
+}
+
+#[tauri::command]
+pub async fn ssh_stop_training_run(alias: String, root: String, run_id: String) -> Result<(), String> {
+    validate_alias(&alias)?;
+    validate_remote_root(&root)?;
+    training::validate_run_id(&run_id)?;
+    let dir_q = shell_quote_path(&remote_run_dir(&root, &run_id));
+    // Cooperative (status file, checked each epoch) + forceful (SIGTERM the whole
+    // process group via negative pid — setsid made python the group leader).
+    let cmd = format!(
+        "d={dir_q}; if [ -d \"$d\" ]; then \
+           printf 'cancelled\\n' > \"$d/status\"; \
+           pid=$(cat \"$d/pid\" 2>/dev/null); \
+           case \"$pid\" in \
+             slurm:*) scancel \"${{pid#slurm:}}\" 2>/dev/null ;; \
+             '') : ;; \
+             *) kill -TERM -\"$pid\" 2>/dev/null; kill -TERM \"$pid\" 2>/dev/null ;; \
+           esac; \
+         fi"
+    );
+    ssh_exec(&alias, &cmd, None).await.map(|_| ())
+}
+
+#[tauri::command]
+pub async fn ssh_delete_training_run(alias: String, root: String, run_id: String) -> Result<(), String> {
+    validate_alias(&alias)?;
+    validate_remote_root(&root)?;
+    training::validate_run_id(&run_id)?;
+    let dir_q = shell_quote_path(&remote_run_dir(&root, &run_id));
+    let cmd = format!(
+        "d={dir_q}; if [ -d \"$d\" ]; then \
+           pid=$(cat \"$d/pid\" 2>/dev/null); alive=0; \
+           case \"$pid\" in \
+             slurm:*) jid=${{pid#slurm:}}; if squeue -j \"$jid\" -h -o '%T' 2>/dev/null | grep -q .; then alive=1; fi ;; \
+             '') : ;; \
+             *) if kill -0 \"$pid\" 2>/dev/null; then alive=1; fi ;; \
+           esac; \
+           if [ \"$alive\" = 1 ]; then echo MLF_ALIVE; else rm -rf -- \"$d\"; echo MLF_DELETED; fi; \
+         else echo MLF_DELETED; fi"
+    );
+    let out = ssh_exec(&alias, &cmd, None).await?;
+    if out.contains("MLF_ALIVE") {
+        return Err("run is still alive — stop it before deleting".into());
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+pub struct RemoteTrainingCapabilities {
+    has_slurm: bool,
+    has_gpu: bool,
+    partitions: Vec<String>,
+    gpu_names: Vec<String>,
+}
+
+/// Probe what the remote host offers for training (Phase 17). Cheap, one
+/// round-trip; the UI calls it once per remote connection to decide whether to
+/// offer the SLURM backend and to populate the partition dropdown.
+#[tauri::command]
+pub async fn ssh_remote_training_capabilities(
+    alias: String,
+    // Must be named `root` to match the JS arg key — Tauri matches command args
+    // by exact name, and an underscore-prefixed name (`_root`) made every call
+    // fail, so the SLURM backend block never appeared in the new-run dialog.
+    root: String,
+) -> Result<RemoteTrainingCapabilities, String> {
+    let _ = &root;
+    validate_alias(&alias)?;
+    let cmd = "if command -v sbatch >/dev/null 2>&1; then echo MLF_HAS_SLURM; fi; \
+               if command -v nvidia-smi >/dev/null 2>&1; then echo MLF_HAS_GPU; \
+                 echo MLF_GPU_BEGIN; nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null; echo MLF_GPU_END; fi; \
+               if command -v sinfo >/dev/null 2>&1; then \
+                 echo MLF_PART_BEGIN; sinfo -h -o '%P' 2>/dev/null | sort -u; echo MLF_PART_END; fi";
+    let out = ssh_exec(&alias, cmd, None).await?;
+
+    let mut has_slurm = false;
+    let mut has_gpu = false;
+    let mut partitions: Vec<String> = Vec::new();
+    let mut gpu_names: Vec<String> = Vec::new();
+    let mut section = "";
+    for line in out.lines() {
+        match line {
+            "MLF_HAS_SLURM" => has_slurm = true,
+            "MLF_HAS_GPU" => has_gpu = true,
+            "MLF_PART_BEGIN" => section = "part",
+            "MLF_GPU_BEGIN" => section = "gpu",
+            "MLF_PART_END" | "MLF_GPU_END" => section = "",
+            _ => {
+                let v = line.trim();
+                if v.is_empty() {
+                    continue;
+                }
+                match section {
+                    // sinfo marks the default partition with a trailing '*'
+                    "part" => partitions.push(v.trim_end_matches('*').to_string()),
+                    "gpu" => gpu_names.push(v.to_string()),
+                    _ => {}
+                }
+            }
+        }
+    }
+    partitions.dedup();
+    Ok(RemoteTrainingCapabilities {
+        has_slurm,
+        has_gpu,
+        partitions,
+        gpu_names,
+    })
+}
+
+/// Promote a remote run's best checkpoint to `<root>/models/best/<name>.pt`.
+/// Mirror of the local `promote_run_checkpoint`. Returns the workspace-relative
+/// dest path so the UI shows the same thing local and remote.
+#[tauri::command]
+pub async fn ssh_promote_checkpoint(
+    alias: String,
+    root: String,
+    run_id: String,
+    dest_name: String,
+) -> Result<String, String> {
+    validate_alias(&alias)?;
+    validate_remote_root(&root)?;
+    training::validate_run_id(&run_id)?;
+    let file = training::sanitize_model_name(&dest_name)?;
+    let src_q = shell_quote_path(&format!(
+        "{}/checkpoints/best.pt",
+        remote_run_dir(&root, &run_id)
+    ));
+    let dest_dir = join_remote(&root, "models/best");
+    let dest_dir_q = shell_quote_path(&dest_dir);
+    let dest_q = shell_quote_path(&format!("{dest_dir}/{file}"));
+    let cmd = format!(
+        "if [ ! -f {src_q} ]; then echo MLF_NO_CKPT; else mkdir -p {dest_dir_q} && cp {src_q} {dest_q} && echo MLF_OK; fi"
+    );
+    let out = ssh_exec(&alias, &cmd, None).await?;
+    if out.contains("MLF_NO_CKPT") {
+        return Err("this run has no checkpoints/best.pt to promote".into());
+    }
+    if !out.contains("MLF_OK") {
+        return Err(format!("promote failed: {}", out.trim()));
+    }
+    Ok(format!("models/best/{file}"))
+}
+
+/// Remote GPU snapshot (empty if no nvidia-smi). Mirror of the local
+/// `gpu_stats`. The hardware strip polls this while a remote run is alive.
+#[tauri::command]
+pub async fn ssh_gpu_stats(alias: String, root: String) -> Result<Vec<training::GpuStat>, String> {
+    let _ = &root;
+    validate_alias(&alias)?;
+    let cmd = format!("{} 2>/dev/null || true", training::NVIDIA_SMI_QUERY);
+    let out = ssh_exec(&alias, &cmd, None).await?;
+    Ok(training::parse_gpu_stats(&out))
 }

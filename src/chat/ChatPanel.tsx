@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useChatStore, type ChatMessage, type ToolCall } from './store'
+import { providerById, useProviderStore } from './providerStore'
+import ProviderSettings from './ProviderSettings'
 
 export default function ChatPanel() {
   const messages = useChatStore((s) => s.messages)
@@ -7,8 +9,11 @@ export default function ChatPanel() {
   const online = useChatStore((s) => s.online)
   const send = useChatStore((s) => s.send)
   const reset = useChatStore((s) => s.reset)
+  const currentId = useProviderStore((s) => s.currentId)
+  const provider = providerById(currentId)
 
   const [draft, setDraft] = useState('')
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -24,7 +29,7 @@ export default function ChatPanel() {
   const disabled = status === 'streaming' || online === false
   const statusHint =
     online === false ? 'sidecar offline — run npm run sidecar:llm'
-    : status === 'streaming' ? 'Claude is working…'
+    : status === 'streaming' ? 'LLM is working…'
     : online === null ? 'checking sidecar…'
     : 'ready'
 
@@ -33,12 +38,18 @@ export default function ChatPanel() {
       <div className="mb-2 flex items-center justify-between">
         <div className="text-xs uppercase tracking-wide text-[#7a8088]">Chat</div>
         <div className="flex items-center gap-2 text-[10px] text-[#7a8088]">
+          <button
+            className="rounded px-1 text-[#9aa1a8] hover:bg-[#1f2429] hover:text-[#e6e8eb]"
+            onClick={() => setSettingsOpen(true)}
+            title="LLM-Quelle wählen"
+          >{provider.label} ⚙</button>
           <span>{statusHint}</span>
           {messages.length > 0 && (
             <button className="hover:text-[#e6e8eb]" onClick={reset}>reset</button>
           )}
         </div>
       </div>
+      {settingsOpen && <ProviderSettings onClose={() => setSettingsOpen(false)} />}
 
       <div
         ref={scrollRef}

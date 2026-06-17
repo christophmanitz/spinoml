@@ -11,12 +11,13 @@ use tauri_plugin_dialog::DialogExt;
 mod ssh;
 mod pty;
 mod remote_sidecar;
+mod training;
 
-pub(crate) const PROJECT_FILE: &str = "mlforge.project.json";
+pub(crate) const PROJECT_FILE: &str = "spinoml.project.json";
 pub(crate) const SUBDIRS: &[&str] = &["models", "datasets", "notes", "experiments"];
 
 #[derive(Default)]
-struct WorkspaceState {
+pub(crate) struct WorkspaceState {
     root: Mutex<Option<PathBuf>>,
 }
 
@@ -57,25 +58,43 @@ pub(crate) fn sidecar_root_pub(app: &tauri::AppHandle) -> PathBuf {
         .unwrap_or(manifest)
 }
 
+/// Ask the kernel to SIGTERM this child when its parent (spinoml) dies, no
+/// matter how the parent dies — graceful quit, crash, or `kill -9` from a dev
+/// restart. Without this, sidecars (and their ports) orphan and the next launch
+/// hits "Address already in use". Must run from a long-lived thread (we spawn
+/// from setup() on the main thread, which lives for the whole process).
+#[cfg(target_os = "linux")]
+pub(crate) fn set_pdeathsig(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM as libc::c_ulong, 0, 0, 0);
+            Ok(())
+        });
+    }
+}
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn set_pdeathsig(_cmd: &mut Command) {}
+
 fn spawn_managed(label: &str, prog: &str, arg: PathBuf, cwd: &Path) -> Option<Child> {
     if !arg.exists() {
-        eprintln!("[mlforge] {label}: sidecar script not found at {}", arg.display());
+        eprintln!("[spinoml] {label}: sidecar script not found at {}", arg.display());
         return None;
     }
-    match Command::new(prog)
-        .arg(&arg)
+    let mut cmd = Command::new(prog);
+    cmd.arg(&arg)
         .current_dir(cwd)
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-    {
+        .stderr(Stdio::inherit());
+    set_pdeathsig(&mut cmd);
+    match cmd.spawn() {
         Ok(child) => {
-            eprintln!("[mlforge] {label}: spawned pid={} ({prog} {})", child.id(), arg.display());
+            eprintln!("[spinoml] {label}: spawned pid={} ({prog} {})", child.id(), arg.display());
             Some(child)
         }
         Err(e) => {
             eprintln!(
-                "[mlforge] {label}: failed to spawn ({prog} {}): {e} \
+                "[spinoml] {label}: failed to spawn ({prog} {}): {e} \
                  — make sure your shell PATH has the conda env activated",
                 arg.display()
             );
@@ -87,14 +106,14 @@ fn spawn_managed(label: &str, prog: &str, arg: PathBuf, cwd: &Path) -> Option<Ch
 fn shutdown_sidecars(sc: &Sidecars) {
     if let Ok(mut t) = sc.torch.lock() {
         if let Some(mut c) = t.take() {
-            eprintln!("[mlforge] killing torch sidecar pid={}", c.id());
+            eprintln!("[spinoml] killing torch sidecar pid={}", c.id());
             let _ = c.kill();
             let _ = c.wait();
         }
     }
     if let Ok(mut t) = sc.llm.lock() {
         if let Some(mut c) = t.take() {
-            eprintln!("[mlforge] killing llm sidecar pid={}", c.id());
+            eprintln!("[spinoml] killing llm sidecar pid={}", c.id());
             let _ = c.kill();
             let _ = c.wait();
         }
@@ -134,7 +153,7 @@ fn resolve(root: &Path, relpath: &str) -> Result<PathBuf, String> {
     Ok(root.join(rel))
 }
 
-fn current_root(state: &State<WorkspaceState>) -> Result<PathBuf, String> {
+pub(crate) fn current_root(state: &State<WorkspaceState>) -> Result<PathBuf, String> {
     state
         .root
         .lock()
@@ -178,6 +197,18 @@ fn current_workspace_dir(state: State<WorkspaceState>) -> Option<String> {
 fn close_workspace_dir(state: State<WorkspaceState>) -> Result<(), String> {
     *state.root.lock().map_err(|e| e.to_string())? = None;
     Ok(())
+}
+
+/// Open a previously-known local workspace folder by path — no dialog. Used by
+/// the "recent workspaces" quick-select on the Welcome screen.
+#[tauri::command]
+fn set_workspace_dir(state: State<WorkspaceState>, path: String) -> Result<String, String> {
+    let buf = PathBuf::from(&path);
+    if !buf.is_dir() {
+        return Err(format!("folder no longer exists: {path}"));
+    }
+    *state.root.lock().map_err(|e| e.to_string())? = Some(buf.clone());
+    Ok(buf.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -286,7 +317,7 @@ struct ProjectLoad {
     root: String,
     meta: Option<ProjectMeta>,
     has_legacy_files: bool,
-    legacy_mlforge_count: usize,
+    legacy_spinoml_count: usize,
 }
 
 pub(crate) fn now_iso() -> String {
@@ -355,7 +386,7 @@ fn scan_legacy(root: &Path) -> (bool, usize) {
     if let Ok(rd) = fs::read_dir(root) {
         for entry in rd.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.to_lowercase().ends_with(".mlforge") {
+            if name.to_lowercase().ends_with(".spinoml") {
                 count += 1;
             }
         }
@@ -372,7 +403,7 @@ fn load_project(state: State<WorkspaceState>) -> Result<ProjectLoad, String> {
         root: root.to_string_lossy().to_string(),
         meta,
         has_legacy_files: has_legacy,
-        legacy_mlforge_count: count,
+        legacy_spinoml_count: count,
     })
 }
 
@@ -441,7 +472,7 @@ fn migrate_legacy_project(
         return Err("project already initialized; nothing to migrate".into());
     }
     ensure_subdirs(&root)?;
-    // Move root-level .mlforge and matching .py twins into models/.
+    // Move root-level .spinoml and matching .py twins into models/.
     let models = root.join("models");
     if let Ok(rd) = fs::read_dir(&root) {
         for entry in rd.flatten() {
@@ -450,7 +481,7 @@ fn migrate_legacy_project(
             let name_os = entry.file_name();
             let fname = name_os.to_string_lossy().to_string();
             let lower = fname.to_lowercase();
-            if lower.ends_with(".mlforge") || lower.ends_with(".py") {
+            if lower.ends_with(".spinoml") || lower.ends_with(".py") {
                 let dest = models.join(&fname);
                 fs::rename(&p, &dest).map_err(|e| format!("move {fname}: {e}"))?;
             }
@@ -728,6 +759,7 @@ pub fn run() {
             pick_workspace_dir,
             current_workspace_dir,
             close_workspace_dir,
+            set_workspace_dir,
             list_workspace,
             read_workspace_file,
             write_workspace_file,
@@ -766,6 +798,15 @@ pub fn run() {
             ssh::ssh_append_experiment,
             ssh::ssh_read_experiment,
             ssh::ssh_list_datasets,
+            ssh::ssh_start_training_run,
+            ssh::ssh_list_training_runs,
+            ssh::ssh_training_run_status,
+            ssh::ssh_read_training_run_file,
+            ssh::ssh_stop_training_run,
+            ssh::ssh_delete_training_run,
+            ssh::ssh_remote_training_capabilities,
+            ssh::ssh_promote_checkpoint,
+            ssh::ssh_gpu_stats,
             pty::pty_spawn,
             pty::pty_write,
             pty::pty_resize,
@@ -773,6 +814,14 @@ pub fn run() {
             remote_sidecar::ensure_remote_sidecar,
             remote_sidecar::stop_remote_sidecar,
             remote_sidecar::remote_sidecar_status,
+            training::list_training_runs,
+            training::training_run_status,
+            training::read_training_run_file,
+            training::start_training_run,
+            training::stop_training_run,
+            training::delete_training_run,
+            training::promote_run_checkpoint,
+            training::gpu_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -60,9 +60,69 @@ const cases: Case[] = [
     expectOk: false,
     expectErrorContains: 'channels',
   },
+  {
+    name: 'lstm sequence (tuple output unpacked)',
+    nodes: [
+      mkNode('input', 'Input', { shape: [1, 16, 32] }),
+      mkNode('n1', 'LSTM', { input_size: 32, hidden_size: 64, num_layers: 1, batch_first: true }),
+      mkNode('n2', 'Linear', { in_features: 64, out_features: 5 }),
+    ],
+    edges: [
+      { id: 'e1', source: 'input', target: 'n1' },
+      { id: 'e2', source: 'n1', target: 'n2' },
+    ],
+    expectOk: true,
+    expectShapeFor: { id: 'n2', shape: [1, 16, 5] },
+  },
+  {
+    name: 'embedding from int64 token ids',
+    nodes: [
+      mkNode('input', 'Input', { shape: [1, 16], dtype: 'int64' }),
+      mkNode('n1', 'Embedding', { num_embeddings: 1000, embedding_dim: 64 }),
+    ],
+    edges: [
+      { id: 'e1', source: 'input', target: 'n1' },
+    ],
+    expectOk: true,
+    expectShapeFor: { id: 'n1', shape: [1, 16, 64] },
+  },
+  {
+    name: 'BuildGraph kNN → GCN (no edge_index Input)',
+    nodes: [
+      mkNode('x', 'Input', { name: 'x', shape: [40, 16] }),
+      mkNode('bg', 'BuildGraph', { method: 'knn', k: 5 }),
+      mkNode('g1', 'GCNConv', { in_channels: 16, out_channels: 8 }),
+    ],
+    edges: [
+      { id: 'e1', source: 'x', target: 'bg' },
+      { id: 'e2', source: 'bg', target: 'g1' },
+    ],
+    expectOk: true,
+    expectShapeFor: { id: 'g1', shape: [40, 8] },
+  },
+  {
+    name: 'gcn node classification (int64 edge_index)',
+    nodes: [
+      mkNode('x', 'Input', { name: 'x', shape: [10, 16] }),
+      mkNode('ei', 'Input', { name: 'edge_index', dtype: 'int64', shape: [2, 20] }),
+      mkNode('n1', 'GCNConv', { in_channels: 16, out_channels: 32 }),
+      mkNode('n2', 'ReLU'),
+      mkNode('n3', 'GCNConv', { in_channels: 32, out_channels: 7 }),
+    ],
+    edges: [
+      { id: 'e1', source: 'x', target: 'n1' },
+      { id: 'e2', source: 'n1', target: 'n2' },
+      { id: 'e3', source: 'n2', target: 'n3' },
+    ],
+    expectOk: true,
+    expectShapeFor: { id: 'n3', shape: [10, 7] },
+  },
 ]
 
-const SIDECAR = 'http://127.0.0.1:7421'
+// Port-configurable so this can run against a private sidecar instance while
+// another (e.g. a parallel `tauri dev`) holds the default 7421.
+const PORT = process.env.SPINOML_TORCH_PORT ?? '7421'
+const SIDECAR = `http://127.0.0.1:${PORT}`
 
 async function isUp(): Promise<boolean> {
   try {
@@ -73,11 +133,11 @@ async function isUp(): Promise<boolean> {
   }
 }
 
-async function infer(code: string, inputShape: number[]) {
+async function infer(code: string, inputShapes: number[][], inputDtypes: string[]) {
   const r = await fetch(`${SIDECAR}/infer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code, input_shape: inputShape }),
+    body: JSON.stringify({ code, input_shapes: inputShapes, input_dtypes: inputDtypes }),
   })
   return r.json() as Promise<{
     ok: boolean
@@ -85,6 +145,22 @@ async function infer(code: string, inputShape: number[]) {
     n_params?: number
     error?: string
     stage?: string
+  }>
+}
+
+async function activations(code: string, inputShapes: number[][], inputDtypes: string[], checkpoint?: string) {
+  const r = await fetch(`${SIDECAR}/activations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, input_shapes: inputShapes, input_dtypes: inputDtypes, ...(checkpoint ? { checkpoint } : {}) }),
+  })
+  return r.json() as Promise<{
+    ok: boolean
+    activations?: Record<string, { stats: Record<string, number>; preview: unknown }>
+    weights?: Record<string, unknown>
+    weights_source?: string
+    weights_note?: string | null
+    error?: string
   }>
 }
 
@@ -114,13 +190,13 @@ async function main() {
 
   let failed = 0
   for (const c of cases) {
-    const { code, attrMap, inputShape, issues } = generate(c.nodes, c.edges)
+    const { code, attrMap, inputs, issues } = generate(c.nodes, c.edges)
     if (issues.length) {
       console.log(`  ✗ ${c.name}: codegen issues: ${JSON.stringify(issues)}`)
       failed++
       continue
     }
-    const res = await infer(code, inputShape)
+    const res = await infer(code, inputs.map((i) => i.shape), inputs.map((i) => i.dtype))
     console.log(`\n=== ${c.name} ===`)
     console.log(`  ok=${res.ok}  stage=${res.stage ?? '-'}  n_params=${res.n_params ?? '-'}`)
     if (Object.keys(res.shapes).length) console.log('  shapes:', res.shapes)
@@ -155,7 +231,49 @@ async function main() {
     if (c.expectErrorContains) console.log(`  ✓ error mentioned "${c.expectErrorContains}"`)
   }
 
-  console.log(`\n${failed === 0 ? '✓' : '✗'} ${cases.length - failed}/${cases.length} passed`)
+  // ── /activations endpoint (Explain-mode dataflow viz) ──────────────────────
+  {
+    const actCase = {
+      nodes: [
+        mkNode('input', 'Input', { shape: [1, 8] }),
+        mkNode('n1', 'Linear', { in_features: 8, out_features: 16 }),
+        mkNode('n2', 'ReLU'),
+        mkNode('n3', 'Linear', { in_features: 16, out_features: 4 }),
+      ],
+      edges: [
+        { id: 'e1', source: 'input', target: 'n1' },
+        { id: 'e2', source: 'n1', target: 'n2' },
+        { id: 'e3', source: 'n2', target: 'n3' },
+      ],
+    }
+    const { code, attrMap, inputs } = generate(actCase.nodes, actCase.edges)
+    const res = await activations(code, inputs.map((i) => i.shape), inputs.map((i) => i.dtype))
+    console.log('\n=== activations (MLP) ===')
+    const bytes = JSON.stringify(res).length
+    const reluAttr = attrMap['n2']
+    const hasInput = !!res.activations?.['__input__']
+    const hasRelu = !!(reluAttr && res.activations?.[reluAttr])
+    const hasWeights = !!(res.weights && Object.keys(res.weights).length >= 2)
+    console.log(`  ok=${res.ok}  payload=${bytes}B  input=${hasInput}  relu=${hasRelu}  weights=${hasWeights}`)
+    if (!res.ok || !hasInput || !hasRelu || !hasWeights || bytes > 200_000) {
+      console.log('  ✗ activations payload missing expected keys or too large')
+      failed++
+    } else {
+      console.log('  ✓ per-layer activations + weights captured, payload bounded')
+    }
+
+    // Checkpoint param wired + graceful fallback when the file is missing.
+    const r2 = await activations(code, inputs.map((i) => i.shape), inputs.map((i) => i.dtype), '/nonexistent/best.pt')
+    console.log(`  checkpoint-fallback: ok=${r2.ok} source=${r2.weights_source} note=${(r2.weights_note ?? '').slice(0, 40)}`)
+    if (!r2.ok || r2.weights_source !== 'random' || !r2.weights_note) {
+      console.log('  ✗ missing-checkpoint should fall back to random with a note')
+      failed++
+    } else {
+      console.log('  ✓ missing checkpoint → random fallback with note')
+    }
+  }
+
+  console.log(`\n${failed === 0 ? '✓' : '✗'} ${cases.length - failed}/${cases.length} cases + activations passed`)
 
   if (owned && child) child.kill()
   process.exit(failed === 0 ? 0 : 1)

@@ -21,7 +21,7 @@ export type ProjectLoadResult = {
   meta: ProjectMeta | null
   rootExists: boolean
   hasLegacyFiles: boolean
-  legacyMlforgeCount: number
+  legacySpinomlCount: number
 }
 
 export const fs = {
@@ -71,7 +71,7 @@ export const project = {
         meta: r.meta,
         rootExists: r.root_exists,
         hasLegacyFiles: r.has_legacy_files,
-        legacyMlforgeCount: r.legacy_mlforge_count,
+        legacySpinomlCount: r.legacy_spinoml_count,
       }
     }
     const r = await tauriFs.loadProject()
@@ -80,7 +80,7 @@ export const project = {
       meta: r.meta,
       rootExists: true,
       hasLegacyFiles: r.has_legacy_files,
-      legacyMlforgeCount: r.legacy_mlforge_count,
+      legacySpinomlCount: r.legacy_spinoml_count,
     }
   },
   init: (name: string, description: string, goal: string): Promise<ProjectMeta> => {

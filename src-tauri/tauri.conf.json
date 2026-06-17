@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "mlforge",
+  "productName": "spinoml",
   "version": "0.1.0",
-  "identifier": "dev.mlforge.app",
+  "identifier": "dev.spinoml.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "MLForge",
+        "title": "SpinoML",
         "width": 1400,
         "height": 900,
         "minWidth": 1000,
@@ -30,7 +30,7 @@
     "targets": ["deb"],
     "category": "DeveloperTool",
     "shortDescription": "Drag-and-drop PyTorch architecture builder",
-    "longDescription": "MLForge lets you build nn.Module architectures by dragging layers onto a canvas, see live shape inference from PyTorch, and have Claude edit the graph through tools.",
+    "longDescription": "SpinoML lets you build nn.Module architectures by dragging layers onto a canvas, see live shape inference from PyTorch, and have Claude edit the graph through tools.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

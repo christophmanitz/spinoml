@@ -1,156 +1,229 @@
-# MLForge
+<div align="center">
 
-Drag-and-drop PyTorch architecture builder, steered by Claude.
+<img src="assets/banner.svg" alt="SpinoML" width="100%" />
 
-Build `nn.Module` architectures by dragging layers onto a canvas. A connected LLM
-(Claude, via the Agent SDK) observes the graph through MCP tools and can edit it
-live or on demand. Live shape inference validates the graph against a sample input
-shape and surfaces errors inline.
+<br/>
 
-## Stack
+**_SpinoML_ — Super Perfect Intuitive and Organized Machine Learning.**
 
-- **Shell**: Tauri 2 (Rust + system webview)
-- **Frontend**: React 19 + TypeScript + Vite, React Flow for the canvas,
-  Zustand for graph state, Tailwind v4, Monaco for code preview
-- **LLM bridge**: Node.js sidecar running `@anthropic-ai/claude-agent-sdk`
-  (uses Claude Code's OAuth → consumes Max subscription, not pay-per-use)
-- **Shape inference**: Python sidecar running PyTorch, HTTP on 127.0.0.1:7421
+**Build, validate, generate and train PyTorch models on a visual canvas — with Claude as a co-pilot that edits the graph live.**
 
-## Phase status
+<br/>
 
-- [x] **Phase 0** — Scaffold: window, panels, dependencies wired
-- [x] **Phase 1** — Layer palette, canvas with typed nodes, inspector forms
-- [x] **Phase 2** — Graph → PyTorch code generator
-- [x] **Phase 3** — Python sidecar with shape inference
-- [x] **Phase 4** — Claude Agent SDK sidecar + chat UI with live graph mutation
-- [x] **Phase 5** — Save/load `.mlforge` files, undo/redo, templates
-- [x] **Phase 5.5** — Workspace file explorer (virtual FS in localStorage)
-- [x] **Phase 6** — Tauri desktop shell with real filesystem workspace
-- [x] **Phase 6.5** — Sidecar lifecycle (auto-spawn torch+llm from Rust)
-- [x] **Phase 7** — Distribution build (`.deb`; AppImage TODO when linuxdeploy/libfuse2 is available)
-- [x] **Phase 8** — Dataset overview + smoke test (tabular/image/tensor/pdb/SMILES/HF)
+![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-stable-000000?logo=rust&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-sidecar-EE4C2C?logo=pytorch&logoColor=white)
+![Claude](https://img.shields.io/badge/Claude-Agent%20SDK-D97757?logo=anthropic&logoColor=white)
+![License](https://img.shields.io/badge/License-Noncommercial%20%C2%B7%20No--Derivatives-b3261e)
 
-## Repo layout
+</div>
 
+---
+
+## What is SpinoML?
+
+SpinoML is a desktop studio for designing neural networks **visually** and taking them
+all the way to a running training job — without leaving the canvas.
+
+Drag layers onto a graph, wire them together, and SpinoML continuously:
+
+- **infers the tensor shapes** through every layer and flags mismatches inline,
+- **generates clean `nn.Module` PyTorch source** in real time,
+- lets a connected **Claude assistant edit the graph** through tool calls, and
+- compiles a separate **training graph** that you can launch locally, over SSH, or on a SLURM cluster.
+
+It runs as a native [Tauri](https://tauri.app) app (Rust shell + system webview) with two
+local sidecars: a **PyTorch** process for shape inference & dataset introspection, and a
+**Node.js** process running the **Claude Agent SDK**.
+
+<div align="center">
+<sub>🧩 56 layer types · 12 categories &nbsp;·&nbsp; 🔬 live shape inference &nbsp;·&nbsp; 🐍 PyTorch codegen &nbsp;·&nbsp; 🤖 Claude co-pilot &nbsp;·&nbsp; 📊 6 dataset formats &nbsp;·&nbsp; 🚀 local / SSH / SLURM training</sub>
+</div>
+
+---
+
+## ✨ Highlights
+
+| | |
+|---|---|
+| 🧩 **Visual model builder** | Drag-and-drop canvas (React Flow) with 56 layer types across 12 categories — Conv, Linear, Attention, Recurrent, Graph/GNN, Norm, Pool, Merge, Reshape, and more. Multi-input / multi-output graphs with merge layers. |
+| 🔬 **Live shape inference** | Every edit is pushed to a PyTorch sidecar that runs a sample tensor through the graph and writes the inferred shape back onto each node. Mismatches surface inline with one-click *FixHints*. |
+| 🐍 **PyTorch code generation** | A pure, deterministic generator turns the graph into idiomatic `nn.Module` source, previewed live in a Monaco editor and exportable as a `.py` twin. |
+| 🤖 **Claude co-pilot** | A chat panel backed by the Claude Agent SDK observes the graph through MCP tools and can add/remove/rewire layers and even build whole training setups on request. |
+| 📊 **Dataset explorer** | Inspect tabular, image-folder, tensor, protein (PDB), molecule (SMILES) and HuggingFace datasets — with stats, previews, and a **smoke test** that feeds a real sample through your model. |
+| 🏋️ **Training system** | A dedicated training-graph editor compiles to a runnable loop. Launch runs **locally**, **remotely over SSH** (`nohup`), or **on SLURM** — with live loss/metric charts, progress + ETA, multi-run compare and hyperparameter sweeps. |
+| 🖥️ **Remote workspaces** | Open a workspace on a remote host over plain `ssh` (uses your `~/.ssh/config`, agent, ProxyJump — no secrets stored). Built-in terminal tab attaches to a local or remote shell. |
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+flowchart LR
+    subgraph Desktop["🖥️  Tauri desktop app"]
+        UI["React 19 + React Flow canvas<br/>Zustand GraphStore<br/>Monaco code preview"]
+        Rust["Rust shell<br/>local FS · SSH mirror · PTY<br/>sidecar lifecycle"]
+        UI <--> Rust
+    end
+
+    subgraph Sidecars["Local sidecars (127.0.0.1)"]
+        Torch["🐍 PyTorch sidecar :7421<br/>shape inference · datasets"]
+        LLM["🤖 Node sidecar :7422<br/>Claude Agent SDK + MCP tools"]
+    end
+
+    subgraph Remote["☁️  Remote (optional)"]
+        SSH["SSH workspace<br/>~/.ssh/config"]
+        SLURM["SLURM / nohup<br/>training jobs"]
+    end
+
+    UI -->|HTTP /infer, /dataset| Torch
+    UI -->|SSE /chat| LLM
+    Rust -->|spawns + kills| Torch
+    Rust -->|spawns + kills| LLM
+    Rust -->|ssh / sftp| SSH
+    Rust -->|submit / squeue| SLURM
 ```
-src/                    React frontend
-  palette/              Draggable layer types (Conv, Linear, …)
-  canvas/               React Flow canvas + Zustand GraphStore
-  inspector/            Per-node parameter editor
-  chat/                 Claude chat panel
-  codegen/              Graph → PyTorch nn.Module source
-  datasets/             Dataset overview + smoke test (phase 8)
-  workspace/            File explorer + Tauri FS bridge
-src-tauri/              Rust shell, sidecar lifecycle
-sidecar-llm/            Node.js, runs Claude Agent SDK (phase 4+)
-sidecar-torch/          Python, shape inference + dataset handlers (phase 3+)
-```
 
-## Develop
+**Two execution modes** (browser dev vs. native Tauri) and **two filesystem backends**
+(local disk vs. remote SSH) are abstracted behind a single dispatch layer, so the same UI
+drives a folder on your laptop or a scratch directory on an HPC cluster.
 
-Everything runs inside the `mlforge-dev` conda env (node 20, rust 1.96, python 3.12).
+---
+
+## 🧱 Tech stack
+
+| Layer | Technology |
+|---|---|
+| **Shell** | Tauri 2 (Rust + system webview) |
+| **Frontend** | React 19 · TypeScript · Vite · React Flow · Zustand · Tailwind v4 · Monaco |
+| **LLM bridge** | Node.js sidecar running `@anthropic-ai/claude-agent-sdk` (uses Claude Code OAuth — your Max subscription, not pay-per-use) |
+| **Shape inference & datasets** | Python sidecar running PyTorch, HTTP on `127.0.0.1:7421` |
+| **Terminal / remote** | `portable-pty` PTYs · system `ssh` transport (no stored secrets) |
+
+---
+
+## 🚀 Getting started
+
+> Everything runs inside the `spinoml-dev` conda env (node 20, rust stable, python 3.12).
 
 ```bash
-conda activate mlforge-dev
+conda activate spinoml-dev
 npm install
-npm run tauri dev          # native window; Rust shell auto-spawns both sidecars
 
-# or vite-only (browser dev, no Rust, manual sidecars):
-npm run dev                # browser at http://localhost:5173
-npm run sidecar:torch      # shape inference on 127.0.0.1:7421
-npm run sidecar:llm        # Claude bridge      on 127.0.0.1:7422
+# Native app — the Rust shell auto-spawns both sidecars and kills them on close:
+npm run tauri dev
+
+# Or browser-only dev (no Rust; start the sidecars manually in extra terminals):
+npm run dev                # http://localhost:5173
+npm run sidecar:torch      # shape inference  → 127.0.0.1:7421
+npm run sidecar:llm        # Claude bridge     → 127.0.0.1:7422
 ```
 
-In Tauri mode the header badges say `shapes (auto)` / `LLM (auto)` —
-the sidecars are children of the app process and get killed cleanly on
-window close. In browser mode you start them manually in extra
-terminals; badges show `shapes` / `LLM` without the `(auto)` suffix.
+In Tauri mode the header badges read `shapes (auto)` / `LLM (auto)`. In browser mode you
+start the sidecars yourself and the badges drop the `(auto)` suffix.
 
-## Distribution build
-
-```bash
-conda activate mlforge-dev
-npm run tauri build      # writes .deb to
-                         # src-tauri/target/release/bundle/deb/
-sudo dpkg -i src-tauri/target/release/bundle/deb/mlforge_*_amd64.deb
-mlforge                  # launch from terminal, or click the desktop entry
-```
-
-The `.deb` is ~80 MB. AppImage support is gated on `libfuse2` (and a
-working `linuxdeploy` download); enable both `deb` and `appimage` in
-`bundle.targets` once that's set up on the build host.
-
-The bundle embeds `sidecar-torch/` and `sidecar-llm/` (including
-`sidecar-llm/node_modules`). The Rust shell resolves the sidecar
-location from the resource directory at runtime instead of the source
-tree.
-
-### Runtime requirements (installed machine)
-
-After `sudo dpkg -i mlforge_*.deb`, the app needs the following
-binaries discoverable on the desktop session's `PATH`:
-
-- `python3` (or `python`) with `torch` installed (`pip install torch`
-  for CPU, or use a system / conda Python that already has it)
-- `node` (≥ 20)
-- `claude` (the Claude Code CLI, authenticated via `claude setup-token`
-  against your Max subscription)
-
-If any of these is missing, the corresponding sidecar fails to spawn
-and the badge stays on `offline`; the rest of the UI keeps working
-(you can still build, save, and export `.py` files — the codegen is
-client-side).
-
-The `.deb` depends on `libwebkit2gtk-4.1-0`, `libgtk-3-0`, and
-`libayatana-appindicator3-1`, which `dpkg`/`apt` will pull in
-automatically on Ubuntu 24.04+ and Debian 13+.
-
-The LLM sidecar spawns `claude` under the hood — make sure
-`claude setup-token` was run once so it can hit your Max subscription.
-
-### Datasets
-
-Drop dataset files into `<workspace>/datasets/` and they show up in the
-**Datasets** tab in the left sidebar. Supported kinds:
-
-- `*.csv` / `*.tsv` / `*.parquet` — tabular (head, dtypes, per-column stats, correlations)
-- folder with class subdirs — ImageFolder (class counts, thumbnails, sizes)
-- `*.pt` / `*.pth` / `*.npy` / `*.npz` — tensors (shape/dtype/stats/histogram)
-- `*.pdb` — protein structures (chains/residues/atoms, uses biopython if available)
-- `*.smi` / `*.smiles` — SMILES files (MW/atom-count distributions if rdkit is available)
-- `*.hf` text file containing `hf:dataset_name` — HuggingFace dataset reference
-
-Optional Python deps (graceful fallback if missing): `pandas`, `Pillow`,
-`rdkit`, `biopython`, `datasets`. The Datasets tab shows a hint with the
-exact `pip install` command when a dep is missing.
-
-Each detail view has a **Smoke test** tab that pulls one sample from the
-dataset, feeds it through the current graph's generated model, and reports
-the output shape + timings — useful to validate a model end-to-end against
-real data without writing training code.
-
-Verification harnesses:
-
-```bash
-npm run verify:codegen     # generates 4 graphs → writes .py → runs python on each
-npm run verify:sidecar     # autostarts sidecar, posts generated code, checks shapes & errors
-```
-
-### Tauri Linux system deps (one-time)
+### Linux system dependencies (one-time)
 
 ```bash
 sudo apt install -y \
-  libwebkit2gtk-4.1-dev \
-  libjavascriptcoregtk-4.1-dev \
-  libsoup-3.0-dev \
-  libgtk-3-dev \
-  librsvg2-dev \
-  libayatana-appindicator3-dev \
-  pkg-config
+  libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
+  libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev pkg-config
 ```
 
-## Claude integration
+### Building a distributable
 
-Requires Claude Code installed locally and authenticated via
-`claude setup-token` (Max subscription). The Node sidecar spawned by Tauri
-inherits that auth, so no API key is needed.
+```bash
+npm run tauri build      # writes a .deb to src-tauri/target/release/bundle/deb/
+sudo dpkg -i src-tauri/target/release/bundle/deb/spinoml_*_amd64.deb
+spinoml                  # launch from the menu or the terminal
+```
+
+The bundle (~80 MB) embeds both sidecars. On the target machine the app expects
+`python3` with `torch`, `node` (≥ 20), and the authenticated `claude` CLI on `PATH`;
+any missing piece just disables the matching sidecar — the rest of the UI keeps working.
+
+---
+
+## 🤖 Claude integration
+
+SpinoML talks to Claude through the **Claude Agent SDK** running in the Node sidecar.
+It uses Claude Code's local OAuth, so:
+
+- install the Claude Code CLI and run `claude setup-token` once (Max subscription), and
+- **no API key is needed** — the sidecar inherits that authentication.
+
+The assistant sees the live graph via in-process MCP tools and can mutate it (add layers,
+rewire edges, fix shapes, scaffold training graphs) — every action is mirrored back into
+the canvas through the same store the UI writes to.
+
+---
+
+## 📊 Datasets
+
+Drop files into `<workspace>/datasets/` and they appear in the **Datasets** tab:
+
+| Kind | Extensions | What you get |
+|---|---|---|
+| Tabular | `.csv` `.tsv` `.parquet` | head, dtypes, per-column stats, correlations |
+| ImageFolder | folder w/ class subdirs | class counts, thumbnails, sizes |
+| Tensor | `.pt` `.pth` `.npy` `.npz` | shape, dtype, stats, histogram |
+| Protein | `.pdb` | chains / residues / atoms (biopython) |
+| Molecule | `.smi` `.smiles` | MW / atom-count distributions (rdkit) |
+| HuggingFace | `*.hf` containing `hf:name` | dataset reference |
+
+Heavy Python deps (`pandas`, `Pillow`, `rdkit`, `biopython`, `datasets`) are lazy-imported —
+if one is missing the UI shows the exact `pip install` to fix it. Each detail view has a
+**Smoke test** tab that runs one real sample through your current model end-to-end.
+
+---
+
+## ✅ Verification
+
+```bash
+npm run build              # tsc + vite — must be green
+npm run verify:codegen     # generates graphs → writes .py → runs python on each
+npm run verify:sidecar     # autostarts the torch sidecar, asserts shapes & errors
+npm run verify:traingen    # validates training-graph code generation
+( cd src-tauri && cargo check )   # after Rust changes
+```
+
+---
+
+## 📦 Project layout
+
+```
+src/
+  canvas/        React Flow canvas + Zustand GraphStore (single source of truth)
+  layers/        registry.ts — the layer registry (56 types, 12 categories)
+  codegen/       graph → PyTorch nn.Module source (pure, deterministic)
+  inference/     HTTP client + debounced subscription to the torch sidecar
+  chat/          Claude SSE client + action dispatch into the graph store
+  inspector/     per-node parameter forms with shape-aware FixHints
+  datasets/      explorer, detail views, smoke test (6 formats)
+  training/      training-graph editor, runs, live charts, sweeps
+  workspace/     file explorer + virtual-FS / Tauri-FS bridge
+  connections/   SSH connections + the local↔remote backend dispatch layer
+  terminal/      xterm.js bound to a Rust PTY (local or ssh -tt)
+src-tauri/       Rust shell: local FS, ssh_* mirror, PTY, sidecar lifecycle
+sidecar-torch/   PyTorch — shape inference + dataset handlers
+sidecar-llm/     Node.js — Claude Agent SDK + MCP graph tools
+scripts/         verify-codegen / verify-sidecar / verify-traingen harnesses
+```
+
+A deeper operational runbook lives in [`CLAUDE.md`](CLAUDE.md).
+
+---
+
+## 📄 License
+
+**Source-available — Noncommercial, No-Derivatives.** SpinoML is free to **run and use
+for noncommercial purposes** (personal, educational, academic), and the source is open to
+read. You may **not** use it commercially, modify it, or redistribute it without the prior
+**written** permission of the copyright holder. See [`LICENSE`](LICENSE) for the binding terms.
+
+For commercial licensing, modification, or redistribution permission, contact
+<christoph.manitz@uni-leipzig.de>.
+
+© 2026 Christoph Manitz. All rights reserved.

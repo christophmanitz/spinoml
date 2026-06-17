@@ -8,7 +8,9 @@ import './chat/store'
 import './history/store'
 import './workspace/store'
 import { readAutosave, startAutosave } from './persistence/file'
+import { readTrainingAutosave, startTrainingAutosave } from './training/graph/autosave'
 import { useGraphStore } from './canvas/GraphStore'
+import { useTrainingGraphStore } from './training/graph/store'
 import { useWorkspaceStore } from './workspace/store'
 
 const ws = useWorkspaceStore.getState()
@@ -20,6 +22,13 @@ if (activeFile && activeFile.kind === 'file') {
   if (restored && restored.nodes.length > 1) useGraphStore.getState().loadSnapshot(restored)
 }
 startAutosave()
+
+// Restore the visual training graph (separate store, not file-bound).
+const restoredTraining = readTrainingAutosave()
+if (restoredTraining && restoredTraining.nodes.length > 0) {
+  useTrainingGraphStore.getState().loadSnapshot(restoredTraining)
+}
+startTrainingAutosave()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

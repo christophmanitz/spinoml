@@ -4,6 +4,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import type { ProjectMeta, NoteEntry, DatasetEntry, FsEntry } from '../workspace/tauri-fs'
+import type { RunSummary, RunStatus, RemoteTrainingCapabilities, GpuStat } from '../training/types'
 
 export type SshTestResult = {
   ok: boolean
@@ -16,7 +17,7 @@ export type RemoteProjectLoad = {
   meta: ProjectMeta | null
   root_exists: boolean
   has_legacy_files: boolean
-  legacy_mlforge_count: number
+  legacy_spinoml_count: number
 }
 
 export type CurrentRemote = {
@@ -80,4 +81,35 @@ export const tauriSsh = {
 
   listDatasets: (alias: string, root: string) =>
     invoke<DatasetEntry[]>('ssh_list_datasets', { alias, root }),
+
+  // ── remote training executor (Phase 16) ──
+  startTrainingRun: (
+    alias: string, root: string, runId: string, python: string,
+    runJson: string, modelSpinoml: string, modelPy: string,
+  ) =>
+    invoke<void>('ssh_start_training_run', { alias, root, runId, python, runJson, modelSpinoml, modelPy }),
+
+  listTrainingRuns: (alias: string, root: string) =>
+    invoke<RunSummary[]>('ssh_list_training_runs', { alias, root }),
+
+  trainingRunStatus: (alias: string, root: string, runId: string) =>
+    invoke<RunStatus>('ssh_training_run_status', { alias, root, runId }),
+
+  readTrainingRunFile: (alias: string, root: string, runId: string, name: string) =>
+    invoke<string>('ssh_read_training_run_file', { alias, root, runId, name }),
+
+  stopTrainingRun: (alias: string, root: string, runId: string) =>
+    invoke<void>('ssh_stop_training_run', { alias, root, runId }),
+
+  deleteTrainingRun: (alias: string, root: string, runId: string) =>
+    invoke<void>('ssh_delete_training_run', { alias, root, runId }),
+
+  remoteTrainingCapabilities: (alias: string, root: string) =>
+    invoke<RemoteTrainingCapabilities>('ssh_remote_training_capabilities', { alias, root }),
+
+  promoteCheckpoint: (alias: string, root: string, runId: string, destName: string) =>
+    invoke<string>('ssh_promote_checkpoint', { alias, root, runId, destName }),
+
+  gpuStats: (alias: string, root: string) =>
+    invoke<GpuStat[]>('ssh_gpu_stats', { alias, root }),
 }

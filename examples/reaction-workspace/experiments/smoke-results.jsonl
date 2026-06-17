@@ -1,0 +1,8 @@
+{"at":"2026-06-16T09:25:50.803Z","ok":false,"dataset":"datasets/rxn.manifest","model":null,"stage":"sample","error":"manifest field must be '<branch>.<x|edge_index|batch>' or 'target', got 'x'"}
+{"at":"2026-06-16T09:26:45.652Z","ok":false,"dataset":"datasets/reactions.csv","model":null,"input_shape":[[3,5],[128,20]],"stage":"forward","error":"RuntimeError: mat1 and mat2 shapes cannot be multiplied (3x5 and 9x64)"}
+{"at":"2026-06-16T09:32:55.237Z","ok":false,"dataset":"datasets/rxn.manifest","model":null,"stage":"sample","error":"manifest field must be '<branch>.<x|edge_index|batch>' or 'target', got 'x'"}
+{"at":"2026-06-16T09:42:24.921Z","ok":false,"dataset":"datasets/rxn.manifest","model":null,"stage":"sample","error":"manifest field must be '<branch>.<x|edge_index|batch>' or 'target', got 'x'"}
+{"at":"2026-06-16T09:44:57.372Z","ok":false,"dataset":"datasets/rxn.manifest","model":null,"stage":"sample","error":"manifest field must be '<branch>.<x|edge_index|batch>' or 'target', got 'x'"}
+{"at":"2026-06-16T09:45:35.302Z","ok":false,"dataset":"datasets/reactions.csv","model":null,"input_shape":[[3,5],[128,20]],"stage":"forward","error":"RuntimeError: mat1 and mat2 shapes cannot be multiplied (3x5 and 9x64)"}
+{"at":"2026-06-16T09:45:39.087Z","ok":false,"dataset":"datasets/graphs","model":null,"input_shape":[[150,12],[150,12]],"stage":"forward","error":"RuntimeError: mat1 and mat2 shapes cannot be multiplied (150x12 and 9x64)"}
+{"at":"2026-06-16T09:48:45.742Z","ok":false,"dataset":"datasets/rxn.manifest","model":null,"stage":"sample","error":"manifest field must be '<branch>.<x|edge_index|batch>' or 'target', got 'x'"}

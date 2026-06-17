@@ -11,6 +11,8 @@ import {
   addEdge,
 } from '@xyflow/react'
 import { defaultParamsFor, coerceParams } from '../layers/registry'
+import { useLayoutStore, type FlowDir } from './layoutStore'
+import { reconcileSubgraphPorts } from './subgraphPorts'
 
 export type LayerNodeData = {
   layerType: string
@@ -72,9 +74,15 @@ export const useGraphStore = create<State>((set, get) => ({
   selectedNodeId: null,
 
   onNodesChange: (changes) => set({ nodes: applyNodeChanges(changes, get().nodes) }),
-  onEdgesChange: (changes) => set({ edges: applyEdgeChanges(changes, get().edges) }),
-  onConnect: (connection) =>
-    set({ edges: addEdge({ ...connection, animated: true }, get().edges) }),
+  onEdgesChange: (changes) => {
+    const edges = applyEdgeChanges(changes, get().edges)
+    // Edge removed/added near a Subgraph node → re-sync its input proxies.
+    set({ edges, nodes: reconcileSubgraphPorts(get().nodes, edges) })
+  },
+  onConnect: (connection) => {
+    const edges = addEdge({ ...connection, animated: true }, get().edges)
+    set({ edges, nodes: reconcileSubgraphPorts(get().nodes, edges) })
+  },
 
   addLayer: (layerType, position, opts) => {
     const id = opts?.id && !get().nodes.some((n) => n.id === opts.id) ? opts.id : newNodeId()
@@ -90,13 +98,13 @@ export const useGraphStore = create<State>((set, get) => ({
   },
 
   updateNodeParams: (id, params) => {
-    set({
-      nodes: get().nodes.map((n) => {
-        if (n.id !== id) return n
-        const merged = { ...n.data.params, ...params }
-        return { ...n, data: { ...n.data, params: coerceParams(n.data.layerType, merged) } }
-      }),
+    const nodes = get().nodes.map((n) => {
+      if (n.id !== id) return n
+      const merged = { ...n.data.params, ...params }
+      return { ...n, data: { ...n.data, params: coerceParams(n.data.layerType, merged) } }
     })
+    // If the edited node feeds a Subgraph, its proxy mirrors the new config.
+    set({ nodes: reconcileSubgraphPorts(nodes, get().edges) })
   },
 
   replaceNodeLayer: (id, newLayerType, extraParams) => {
@@ -123,25 +131,26 @@ export const useGraphStore = create<State>((set, get) => ({
 
   deleteNode: (id) => {
     if (id === 'input') return
+    const edges = get().edges.filter((e) => e.source !== id && e.target !== id)
+    const nodes = get().nodes.filter((n) => n.id !== id)
     set({
-      nodes: get().nodes.filter((n) => n.id !== id),
-      edges: get().edges.filter((e) => e.source !== id && e.target !== id),
+      nodes: reconcileSubgraphPorts(nodes, edges),
+      edges,
       selectedNodeId: get().selectedNodeId === id ? null : get().selectedNodeId,
     })
   },
 
   connectNodes: (source, target) => {
-    const edges = get().edges
-    if (edges.some((e) => e.source === source && e.target === target)) return
-    set({
-      edges: addEdge({ source, target, animated: true, id: `e${edges.length + 1}` }, edges),
-    })
+    const cur = get().edges
+    if (cur.some((e) => e.source === source && e.target === target)) return
+    const edges = addEdge({ source, target, animated: true, id: `e${cur.length + 1}` }, cur)
+    set({ edges, nodes: reconcileSubgraphPorts(get().nodes, edges) })
   },
 
   autoLayout: () => {
     const { nodes, edges } = get()
     if (nodes.length === 0) return
-    const positions = computeLayout(nodes, edges)
+    const positions = computeLayout(nodes, edges, useLayoutStore.getState().direction)
     const next = nodes.map((n) => {
       const pos = positions.get(n.id)
       if (!pos) return n
@@ -224,9 +233,16 @@ const ORIGIN_Y = 60
  * the same depth. Nodes unreachable from Input get parked in a trailing
  * column so they're at least visible.
  */
-function computeLayout(nodes: LayerNode[], edges: Edge[]): Map<string, XYPosition> {
+function computeLayout(nodes: LayerNode[], edges: Edge[], direction: FlowDir = 'TB'): Map<string, XYPosition> {
   const out = new Map<string, XYPosition>()
   if (nodes.length === 0) return out
+
+  // `p` = position along the chain, `s` = branch / wrap index. The two map to
+  // x/y depending on direction: TB chains downward (p→y), LR rightward (p→x).
+  const pos = (p: number, s: number): XYPosition =>
+    direction === 'LR'
+      ? { x: ORIGIN_X + p * COL_W, y: ORIGIN_Y + s * ROW_H }
+      : { x: ORIGIN_X + s * COL_W, y: ORIGIN_Y + p * ROW_H }
 
   const succ = new Map<string, string[]>()
   for (const n of nodes) succ.set(n.id, [])
@@ -242,7 +258,7 @@ function computeLayout(nodes: LayerNode[], edges: Edge[]): Map<string, XYPositio
     if (visited.has(id)) return
     visited.add(id)
     if (row >= MAX_ROWS) { row = 0; col++ }
-    out.set(id, { x: ORIGIN_X + col * COL_W, y: ORIGIN_Y + row * ROW_H })
+    out.set(id, pos(row, col))
     row++
     if (col > maxCol) maxCol = col
     const next = succ.get(id) ?? []
@@ -261,7 +277,7 @@ function computeLayout(nodes: LayerNode[], edges: Edge[]): Map<string, XYPositio
     let bcol = startCol
     let brow = startRow
     if (brow >= MAX_ROWS) { brow = 0; bcol++ }
-    out.set(id, { x: ORIGIN_X + bcol * COL_W, y: ORIGIN_Y + brow * ROW_H })
+    out.set(id, pos(brow, bcol))
     if (bcol > maxCol) maxCol = bcol
     const next = succ.get(id) ?? []
     for (const nxt of next) placeBranch(nxt, bcol, brow + 1)
@@ -274,7 +290,7 @@ function computeLayout(nodes: LayerNode[], edges: Edge[]): Map<string, XYPositio
   for (const n of nodes) {
     if (visited.has(n.id)) continue
     if (orphanRow >= MAX_ROWS) { orphanRow = 0; orphanCol++ }
-    out.set(n.id, { x: ORIGIN_X + orphanCol * COL_W, y: ORIGIN_Y + orphanRow * ROW_H })
+    out.set(n.id, pos(orphanRow, orphanCol))
     orphanRow++
   }
 

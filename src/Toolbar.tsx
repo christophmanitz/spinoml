@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useHistoryStore } from './history/store'
 import { useGraphStore } from './canvas/GraphStore'
+import { useScopeStore } from './canvas/scopeStore'
 import { downloadCurrent, pickAndLoad, clearAutosave } from './persistence/file'
 import { TEMPLATES } from './templates/templates'
 import { useWorkspaceStore, ROOT_ID } from './workspace/store'
 import { isTauri } from './workspace/tauri-fs'
+import { confirmDialog } from './ui/confirm'
+import DependenciesModal from './deps/DependenciesModal'
 
 export default function Toolbar() {
   const activeFileName = useWorkspaceStore((s) =>
@@ -14,6 +17,7 @@ export default function Toolbar() {
   const mode = useWorkspaceStore((s) => s.mode)
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot)
   const tauriAvailable = isTauri()
+  const [depsOpen, setDepsOpen] = useState(false)
 
   const saveToWorkspace = async () => {
     const ws = useWorkspaceStore.getState()
@@ -27,7 +31,7 @@ export default function Toolbar() {
     // When a project is loaded, default to models/; otherwise to root.
     const parentId = ws.entries['models']?.kind === 'folder' ? 'models' : ROOT_ID
     try {
-      const id = await ws.saveAsNew(parentId, 'untitled.mlforge')
+      const id = await ws.saveAsNew(parentId, 'untitled.spinoml')
       if (!id) await reportError('Save failed', 'workspace did not return a file id')
     } catch (e) {
       await reportError('Save failed', e)
@@ -35,10 +39,12 @@ export default function Toolbar() {
   }
 
   return (
+    <>
     <div className="flex items-center gap-1 text-xs">
       <Menu label="File">
-        <Item onSelect={() => {
-          if (confirm('Reset graph? Current model will be lost (Cmd+Z to undo).')) {
+        <Item onSelect={async () => {
+          if (await confirmDialog('Reset graph? Current model will be lost (Cmd+Z to undo).')) {
+            useScopeStore.getState().reset()
             useGraphStore.getState().resetGraph()
             useWorkspaceStore.getState().closeActive()
             clearAutosave()
@@ -63,12 +69,13 @@ export default function Toolbar() {
           </>
         )}
         <Item onSelect={() => pickAndLoad((snap) => {
+          useScopeStore.getState().reset()
           useGraphStore.getState().loadSnapshot(snap)
           useWorkspaceStore.getState().closeActive()
         })}>
           Open file from disk…
         </Item>
-        <Item onSelect={() => downloadCurrent(activeFileName ?? 'model.mlforge')}>
+        <Item onSelect={() => downloadCurrent(activeFileName ?? 'model.spinoml')}>
           Export to disk…
         </Item>
       </Menu>
@@ -90,9 +97,10 @@ export default function Toolbar() {
         {TEMPLATES.map((t) => (
           <Item
             key={t.id}
-            onSelect={() => {
+            onSelect={async () => {
               if (useGraphStore.getState().nodes.length > 1 &&
-                  !confirm(`Replace current graph with "${t.name}"? (Cmd+Z to undo)`)) return
+                  !(await confirmDialog(`Replace current graph with "${t.name}"? (Cmd+Z to undo)`))) return
+              useScopeStore.getState().reset()
               useGraphStore.getState().loadSnapshot(t.build())
               useGraphStore.getState().autoLayout()
               useWorkspaceStore.getState().closeActive()
@@ -101,7 +109,15 @@ export default function Toolbar() {
           >{t.name}</Item>
         ))}
       </Menu>
+
+      <Menu label="Project">
+        <Item onSelect={() => setDepsOpen(true)} hint="requirements.txt">
+          Dependencies…
+        </Item>
+      </Menu>
     </div>
+    {depsOpen && <DependenciesModal onClose={() => setDepsOpen(false)} />}
+    </>
   )
 }
 
