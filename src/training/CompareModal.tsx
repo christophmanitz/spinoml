@@ -208,7 +208,7 @@ function exportCsv(loaded: Loaded[], diff: DiffRow[]) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = 'mlforge-compare.csv'
+  a.download = 'spinoml-compare.csv'
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)

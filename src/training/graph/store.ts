@@ -1,7 +1,7 @@
 // Parallel-living Zustand store for the visual TRAINING graph — the Phase-14
 // analogue of canvas/GraphStore.ts. Same React Flow plumbing, but no shape
 // inference and no protected Input node. Persists to experiments/
-// training-graphs/<name>.mltrain (see graph/persist.ts).
+// training-graphs/<name>.spinotrain (see graph/persist.ts).
 
 import { create } from 'zustand'
 import {

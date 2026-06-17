@@ -1,4 +1,4 @@
-// MLForge LLM sidecar.
+// SpinoML LLM sidecar.
 //
 // Bridges the React frontend and Claude. Hosts an HTTP server on
 // 127.0.0.1:7422; the only meaningful endpoint is POST /chat which streams
@@ -27,6 +27,8 @@ import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { z } from 'zod'
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
+import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 
 const PORT = 7422
 
@@ -297,8 +299,12 @@ async function downloadToDatasets(ws, url, filename) {
   return { relpath: `datasets/${safe}`, bytes: buf.length }
 }
 
-function buildMcpServer(ctx, trainingCtx, actions, workspace) {
-  const tools = [
+function buildToolSpecs(ctx, trainingCtx, actions, workspace) {
+  // Local shadow of the SDK's tool() helper: collect provider-agnostic specs
+  // instead of SDK tools. Same (name, description, zodShape, handler) signature,
+  // so every tool definition below is reused verbatim across all providers.
+  const tool = (name, description, schema, handler) => ({ name, description, schema, handler })
+  const specs = [
     tool(
       'set_input_shape',
       'Change the model input tensor shape. Example shapes: [1, 3, 224, 224] for ImageNet RGB, [1, 16, 512] for a sequence of 16 tokens with 512 features.',
@@ -380,7 +386,7 @@ function buildMcpServer(ctx, trainingCtx, actions, workspace) {
       + 'node_type ∈ {DatasetSource, Split, DataLoader, ModelSource, Loss, Optimizer, Scheduler, Metric, EarlyStopping, GradientClipping, MixedPrecision, TrainLoop}. '
       + 'Use "after" to also wire it from an existing training node id. Pass params as a JSON object of node-specific fields '
       + '(e.g. {kind:"AdamW", lr:0.001} for Optimizer, {dataset:"datasets/iris.csv", target:"species"} for DatasetSource, '
-      + '{model:"models/iris-mlp.mlforge"} for ModelSource, {epochs:50} for TrainLoop). '
+      + '{model:"models/iris-mlp.spinoml"} for ModelSource, {epochs:50} for TrainLoop). '
       + 'A runnable graph needs at least: DatasetSource(+target), ModelSource(+model), Loss, Optimizer, TrainLoop — wire each into the TrainLoop.',
       {
         node_type: z.string(),
@@ -453,7 +459,7 @@ function buildMcpServer(ctx, trainingCtx, actions, workspace) {
   ]
 
   if (workspace) {
-    tools.push(
+    specs.push(
       tool(
         'list_notes',
         'List markdown notes in the project\'s notes/ folder. Use this to discover what context already exists before making suggestions.',
@@ -495,7 +501,7 @@ function buildMcpServer(ctx, trainingCtx, actions, workspace) {
       ),
       tool(
         'download_to_datasets',
-        'Download a URL into the project\'s datasets/ folder. Use this when the user asks for a standard dataset by name (iris, MNIST, california housing, fashion-mnist, etc.). Pick a known stable mirror — UCI archive raw, scikit-learn raw, sklearn-datasets GitHub, HuggingFace datasets resolve URLs, common tutorial GitHub repos — and a filename ending in .csv/.parquet/.npy/.json/.zip/etc. The dataset shows up live in MLForge\'s Datasets tab the moment the download finishes. For binary archives (tar.gz, zip), let the user know they\'ll need to unpack — you can do this with a follow-up shell tool if one exists, otherwise tell them to extract via the Terminal tab.',
+        'Download a URL into the project\'s datasets/ folder. Use this when the user asks for a standard dataset by name (iris, MNIST, california housing, fashion-mnist, etc.). Pick a known stable mirror — UCI archive raw, scikit-learn raw, sklearn-datasets GitHub, HuggingFace datasets resolve URLs, common tutorial GitHub repos — and a filename ending in .csv/.parquet/.npy/.json/.zip/etc. The dataset shows up live in SpinoML\'s Datasets tab the moment the download finishes. For binary archives (tar.gz, zip), let the user know they\'ll need to unpack — you can do this with a follow-up shell tool if one exists, otherwise tell them to extract via the Terminal tab.',
         {
           url: z.string().url(),
           filename: z.string().describe('Basename only (e.g. "iris.csv"), saved under datasets/'),
@@ -514,7 +520,14 @@ function buildMcpServer(ctx, trainingCtx, actions, workspace) {
     )
   }
 
-  return createSdkMcpServer({ name: 'mlforge-graph', version: '0.1.0', tools })
+  return specs
+}
+
+// Wrap provider-agnostic specs into an in-process MCP server for the
+// claude-agent-sdk (subscription / OAuth) path.
+function buildMcpServer(specs) {
+  const tools = specs.map((s) => tool(s.name, s.description, s.schema, s.handler))
+  return createSdkMcpServer({ name: 'spinoml-graph', version: '0.1.0', tools })
 }
 
 function content(text, isError = false) {
@@ -522,6 +535,129 @@ function content(text, isError = false) {
     content: [{ type: 'text', text }],
     ...(isError ? { isError: true } : {}),
   }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Provider-agnostic tool execution. The subscription path lets the agent SDK
+// call handlers itself; the direct-API paths below run their own tool-use loop
+// against the SAME specs + handlers, emitting the same SSE event shapes and
+// pushing the same `actions` (so the GraphStore mirror is identical).
+
+// Flatten a handler result (the content() shape) into { text, isError }.
+function readToolResult(res) {
+  const text = Array.isArray(res?.content)
+    ? res.content.map((c) => c?.text ?? '').join('')
+    : typeof res === 'string' ? res : ''
+  return { text, isError: !!res?.isError }
+}
+
+// zod raw shape → JSON Schema for OpenAI/Anthropic tool definitions.
+// `$schema` is dropped (OpenAI rejects unknown top-level keys in some modes).
+function specToJsonSchema(spec) {
+  const json = z.toJSONSchema(z.object(spec.schema ?? {}))
+  delete json.$schema
+  return json
+}
+
+// Run one tool handler by name, emit the SSE tool_use/tool_result pair, and
+// return { text, isError } for the provider loop to feed back to the model.
+async function execTool(specsByName, emit, id, name, args) {
+  emit({ type: 'tool_use', id, name, args: args ?? {} })
+  const spec = specsByName.get(name)
+  let result
+  if (!spec) result = { text: `error: unknown tool "${name}"`, isError: true }
+  else {
+    try { result = readToolResult(await spec.handler(args ?? {})) }
+    catch (e) { result = { text: `error: ${e.message}`, isError: true } }
+  }
+  emit({ type: 'tool_result', id, ok: !result.isError, result: result.text, error: result.isError ? result.text : undefined })
+  return result
+}
+
+const MAX_TOOL_TURNS = 40
+
+// Direct Anthropic Messages API (API key, not the OAuth subscription).
+async function runAnthropicApi(specs, systemPrompt, history, user, emit, opts) {
+  const client = new Anthropic({ apiKey: opts.apiKey, ...(opts.baseUrl ? { baseURL: opts.baseUrl } : {}) })
+  const specsByName = new Map(specs.map((s) => [s.name, s]))
+  const tools = specs.map((s) => ({ name: s.name, description: s.description, input_schema: specToJsonSchema(s) }))
+  const messages = [
+    ...(history ?? []).filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, content: m.content })),
+    { role: 'user', content: user },
+  ]
+  const model = opts.model || 'claude-opus-4-8'
+
+  for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+    const stream = client.messages.stream({
+      model, max_tokens: 16000, system: systemPrompt,
+      thinking: { type: 'adaptive' }, tools, messages,
+    })
+    stream.on('text', (delta) => { if (delta) emit({ type: 'text', value: delta }) })
+    const msg = await stream.finalMessage()
+    messages.push({ role: 'assistant', content: msg.content })
+
+    const toolUses = msg.content.filter((b) => b.type === 'tool_use')
+    if (msg.stop_reason !== 'tool_use' || !toolUses.length) return
+
+    const results = []
+    for (const tu of toolUses) {
+      const r = await execTool(specsByName, emit, tu.id, tu.name, tu.input)
+      results.push({ type: 'tool_result', tool_use_id: tu.id, content: r.text, is_error: r.isError })
+    }
+    messages.push({ role: 'user', content: results })
+  }
+  emit({ type: 'status', value: 'error', message: 'hit max tool turns' })
+}
+
+// OpenAI Chat Completions (covers OpenAI, Gemini's OpenAI-compatible endpoint,
+// Ollama, OpenRouter, and any other OpenAI-compatible server via baseUrl).
+async function runOpenAiCompat(specs, systemPrompt, history, user, emit, opts) {
+  const client = new OpenAI({ apiKey: opts.apiKey || 'no-key', ...(opts.baseUrl ? { baseURL: opts.baseUrl } : {}) })
+  const specsByName = new Map(specs.map((s) => [s.name, s]))
+  const tools = specs.map((s) => ({
+    type: 'function',
+    function: { name: s.name, description: s.description, parameters: specToJsonSchema(s) },
+  }))
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...(history ?? []).filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, content: m.content })),
+    { role: 'user', content: user },
+  ]
+  const model = opts.model || 'gpt-4o'
+
+  for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+    const stream = await client.chat.completions.create({ model, messages, tools, stream: true })
+
+    let text = ''
+    const toolCalls = [] // accumulated by streamed index
+    for await (const chunk of stream) {
+      const delta = chunk.choices?.[0]?.delta
+      if (!delta) continue
+      if (delta.content) { text += delta.content; emit({ type: 'text', value: delta.content }) }
+      for (const tc of delta.tool_calls ?? []) {
+        const slot = (toolCalls[tc.index] ??= { id: '', name: '', arguments: '' })
+        if (tc.id) slot.id = tc.id
+        if (tc.function?.name) slot.name = tc.function.name
+        if (tc.function?.arguments) slot.arguments += tc.function.arguments
+      }
+    }
+
+    const calls = toolCalls.filter(Boolean)
+    messages.push({
+      role: 'assistant',
+      content: text || null,
+      ...(calls.length ? { tool_calls: calls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments || '{}' } })) } : {}),
+    })
+    if (!calls.length) return
+
+    for (const c of calls) {
+      let args = {}
+      try { args = JSON.parse(c.arguments || '{}') } catch { /* malformed args → empty */ }
+      const r = await execTool(specsByName, emit, c.id, c.name, args)
+      messages.push({ role: 'tool', tool_call_id: c.id, content: r.text })
+    }
+  }
+  emit({ type: 'status', value: 'error', message: 'hit max tool turns' })
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -541,7 +677,7 @@ function sendJson(res, status, obj) {
 
 function buildSystemPrompt(snapshot, error, project, trainingSnapshot) {
   const lines = [
-    'You are an expert PyTorch architect embedded in MLForge, a drag-and-drop GUI for building nn.Module architectures.',
+    'You are an expert PyTorch architect embedded in SpinoML, a drag-and-drop GUI for building nn.Module architectures.',
     '',
     'You can SEE the user\'s current graph (below) and can MUTATE it via tools. Prefer tools over describing changes in prose — the user wants you to actually build, not just suggest.',
     '',
@@ -553,6 +689,8 @@ function buildSystemPrompt(snapshot, error, project, trainingSnapshot) {
     'Layer params must match the input shape: Conv1d/2d/3d.in_channels = channel dim of input, BatchNorm1d/2d.num_features = channel dim, Linear.in_features = last dim, LayerNorm.normalized_shape = trailing dims, LSTM/GRU/RNN.input_size = last dim of a [N,L,C] sequence (batch_first), Embedding.embedding_dim becomes the new last dim. Inspect the shapes shown for each node before choosing parameters.',
     '',
     'After tool calls, briefly tell the user what you changed (one short sentence) — they can see the result on the canvas.',
+    '',
+    'FORMATTING: the chat panel shows your reply as PLAIN TEXT — it does NOT render Markdown. Do not use Markdown syntax (no **bold**, no ##headers, no - or * bullet lists, no ```code fences, no tables). Write short plain prose; if you must list, use short lines or "1) 2)" inline. Keep replies concise.',
   ]
   if (project) {
     lines.push(
@@ -587,7 +725,7 @@ function buildSystemPrompt(snapshot, error, project, trainingSnapshot) {
       'pick a stable raw mirror and download it. Iris CSV with header is at',
       'https://raw.githubusercontent.com/uiuc-cse/data-fa14/gh-pages/data/iris.csv',
       'or https://archive.ics.uci.edu/ml/machine-learning-databases/iris/iris.data',
-      '(headerless). After download, mention the dataset appears in MLForge\'s Datasets',
+      '(headerless). After download, mention the dataset appears in SpinoML\'s Datasets',
       'tab and suggest the next concrete step (e.g. "build an MLP with 4-input Input").',
     )
     if (project.ssh_target) {
@@ -612,7 +750,7 @@ function buildSystemPrompt(snapshot, error, project, trainingSnapshot) {
   lines.push(
     '',
     '═══ Training graph (separate from the architecture) ═══',
-    'MLForge also has a VISUAL TRAINING GRAPH — how a model is trained, built as nodes',
+    'SpinoML also has a VISUAL TRAINING GRAPH — how a model is trained, built as nodes',
     'just like the architecture. Mutate it with the training tools: add_training_node,',
     'connect_training_nodes, update_training_params, delete_training_node, clear_training_graph.',
     'These are DIFFERENT from add_layer/connect (which only touch the architecture).',
@@ -620,10 +758,10 @@ function buildSystemPrompt(snapshot, error, project, trainingSnapshot) {
     'loop, optimizer, loss, schedule, callbacks, etc.',
     '',
     'Training node types and their key params:',
-    ' - DatasetSource {dataset: "datasets/<file>", target: "<column>", features: [<columns>] (empty = all numeric)}',
+    ' - DatasetSource {dataset: "datasets/<file>", target: "<column>", features: [<columns>] (empty = all numeric)}. For a PAIRED GRAPH model (dual-encoder), set dataset to a ".manifest" file — it carries its own target + pairs the per-branch graphs, so target/features are ignored.',
     ' - Split {val_ratio: 0..0.9, seed}',
     ' - DataLoader {batch_size, shuffle, num_workers, drop_last}',
-    ' - ModelSource {model: "models/<file>.mlforge"}',
+    ' - ModelSource {model: "models/<file>.spinoml"}',
     ' - Loss {kind: CrossEntropyLoss|BCEWithLogitsLoss|MSELoss|L1Loss, label_smoothing}',
     ' - Optimizer {kind: Adam|AdamW|SGD|RMSprop, lr, weight_decay, momentum}',
     ' - Scheduler {kind: none|StepLR|CosineAnnealingLR|ReduceLROnPlateau, step_size, gamma, patience}',
@@ -633,9 +771,10 @@ function buildSystemPrompt(snapshot, error, project, trainingSnapshot) {
     ' - MixedPrecision {dtype: fp16|bf16}',
     ' - TrainLoop {epochs, seed, log_every_n_steps, val_every_n_epochs, gradient_accumulation_steps}',
     '',
-    'A runnable training graph needs at minimum: DatasetSource (with a target column),',
-    'ModelSource (with a .mlforge model), Loss, Optimizer, and TrainLoop — connect each',
-    'source/component INTO the TrainLoop. Phase 13/14 trains tabular datasets only.',
+    'A runnable training graph needs at minimum: DatasetSource (a target column for',
+    'tabular, OR a .manifest for paired graphs), ModelSource (with a .spinoml model),',
+    'Loss, Optimizer, and TrainLoop — connect each source/component INTO the TrainLoop.',
+    'Trainable dataset kinds: tabular (csv/tsv/parquet) and .manifest (paired graphs).',
     'Pick the loss to match the task: CrossEntropyLoss for classification, MSELoss for regression.',
     'When building from scratch, call clear_training_graph first. Use the model + dataset from',
     'the project context above when available.',
@@ -671,10 +810,13 @@ async function handleChat(req, res) {
   try { payload = JSON.parse(body || '{}') }
   catch (e) { return sendJson(res, 400, { error: `invalid json: ${e.message}` }) }
 
-  const { user, messages, graph, training_graph, error, project } = payload
+  const { user, messages, graph, training_graph, error, project, llm } = payload
   if (typeof user !== 'string' || !user.trim()) {
     return sendJson(res, 400, { error: 'missing "user" string' })
   }
+  // Default to the subscription (OAuth) path when no provider is supplied —
+  // fully backward-compatible with older frontends.
+  const kind = llm?.kind ?? 'subscription'
 
   cors(res)
   res.writeHead(200, {
@@ -703,41 +845,50 @@ async function handleChat(req, res) {
   })()
 
   const workspace = makeWorkspace(project)
-  const mcp = buildMcpServer(ctx, trainingCtx, actions, workspace)
+  const specs = buildToolSpecs(ctx, trainingCtx, actions, workspace)
   const systemPrompt = buildSystemPrompt(ctx.snapshot(), error, project, trainingCtx.snapshot())
-  const prompt = formatHistoryAsPrompt(messages, user)
 
   emit({ type: 'status', value: 'thinking' })
 
   try {
-    for await (const m of query({
-      prompt,
-      options: {
-        systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
-        mcpServers: { graph: mcp },
-        allowedTools: [
-          'mcp__graph__set_input_shape',
-          'mcp__graph__add_layer',
-          'mcp__graph__connect',
-          'mcp__graph__update_params',
-          'mcp__graph__delete_node',
-          'mcp__graph__add_training_node',
-          'mcp__graph__connect_training_nodes',
-          'mcp__graph__update_training_params',
-          'mcp__graph__delete_training_node',
-          'mcp__graph__clear_training_graph',
-          ...(workspace ? [
-            'mcp__graph__list_notes',
-            'mcp__graph__read_note',
-            'mcp__graph__append_note',
-            'mcp__graph__download_to_datasets',
-          ] : []),
-        ],
-        permissionMode: 'bypassPermissions',
-        maxTurns: 60,
-      },
-    })) {
-      handleSdkMessage(m, emit)
+    if (kind === 'anthropic') {
+      if (!llm?.apiKey) throw new Error('Anthropic API key missing')
+      await runAnthropicApi(specs, systemPrompt, messages, user, emit, llm)
+    } else if (kind === 'openai-compat') {
+      await runOpenAiCompat(specs, systemPrompt, messages, user, emit, llm)
+    } else {
+      // Subscription / OAuth path via the claude-agent-sdk.
+      const mcp = buildMcpServer(specs)
+      const prompt = formatHistoryAsPrompt(messages, user)
+      for await (const m of query({
+        prompt,
+        options: {
+          systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
+          mcpServers: { graph: mcp },
+          allowedTools: [
+            'mcp__graph__set_input_shape',
+            'mcp__graph__add_layer',
+            'mcp__graph__connect',
+            'mcp__graph__update_params',
+            'mcp__graph__delete_node',
+            'mcp__graph__add_training_node',
+            'mcp__graph__connect_training_nodes',
+            'mcp__graph__update_training_params',
+            'mcp__graph__delete_training_node',
+            'mcp__graph__clear_training_graph',
+            ...(workspace ? [
+              'mcp__graph__list_notes',
+              'mcp__graph__read_note',
+              'mcp__graph__append_note',
+              'mcp__graph__download_to_datasets',
+            ] : []),
+          ],
+          permissionMode: 'bypassPermissions',
+          maxTurns: 60,
+        },
+      })) {
+        handleSdkMessage(m, emit)
+      }
     }
     emit({ type: 'status', value: 'done' })
   } catch (e) {
@@ -797,5 +948,5 @@ const server = createServer(async (req, res) => {
 })
 
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`[mlforge-llm] listening on http://127.0.0.1:${PORT}`)
+  console.log(`[spinoml-llm] listening on http://127.0.0.1:${PORT}`)
 })

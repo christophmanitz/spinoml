@@ -18,7 +18,7 @@ import {
 
 export type NewRunInput = {
   label: string
-  /** Workspace-relative path to the .mlforge model. */
+  /** Workspace-relative path to the .spinoml model. */
   modelRelpath: string
   /** Workspace-relative path to the dataset. */
   datasetRelpath: string
@@ -138,15 +138,16 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   closeNewRun: () => set({ newRunOpen: false, newRunPrefill: null }),
 
   startRun: async (input) => {
-    // Generate model.py from the frozen .mlforge snapshot (pure codegen).
+    // Generate model.py from the frozen .spinoml snapshot (pure codegen).
     const modelContent = await fs.read(input.modelRelpath)
     const modelPy = generateFromSnapshot(parseFile(modelContent)).code
 
     const runId = makeRunId(input.label)
+    // A .manifest is a paired graph dataset; everything else is tabular here.
     const dataset: DatasetConfig = {
       path: input.datasetAbspath,
       relpath: input.datasetRelpath,
-      kind: 'tabular',
+      kind: input.datasetRelpath.toLowerCase().endsWith('.manifest') ? 'manifest' : 'tabular',
       feature_columns: input.featureColumns,
       target_column: input.targetColumn,
     }

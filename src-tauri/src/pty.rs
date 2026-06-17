@@ -146,7 +146,7 @@ fn build_command(args: &PtySpawnArgs) -> Result<CommandBuilder, String> {
                 }
             }
             cmd.env("TERM", "xterm-256color");
-            cmd.env("MLFORGE_TERMINAL", "local");
+            cmd.env("SPINOML_TERMINAL", "local");
             Ok(cmd)
         }
         "remote-ssh" => {

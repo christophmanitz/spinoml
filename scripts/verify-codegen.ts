@@ -8,6 +8,7 @@ import { defaultParamsFor } from '../src/layers/registry'
 import type { LayerNode } from '../src/canvas/GraphStore'
 import {
   LIGAND_PROJECTOR_SRC, PROTEIN_PROJECTOR_SRC, BILINEAR_HEAD_SRC,
+  buildDualEncoderGnn,
 } from '../src/templates/templates'
 
 function mkNode(id: string, layerType: string, overrides: Record<string, unknown> = {}): LayerNode {
@@ -179,6 +180,20 @@ const cases: Case[] = [
       { id: 'e3', source: 'head', target: 'out' },
     ],
   },
+  (() => {
+    // Dual-encoder GNN template: two GNN encoder Subgraphs (each owns its own
+    // edge_index/batch) → Concat → MLP head. Verifies multi-input subgraphs and
+    // that the two branches DON'T share one global edge_index.
+    const snap = buildDualEncoderGnn()
+    return {
+      name: 'dual-encoder GNN (two graph branches → concat → head)',
+      nodes: snap.nodes.map((n) => ({
+        id: n.id, type: 'layer', position: n.position ?? { x: 0, y: 0 },
+        data: { layerType: n.layerType, params: n.params },
+      })) as LayerNode[],
+      edges: snap.edges.map((e, i) => ({ id: `e${i}`, source: e.source, target: e.target })),
+    }
+  })(),
   {
     name: 'graph with no input (expect 1 issue)',
     nodes: [mkNode('n1', 'Conv2d')],
@@ -197,7 +212,7 @@ const cases: Case[] = [
   },
 ]
 
-const tmp = mkdtempSync(join(tmpdir(), 'mlforge-codegen-'))
+const tmp = mkdtempSync(join(tmpdir(), 'spinoml-codegen-'))
 let failed = 0
 
 for (const c of cases) {

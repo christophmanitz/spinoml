@@ -1,0 +1,19 @@
+{
+  "table": "reactions.csv",
+  "pairs": {
+    "ligand": {
+      "column": "smiles",
+      "kind": "molecule"
+    },
+    "protein": {
+      "column": "uniprot",
+      "dir": "graphs",
+      "match": "contains",
+      "ext": ".pt"
+    }
+  },
+  "target": {
+    "column": "affinity",
+    "type": "regression"
+  }
+}

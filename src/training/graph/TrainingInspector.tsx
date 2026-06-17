@@ -82,7 +82,7 @@ function CompilePanel({ compile }: { compile: ReturnType<typeof compileTrainingG
     setError(null)
     const plan = compile.plan
     openNewRun({
-      label: plan.modelRelpath.split('/').pop()!.replace(/\.mlforge$/i, ''),
+      label: plan.modelRelpath.split('/').pop()!.replace(/\.spinoml$/i, ''),
       modelRelpath: plan.modelRelpath,
       datasetRelpath: plan.datasetRelpath,
       targetColumn: plan.target,
@@ -191,7 +191,7 @@ function ModelRef({ value, onChange }: { value: string; onChange: (v: unknown) =
   useEffect(() => {
     if (!isTauri()) return
     void fs.list().then((entries) =>
-      setModels(entries.filter((e) => !e.is_dir && e.relpath.toLowerCase().endsWith('.mlforge')).map((e) => e.relpath).sort()),
+      setModels(entries.filter((e) => !e.is_dir && e.relpath.toLowerCase().endsWith('.spinoml')).map((e) => e.relpath).sort()),
     ).catch(() => {})
   }, [])
   return (

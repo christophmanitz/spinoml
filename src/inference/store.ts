@@ -154,9 +154,12 @@ function applyShapesToNodes(
   const predOf = new Map<string, string>()
   for (const e of edges) if (!predOf.has(e.target)) predOf.set(e.target, e.source)
 
+  // Input-kind nodes (Input, Graph) carry their shape directly. A Graph node's
+  // shape is its node-feature matrix [N, F] — what the first GNN layer sees.
+  const isInputKind = (lt: string) => lt === 'Input' || lt === 'Graph'
   const inputShapeFor = (id: string): number[] | undefined => {
     const n = graph.nodes.find((m) => m.id === id)
-    if (!n || n.data.layerType !== 'Input') return undefined
+    if (!n || !isInputKind(n.data.layerType)) return undefined
     return (n.data.params.shape as number[] | undefined) ?? undefined
   }
 
@@ -172,11 +175,11 @@ function applyShapesToNodes(
     const data = { ...n.data }
     let changed = false
 
-    const inShape = n.data.layerType === 'Input' ? inputShapeFor(n.id) : (() => {
+    const inShape = isInputKind(n.data.layerType) ? inputShapeFor(n.id) : (() => {
       const pid = predOf.get(n.id)
       return pid ? outputOf(pid) : undefined
     })()
-    const outShape = n.data.layerType === 'Input' ? inputShapeFor(n.id) : outputOf(n.id)
+    const outShape = isInputKind(n.data.layerType) ? inputShapeFor(n.id) : outputOf(n.id)
     const isFailing = failingId === n.id
 
     if (!shapesEqual(data.inferredInputShape, inShape)) {

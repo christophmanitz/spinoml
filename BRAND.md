@@ -1,4 +1,4 @@
-# MLForge — Brand & Design System
+# SpinoML — Brand & Design System
 
 The visual language shared by the app, the README, and the marketing site.
 Derived from the colors already used in the product UI, so everything stays
@@ -6,15 +6,22 @@ consistent.
 
 ## Logo
 
-The mark is a stylized **“M”/forge-spark** rendered with the brand gradient.
+The mark is a **line-art spinosaurus** facing left, its outline filled with a
+warm yellow-orange → pink gradient (head warm, tail pink).
 
 - `assets/logo.svg` — square mark (use on dark surfaces)
 - `assets/banner.svg` — horizontal lockup (mark + wordmark + tagline)
 - `public/favicon.svg` — app/browser icon
+- `src-tauri/icons/` — desktop app icons (regenerate with
+  `tauri icon <1024px-master.png>`)
 
-Clear space ≥ the height of one “arm” of the mark. Never recolor the mark to a
-flat color on marketing surfaces — keep the gradient. A flat white mark is
-allowed only where gradients can’t render (e.g. monochrome print).
+The mark gradient runs left→right across the figure:
+
+`linear-gradient(100deg, #e8a70a 0%, #e95f10 46%, #d82474 100%)`
+
+Clear space ≥ the height of the saurus’ head. Keep the gradient on marketing
+surfaces; a flat mark is allowed only where gradients can’t render (e.g.
+monochrome print).
 
 ## Color tokens
 
@@ -73,4 +80,4 @@ concrete capabilities, no growth-hacky superlatives.
 | Path | What |
 |---|---|
 | `assets/logo.svg` / `assets/banner.svg` | logo mark + README banner |
-| `~/mlforge-website/` *(outside the repo)* | static marketing landing page — self-contained `index.html` using these tokens |
+| `~/spinoml-website/` *(outside the repo)* | static marketing landing page — self-contained `index.html` using these tokens |

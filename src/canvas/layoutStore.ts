@@ -4,7 +4,7 @@ import { create } from 'zustand'
 // both auto-layout axes and node handle positions. Persisted.
 export type FlowDir = 'TB' | 'LR'
 
-const KEY = 'mlforge.flowdir.v1'
+const KEY = 'spinoml.flowdir.v1'
 
 function load(): FlowDir {
   try { return localStorage.getItem(KEY) === 'LR' ? 'LR' : 'TB' } catch { return 'TB' }

@@ -116,7 +116,7 @@ export default function NewRunModal() {
         const entries = await fs.list()
         setModels(
           entries
-            .filter((e) => !e.is_dir && e.relpath.toLowerCase().endsWith('.mlforge'))
+            .filter((e) => !e.is_dir && e.relpath.toLowerCase().endsWith('.spinoml'))
             .map((e) => e.relpath)
             .sort(),
         )
@@ -170,7 +170,7 @@ export default function NewRunModal() {
   }
 
   // default label from model name when nothing typed yet
-  const effectiveLabel = label || (modelRelpath ? modelRelpath.split('/').pop()!.replace(/\.mlforge$/i, '') : '')
+  const effectiveLabel = label || (modelRelpath ? modelRelpath.split('/').pop()!.replace(/\.spinoml$/i, '') : '')
 
   const axes = sweeps
     .map((s) => ({ key: s.key, values: parseValues(s.raw) }))
@@ -178,8 +178,10 @@ export default function NewRunModal() {
   const combos = cartesian(axes)
   const sweepCount = combos.length
 
+  // A manifest carries its own target (no column pick); only tabular needs one.
+  const isManifest = datasetRelpath.toLowerCase().endsWith('.manifest')
   const canSubmit =
-    !!modelRelpath && !!datasetRelpath && !!targetColumn && !submitting && sweepCount <= 64
+    !!modelRelpath && !!datasetRelpath && (isManifest || !!targetColumn) && !submitting && sweepCount <= 64
 
   async function submit() {
     setError(null)
@@ -242,7 +244,7 @@ export default function NewRunModal() {
               <option value="">— wählen —</option>
               {models.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
-            {models.length === 0 && <Hint>Keine .mlforge-Modelle im Workspace. Erst ein Modell speichern.</Hint>}
+            {models.length === 0 && <Hint>Keine .spinoml-Modelle im Workspace. Erst ein Modell speichern.</Hint>}
           </Field>
 
           <Field label="Datensatz">
@@ -250,18 +252,23 @@ export default function NewRunModal() {
               <option value="">— wählen —</option>
               {dsList.map((d) => <option key={d.relpath} value={d.relpath}>{d.name}</option>)}
             </select>
-            {datasetRelpath && !isTabular && inspect?.data && (
-              <Hint warn>Phase 13 trainiert nur tabulare Datensätze (CSV/TSV/Parquet). Anderes Format folgt mit dem Trainings-Graph (Phase 14).</Hint>
+            {datasetRelpath && isManifest && (
+              <Hint>Manifest (gepaarte Graphen) — Ligand+Protein werden pro Zeile gekoppelt; das Ziel steckt im Manifest. Keine Spaltenwahl nötig.</Hint>
+            )}
+            {datasetRelpath && !isManifest && !isTabular && inspect?.data && (
+              <Hint warn>Trainierbar sind tabulare Datensätze (CSV/TSV/Parquet) und <code>.manifest</code> (gepaarte Graphen). Andere Formate noch nicht.</Hint>
             )}
           </Field>
 
-          <Field label="Ziel-Spalte (target)">
-            <select value={targetColumn} onChange={(e) => setTargetColumn(e.target.value)} className={SELECT} disabled={!columns.length}>
-              <option value="">{columns.length ? '— wählen —' : '(Datensatz wählen)'}</option>
-              {columns.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <Hint>Features = alle übrigen numerischen Spalten. Verlust bestimmt Klassifikation vs. Regression.</Hint>
-          </Field>
+          {!isManifest && (
+            <Field label="Ziel-Spalte (target)">
+              <select value={targetColumn} onChange={(e) => setTargetColumn(e.target.value)} className={SELECT} disabled={!columns.length}>
+                <option value="">{columns.length ? '— wählen —' : '(Datensatz wählen)'}</option>
+                {columns.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <Hint>Features = alle übrigen numerischen Spalten. Verlust bestimmt Klassifikation vs. Regression.</Hint>
+            </Field>
+          )}
 
           <div className="grid grid-cols-3 gap-3">
             <NumField label="Epochs" value={cfg.epochs} onChange={(v) => setCfg({ ...cfg, epochs: v })} />
@@ -331,7 +338,7 @@ export default function NewRunModal() {
               <span className="text-[10px] text-[#7a8088]">(Grid Search, optional)</span>
             </div>
             <p className="text-[10px] leading-snug text-[#7a8088]">
-              Mehrere Werte je Parameter durchprobieren statt einen festen. MLForge startet
+              Mehrere Werte je Parameter durchprobieren statt einen festen. SpinoML startet
               <strong className="text-[#9aa1a8]"> einen Run pro Kombination</strong> aller Parameter (Gitter) — danach im
               Vergleich gegenüberstellbar. Diese Werte überschreiben die Einzelwerte oben.
             </p>
@@ -469,7 +476,7 @@ function BackendSection({
           <div className="rounded border border-[#1f2429] bg-[#0b0e11] px-2 py-1.5 text-[11px] text-[#9aa1a8]">
             Kein SLURM auf diesem Host (kein <code>sbatch</code>) — also <strong className="text-[#cfd3d8]">kein HPC-Cluster</strong>.
             Das Training läuft direkt als losgelöster Hintergrund-Prozess (<code>nohup setsid</code>) auf <code className="text-[#9aa1a8]">{host}</code>
-            und überlebt das Schließen von MLForge.
+            und überlebt das Schließen von SpinoML.
           </div>
           <FlowDiagram steps={directSteps(host, runDir, python)} />
           {gpus.length > 0 && <Hint>GPU am Host: {gpus.slice(0, 4).join(', ')} — wird automatisch genutzt, wenn torch CUDA sieht.</Hint>}

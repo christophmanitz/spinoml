@@ -15,9 +15,12 @@ import { useGraphStore } from './GraphStore'
 import { useScopeStore } from './scopeStore'
 import { useLayoutStore } from './layoutStore'
 import LayerNode from './LayerNode'
+import ShapeEdge from './ShapeEdge'
 import { LAYERS } from '../layers/registry'
+import { useVizStore } from '../visualization/store'
+import type { EdgeTypes } from '@xyflow/react'
 
-const DRAG_MIME = 'application/mlforge-layer'
+const DRAG_MIME = 'application/spinoml-layer'
 
 function CanvasInner() {
   const nodes = useGraphStore((s) => s.nodes)
@@ -29,6 +32,29 @@ function CanvasInner() {
   const setSelectedNodeId = useGraphStore((s) => s.setSelectedNodeId)
   const autoLayout = useGraphStore((s) => s.autoLayout)
   const direction = useLayoutStore((s) => s.direction)
+  const explainMode = useVizStore((s) => s.explainMode)
+  const arrived = useVizStore((s) => s.arrived)
+  const flowingEdgeIds = useVizStore((s) => s.flowingEdgeIds)
+  const byNode = useVizStore((s) => s.byNode)
+
+  // In Explain mode each edge carries the tensor-shape glyph of the data flowing
+  // through it (the source node's output shape + values), appearing as the
+  // example reaches it; the edge being crossed is highlighted. Derived from the
+  // viz store + node shapes, so the GraphStore edges (structural state) stay clean.
+  const displayEdges = useMemo(() => {
+    if (!explainMode) return edges
+    const lit = new Set(flowingEdgeIds)
+    return edges.map((e) => {
+      const shape = arrived[e.source] ? nodes.find((n) => n.id === e.source)?.data.inferredOutputShape : undefined
+      const isLit = lit.has(e.id)
+      if (!shape && !isLit) return e
+      const p = byNode[e.source]?.preview
+      const face = p?.kind === 'maps' ? p.maps[0] : p?.kind === 'matrix' ? p.grid : undefined
+      return { ...e, type: 'shape', data: { shape, face, lit: isLit } }
+    })
+  }, [edges, nodes, explainMode, arrived, flowingEdgeIds, byNode])
+
+  const edgeTypes = useMemo<EdgeTypes>(() => ({ shape: ShapeEdge }), [])
 
   const { screenToFlowPosition, fitView } = useReactFlow()
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -75,8 +101,9 @@ function CanvasInner() {
       <Breadcrumb />
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={displayEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}

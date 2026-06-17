@@ -1,6 +1,6 @@
 // SSH-backed remote workspace. Mirrors every local FS command as an `ssh_*`
 // variant, transported via system `ssh` (so it uses ~/.ssh/config, agent,
-// ProxyJump, GSSAPI, etc. — no secrets stored in MLForge itself).
+// ProxyJump, GSSAPI, etc. — no secrets stored in SpinoML itself).
 //
 // Each call forks an ssh subprocess. That's ~50-200ms per op against most
 // hops; acceptable for interactive editing of small files but NOT for hot
@@ -8,7 +8,7 @@
 // `sftp -b` session pool — but the API here stays the same.
 //
 // Path safety: remote_root can be either absolute (`/scratch/...`) or
-// tilde-prefixed (`~/projects/mlforge`). Relpaths reuse the same component
+// tilde-prefixed (`~/projects/spinoml`). Relpaths reuse the same component
 // rules as the local resolver (no `..`, no absolute paths). Everything
 // emitted into a shell command goes through `shell_quote_path()`, which
 // handles `~/` by substituting `"$HOME"` (which IS expanded outside single
@@ -179,7 +179,7 @@ async fn ssh_exec(alias: &str, remote_cmd: &str, stdin_data: Option<&[u8]>) -> R
         .map_err(|e| format!("ssh task join: {e}"))?
 }
 
-/// Connection-multiplexing options. MLForge fires many short ssh commands (list
+/// Connection-multiplexing options. SpinoML fires many short ssh commands (list
 /// / status / tail / gpu-stats / readFile, several per polling tick); without
 /// multiplexing each is a full TCP+KEX+auth handshake, and the burst trips the
 /// server's MaxStartups / fail2ban → "kex_exchange_identification: Connection
@@ -190,7 +190,7 @@ async fn ssh_exec(alias: &str, remote_cmd: &str, stdin_data: Option<&[u8]>) -> R
 /// length-bounded socket name. Falls back to a fresh connection if the master is
 /// gone, so it's purely additive.
 fn control_args() -> Vec<String> {
-    let dir = std::env::temp_dir().join("mlforge-ssh");
+    let dir = std::env::temp_dir().join("spinoml-ssh");
     let _ = std::fs::create_dir_all(&dir); // best effort; ssh won't mkdir for us
     vec![
         "-o".into(), "ControlMaster=auto".into(),
@@ -255,16 +255,16 @@ pub async fn ssh_test_connection(alias: String) -> Result<SshTestResult, String>
     validate_alias(&alias)?;
     let out = ssh_exec(
         &alias,
-        "echo MLFORGE_OK && uname -srm && echo \"HOME=$HOME\"",
+        "echo SPINOML_OK && uname -srm && echo \"HOME=$HOME\"",
         None,
     ).await?;
-    if !out.contains("MLFORGE_OK") {
-        return Err(format!("unexpected reply (no MLFORGE_OK marker): {}", out.trim()));
+    if !out.contains("SPINOML_OK") {
+        return Err(format!("unexpected reply (no SPINOML_OK marker): {}", out.trim()));
     }
     let mut uname = String::new();
     let mut home = String::new();
     for line in out.lines() {
-        if line == "MLFORGE_OK" {
+        if line == "SPINOML_OK" {
             continue;
         }
         if let Some(rest) = line.strip_prefix("HOME=") {
@@ -282,7 +282,7 @@ pub struct RemoteProjectLoad {
     pub meta: Option<serde_json::Value>,
     pub root_exists: bool,
     pub has_legacy_files: bool,
-    pub legacy_mlforge_count: usize,
+    pub legacy_spinoml_count: usize,
 }
 
 #[tauri::command]
@@ -296,11 +296,11 @@ pub async fn ssh_load_project(
     let proj_path = join_remote(&root, PROJECT_FILE);
     let root_q = shell_quote_path(&root);
     let proj_q = shell_quote_path(&proj_path);
-    // One round-trip: check root, list .mlforge files, dump project.json if present.
+    // One round-trip: check root, list .spinoml files, dump project.json if present.
     let cmd = format!(
         "if [ -d {root_q} ]; then \
             echo ROOT_EXISTS; \
-            ls -1 {root_q} 2>/dev/null | grep -i '\\.mlforge$' | wc -l; \
+            ls -1 {root_q} 2>/dev/null | grep -i '\\.spinoml$' | wc -l; \
             if [ -f {proj_q} ]; then echo PROJECT_BEGIN; cat {proj_q}; echo; echo PROJECT_END; fi; \
          else echo ROOT_MISSING; fi"
     );
@@ -345,7 +345,7 @@ pub async fn ssh_load_project(
         meta,
         root_exists,
         has_legacy_files: legacy_count > 0,
-        legacy_mlforge_count: legacy_count,
+        legacy_spinoml_count: legacy_count,
     })
 }
 
@@ -802,7 +802,7 @@ pub async fn ssh_list_datasets(
 // Mirrors src/training.rs over ssh. A run is the SAME self-contained directory
 // (experiments/runs/<run_id>/) on the remote host; we ship the frozen files in,
 // launch the trainer detached (`nohup setsid` → survives both the ssh session
-// AND the MLForge app), and afterwards only read files + `kill -0` over ssh.
+// AND the SpinoML app), and afterwards only read files + `kill -0` over ssh.
 // No SLURM here — that's Phase 17.
 
 /// The python interpreter on the remote is user-configured per connection. Keep
@@ -840,7 +840,7 @@ pub async fn ssh_start_training_run(
     run_id: String,
     python: String,
     run_json: String,
-    model_mlforge: String,
+    model_spinoml: String,
     model_py: String,
 ) -> Result<(), String> {
     validate_alias(&alias)?;
@@ -866,7 +866,7 @@ pub async fn ssh_start_training_run(
 
     // frozen snapshots
     write_remote_run_file(&alias, &dir, "run.json", run_json.as_bytes()).await?;
-    write_remote_run_file(&alias, &dir, "model.mlforge", model_mlforge.as_bytes()).await?;
+    write_remote_run_file(&alias, &dir, "model.spinoml", model_spinoml.as_bytes()).await?;
     write_remote_run_file(&alias, &dir, "model.py", model_py.as_bytes()).await?;
 
     // ship the shared trainer in as train.py (read from the local bundle)
@@ -875,7 +875,7 @@ pub async fn ssh_start_training_run(
         .join("training_template.py");
     let trainer = std::fs::read_to_string(&template).map_err(|e| {
         format!(
-            "training template missing at {} ({e}). MLForge bundle may be incomplete.",
+            "training template missing at {} ({e}). SpinoML bundle may be incomplete.",
             template.display()
         )
     })?;
@@ -912,7 +912,7 @@ pub async fn ssh_start_training_run(
                 .join("\n");
             return Err(format!("sbatch failed: {}", msg.trim()));
         }
-        eprintln!("[mlforge] slurm run {run_id} submitted on {alias}");
+        eprintln!("[spinoml] slurm run {run_id} submitted on {alias}");
     } else {
         // Detached launch. setsid → own session (immune to the ssh-channel HUP
         // and app close); nohup → belt-and-suspenders; stdio to files; stdin
@@ -930,7 +930,7 @@ pub async fn ssh_start_training_run(
             "cd {dir_q} && {{ nohup setsid {python_q} -u train.py > stdout.log 2> stderr.log < /dev/null & echo $! > pid; }}"
         );
         ssh_exec(&alias, &launch, None).await?;
-        eprintln!("[mlforge] remote training run {run_id} launched on {alias} ({python})");
+        eprintln!("[spinoml] remote training run {run_id} launched on {alias} ({python})");
     }
     Ok(())
 }
@@ -951,7 +951,7 @@ fn build_sbatch(run_id: &str, python_q: &str, slurm: Option<&Value>) -> String {
         .collect();
 
     let mut out = String::from("#!/bin/bash\n");
-    out.push_str(&format!("#SBATCH --job-name=mlforge-{job}\n"));
+    out.push_str(&format!("#SBATCH --job-name=spinoml-{job}\n"));
     let partition = s("partition");
     if !partition.is_empty() {
         out.push_str(&format!("#SBATCH --partition={partition}\n"));

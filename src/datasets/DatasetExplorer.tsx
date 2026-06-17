@@ -19,7 +19,7 @@ export default function DatasetExplorer() {
   if (!isTauri()) {
     return (
       <div className="flex h-full items-center justify-center px-4 text-center text-xs text-[#7a8088]">
-        Datensätze brauchen einen echten Workspace-Ordner — öffne MLForge in Tauri.
+        Datensätze brauchen einen echten Workspace-Ordner — öffne SpinoML in Tauri.
       </div>
     )
   }

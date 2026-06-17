@@ -1,7 +1,7 @@
 import { TRAINING_GROUPS } from './registry'
 import { colorForTrainingCategory, iconForTrainingCategory } from './theme'
 
-export const TRAINING_DRAG_MIME = 'application/mlforge-training'
+export const TRAINING_DRAG_MIME = 'application/spinoml-training'
 
 export default function TrainingPalette() {
   return (

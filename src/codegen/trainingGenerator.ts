@@ -124,8 +124,10 @@ export function compileTrainingGraph(snapshot: TrainingGraphSnapshot): TrainingC
   const features = featuresRaw.length ? featuresRaw : null
   const modelRelpath = model ? String(paramsOf(model).model ?? '') : ''
 
+  // A .manifest (paired graph dataset) carries its own target → no column needed.
+  const isManifest = datasetRelpath.toLowerCase().endsWith('.manifest')
   if (dataset && !datasetRelpath) issues.push('DatasetSource hat keinen Datensatz gewählt.')
-  if (dataset && !target) issues.push('DatasetSource braucht eine Ziel-Spalte (target).')
+  if (dataset && !isManifest && !target) issues.push('DatasetSource braucht eine Ziel-Spalte (target).')
   if (model && !modelRelpath) issues.push('ModelSource hat kein Modell gewählt.')
 
   // Edge validation (advisory): each core component should reach the TrainLoop
@@ -169,7 +171,8 @@ export function compileTrainingGraph(snapshot: TrainingGraphSnapshot): TrainingC
   }
 
   const ok = issues.every((m) => m.includes('Mehrere')) &&
-    !!loop && !!dataset && !!model && !!loss && !!optimizer && !!datasetRelpath && !!target && !!modelRelpath
+    !!loop && !!dataset && !!model && !!loss && !!optimizer && !!datasetRelpath && !!modelRelpath &&
+    (isManifest || !!target)
 
   const plan: TrainingPlan | null = ok
     ? { modelRelpath, datasetRelpath, target, features, training }

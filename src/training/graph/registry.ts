@@ -11,7 +11,7 @@ export type TrainingFieldSpec =
   | { name: string; type: 'select'; options: string[]; default: string }
   /** Runtime-populated dropdown of dataset relpaths (datasetsStore). */
   | { name: string; type: 'dataset-ref'; default: string }
-  /** Runtime-populated dropdown of models/*.mlforge relpaths (fs.list). */
+  /** Runtime-populated dropdown of models/*.spinoml relpaths (fs.list). */
   | { name: string; type: 'model-ref'; default: string }
   /** Single column from the graph's bound DatasetSource. */
   | { name: string; type: 'column-single'; default: string }

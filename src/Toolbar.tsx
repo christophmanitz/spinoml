@@ -31,7 +31,7 @@ export default function Toolbar() {
     // When a project is loaded, default to models/; otherwise to root.
     const parentId = ws.entries['models']?.kind === 'folder' ? 'models' : ROOT_ID
     try {
-      const id = await ws.saveAsNew(parentId, 'untitled.mlforge')
+      const id = await ws.saveAsNew(parentId, 'untitled.spinoml')
       if (!id) await reportError('Save failed', 'workspace did not return a file id')
     } catch (e) {
       await reportError('Save failed', e)
@@ -75,7 +75,7 @@ export default function Toolbar() {
         })}>
           Open file from disk…
         </Item>
-        <Item onSelect={() => downloadCurrent(activeFileName ?? 'model.mlforge')}>
+        <Item onSelect={() => downloadCurrent(activeFileName ?? 'model.spinoml')}>
           Export to disk…
         </Item>
       </Menu>

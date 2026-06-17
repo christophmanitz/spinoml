@@ -26,6 +26,7 @@ export type DatasetEntry = {
 
 export const tauriFs = {
   pickDir: () => invoke<string | null>('pick_workspace_dir'),
+  setDir: (path: string) => invoke<string>('set_workspace_dir', { path }),
   currentDir: () => invoke<string | null>('current_workspace_dir'),
   closeDir: () => invoke<void>('close_workspace_dir'),
   list: () => invoke<FsEntry[]>('list_workspace'),
@@ -83,7 +84,7 @@ export type ProjectLoad = {
   root: string
   meta: ProjectMeta | null
   has_legacy_files: boolean
-  legacy_mlforge_count: number
+  legacy_spinoml_count: number
 }
 
 export type NoteEntry = {

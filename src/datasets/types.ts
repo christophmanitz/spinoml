@@ -5,7 +5,13 @@ export type DatasetKind =
   | 'protein'
   | 'molecule'
   | 'huggingface'
+  | 'pyg'
+  | 'graph_folder'
+  | 'manifest'
   | 'unknown'
+
+export type GraphField = { name: string; shape: number[]; dtype: string }
+export type XPreview = { rows: number; cols: number; grid: number[][] }
 
 export type InspectBase = {
   kind: DatasetKind
@@ -46,6 +52,28 @@ export type TensorInspect = InspectBase & {
   mean?: number
   arrays?: Record<string, number[]>
   keys?: { key: string; shape: number[] | null; dtype: string }[]
+  // Present when the .pt holds a PyTorch-Geometric graph (Data object).
+  is_graph?: boolean
+  num_nodes?: number
+  num_edges?: number
+  num_node_features?: number
+  edge_dim?: number
+  fields?: GraphField[]
+  x_preview?: XPreview | null
+}
+
+export type GraphFolderInspect = InspectBase & {
+  kind: 'graph_folder'
+  ok: true
+  n_graphs: number
+  example: string
+  num_node_features: number
+  edge_dim: number
+  num_nodes: number
+  num_edges: number
+  fields: GraphField[]
+  x_preview?: XPreview | null
+  preview?: { n_nodes: number; edges: [number, number][] }
 }
 
 export type ProteinInspect = InspectBase & {
@@ -72,6 +100,7 @@ export type MoleculeInspect = InspectBase & {
     bonds?: number
     mw?: number
   }[]
+  graph0?: { smiles: string; n_nodes: number; edges: [number, number][] }
 }
 
 export type HuggingfaceInspect = InspectBase & {
@@ -83,6 +112,32 @@ export type HuggingfaceInspect = InspectBase & {
   features: Record<string, string>
 }
 
+export type PygInspect = InspectBase & {
+  kind: 'pyg'
+  ok: true
+  name: string
+  num_graphs: number
+  num_nodes: number
+  num_edges: number
+  num_node_features: number
+  num_classes: number
+}
+
+// One bindable slot of a manifest: a fully-qualified field key ('<branch>.x',
+// '<branch>.edge_index', '<branch>.batch', or 'target') with its row-0 shape.
+export type ManifestSlot = { field: string; shape: number[]; dtype: string }
+
+export type ManifestInspect = InspectBase & {
+  kind: 'manifest'
+  ok: true
+  n_rows: number
+  table: string
+  branches: string[]
+  target: { column: string; type: string } | null
+  slots: ManifestSlot[]
+  notes?: string[]
+}
+
 export type InspectResult =
   | TabularInspect
   | ImageFolderInspect
@@ -90,6 +145,9 @@ export type InspectResult =
   | ProteinInspect
   | MoleculeInspect
   | HuggingfaceInspect
+  | PygInspect
+  | GraphFolderInspect
+  | ManifestInspect
   | (InspectBase & { ok: false })
 
 export type ColumnSummary = {

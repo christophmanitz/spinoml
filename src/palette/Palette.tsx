@@ -3,7 +3,7 @@ import { LAYER_GROUPS } from '../layers/registry'
 import { colorForCategory } from '../layers/categories'
 import CategoryIcon from '../layers/CategoryIcon'
 
-const STORAGE_KEY = 'mlforge.palette.collapsed.v2'
+const STORAGE_KEY = 'spinoml.palette.collapsed.v2'
 
 function loadCollapsed(): Set<string> {
   try {
@@ -62,7 +62,7 @@ export default function Palette() {
                     className="cursor-grab rounded border border-[#1f2429] bg-[#13171b] px-2 py-1 text-xs hover:border-[#3a4148] hover:bg-[#181d22] active:cursor-grabbing"
                     draggable
                     onDragStart={(e) => {
-                      e.dataTransfer.setData('application/mlforge-layer', layer)
+                      e.dataTransfer.setData('application/spinoml-layer', layer)
                       e.dataTransfer.effectAllowed = 'copy'
                     }}
                   >

@@ -32,7 +32,7 @@ export default function TrainingGraphBar() {
     setMsg(null)
     try {
       await loadTrainingGraph(rel)
-      setName(rel.split('/').pop()!.replace(/\.mltrain$/i, ''))
+      setName(rel.split('/').pop()!.replace(/\.spinotrain$/i, ''))
       setMsg(`geladen: ${rel.split('/').pop()}`)
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e))

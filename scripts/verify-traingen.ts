@@ -32,7 +32,7 @@ const full: TrainingGraphSnapshot = {
     n('t1', 'DatasetSource', { dataset: 'datasets/iris.csv', target: 'species', features: [] }),
     n('t2', 'Split', { val_ratio: 0.25, seed: 7 }),
     n('t3', 'DataLoader', { batch_size: 8, shuffle: true }),
-    n('t4', 'ModelSource', { model: 'models/iris-mlp.mlforge' }),
+    n('t4', 'ModelSource', { model: 'models/iris-mlp.spinoml' }),
     n('t5', 'Loss', { kind: 'CrossEntropyLoss' }),
     n('t6', 'Optimizer', { kind: 'AdamW', lr: 0.005, weight_decay: 0.01 }),
     n('t7', 'Scheduler', { kind: 'CosineAnnealingLR' }),
@@ -49,7 +49,7 @@ console.log('compile: full graph')
 const r = compileTrainingGraph(full)
 check('ok', r.ok, JSON.stringify(r.issues))
 check('plan present', !!r.plan)
-check('model relpath', r.plan?.modelRelpath === 'models/iris-mlp.mlforge')
+check('model relpath', r.plan?.modelRelpath === 'models/iris-mlp.spinoml')
 check('dataset relpath', r.plan?.datasetRelpath === 'datasets/iris.csv')
 check('target', r.plan?.target === 'species')
 check('epochs from TrainLoop', r.plan?.training.epochs === 12)
@@ -75,7 +75,7 @@ const template = join(repoRoot, 'sidecar-torch', 'training_template.py')
 if (!existsSync(template)) {
   check('training template exists', false, template)
 } else {
-  const dir = mkdtempSync(join(tmpdir(), 'mlforge-traingen-'))
+  const dir = mkdtempSync(join(tmpdir(), 'spinoml-traingen-'))
   writeFileSync(join(dir, 'iris.csv'),
     'sl,sw,pl,pw,species\n' +
     '5.1,3.5,1.4,0.2,setosa\n4.9,3.0,1.4,0.2,setosa\n4.7,3.2,1.3,0.2,setosa\n5.0,3.4,1.5,0.2,setosa\n' +

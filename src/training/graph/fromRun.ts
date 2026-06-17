@@ -1,7 +1,7 @@
 // Reconstruct a visual training graph from a saved run's run.json. A run always
 // carries its full frozen config (dataset, model, optimizer, loss, scheduler,
 // metrics, callbacks, loop) even when it was started manually (NewRunModal) or
-// the originating .mltrain was never saved. This rebuilds an equivalent graph so
+// the originating .spinotrain was never saved. This rebuilds an equivalent graph so
 // any past run can be reopened on the training canvas. Inverse of
 // codegen/trainingGenerator.ts (graph → run.json).
 

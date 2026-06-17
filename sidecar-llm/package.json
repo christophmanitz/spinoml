@@ -1,5 +1,5 @@
 {
-  "name": "mlforge-sidecar-llm",
+  "name": "spinoml-sidecar-llm",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -8,6 +8,9 @@
     "start": "node main.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.175"
+    "@anthropic-ai/claude-agent-sdk": "^0.3.175",
+    "@anthropic-ai/sdk": "^0.93.0",
+    "openai": "^6.9.0",
+    "zod": "^4.0.0"
   }
 }

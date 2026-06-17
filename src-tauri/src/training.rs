@@ -2,7 +2,7 @@
 //!
 //! A "run" is a self-contained directory under `experiments/runs/<run_id>/`
 //! (layout documented in TODO.md). The frontend assembles the frozen config
-//! (run.json), the architecture snapshot (model.mlforge) and the generated
+//! (run.json), the architecture snapshot (model.spinoml) and the generated
 //! module (model.py); this module drops the shared trainer in as `train.py`
 //! and launches it **detached** so it outlives the app.
 //!
@@ -60,7 +60,7 @@ pub(crate) const READABLE: &[&str] = &[
     "stdout.log",
     "stderr.log",
     "model.py",
-    "model.mlforge",
+    "model.spinoml",
     "train.py",
     "train.sbatch",
     "pid",
@@ -351,7 +351,7 @@ pub fn start_training_run(
     state: State<WorkspaceState>,
     run_id: String,
     run_json: String,
-    model_mlforge: String,
+    model_spinoml: String,
     model_py: String,
 ) -> Result<(), String> {
     validate_run_id(&run_id)?;
@@ -365,18 +365,18 @@ pub fn start_training_run(
 
     // Frozen snapshots.
     fs::write(dir.join("run.json"), run_json).map_err(|e| format!("write run.json: {e}"))?;
-    fs::write(dir.join("model.mlforge"), model_mlforge)
-        .map_err(|e| format!("write model.mlforge: {e}"))?;
+    fs::write(dir.join("model.spinoml"), model_spinoml)
+        .map_err(|e| format!("write model.spinoml: {e}"))?;
     fs::write(dir.join("model.py"), model_py).map_err(|e| format!("write model.py: {e}"))?;
 
     // Drop the shared trainer in as train.py (snapshot — the run stays runnable
-    // even if MLForge updates the template later).
+    // even if SpinoML updates the template later).
     let template = crate::sidecar_root_pub(&app)
         .join("sidecar-torch")
         .join("training_template.py");
     let trainer = fs::read_to_string(&template).map_err(|e| {
         format!(
-            "training template missing at {} ({e}). MLForge bundle may be incomplete.",
+            "training template missing at {} ({e}). SpinoML bundle may be incomplete.",
             template.display()
         )
     })?;
@@ -386,7 +386,7 @@ pub fn start_training_run(
 
     // Detached launch. setsid → own session (survives app close); stdio to
     // files; stdin /dev/null. $! is the python pid (setsid exec's into it).
-    let python = std::env::var("MLFORGE_PYTHON").unwrap_or_else(|_| "python".into());
+    let python = std::env::var("SPINOML_PYTHON").unwrap_or_else(|_| "python".into());
     let script = format!(
         "setsid {python} -u train.py > stdout.log 2> stderr.log < /dev/null & echo $! > pid",
     );
@@ -401,7 +401,7 @@ pub fn start_training_run(
     if !status.success() {
         return Err("failed to launch training process".into());
     }
-    eprintln!("[mlforge] training run {run_id} launched ({python})");
+    eprintln!("[spinoml] training run {run_id} launched ({python})");
     Ok(())
 }
 

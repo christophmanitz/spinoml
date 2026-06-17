@@ -43,7 +43,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   })()
   const isSlurm = backend?.kind === 'slurm'
 
-  // Rebuild this run's training graph onto the canvas, even if its .mltrain was
+  // Rebuild this run's training graph onto the canvas, even if its .spinotrain was
   // never saved — run.json carries the full frozen config.
   const openOnCanvas = () => {
     if (!runJson) return

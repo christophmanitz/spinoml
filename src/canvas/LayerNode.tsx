@@ -5,6 +5,8 @@ import { colorForCategory } from '../layers/categories'
 import CategoryIcon from '../layers/CategoryIcon'
 import type { LayerNodeData } from './GraphStore'
 import { useLayoutStore } from './layoutStore'
+import { useVizStore } from '../visualization/store'
+import MiniViz from '../visualization/MiniViz'
 
 const ERROR_COLOR = '#f43f5e'
 
@@ -20,8 +22,10 @@ export default function LayerNode({
   const color = data.hasError ? ERROR_COLOR : catColor
   const summary = spec ? spec.summary(data.params) : '⚠ unknown layer'
 
-  const hasInput = data.layerType !== 'Input'
-  const hasOutput = data.layerType !== 'Output'
+  // Input-kind nodes (Input, Graph) have no incoming port; output-kind have no
+  // outgoing port. Use the registry kind so new input/output types work too.
+  const hasInput = spec?.kind !== 'input' && data.layerType !== 'Input'
+  const hasOutput = spec?.kind !== 'output' && data.layerType !== 'Output'
 
   const dir = useLayoutStore((s) => s.direction)
   const targetPos = dir === 'LR' ? Position.Left : Position.Top
@@ -34,13 +38,20 @@ export default function LayerNode({
 
   const shapeText = data.inferredOutputShape ? `[${data.inferredOutputShape.join(', ')}]` : null
 
+  const explainMode = useVizStore((s) => s.explainMode)
+  const act = useVizStore((s) => s.byNode[id])
+  const arrived = useVizStore((s) => s.arrived[id])
+  const isHead = useVizStore((s) => s.flowHeadId === id)
+
   return (
     <div
-      className="min-w-[160px] rounded border bg-[#13171b] shadow-sm"
+      className={`min-w-[160px] rounded border bg-[#13171b] shadow-sm${isHead ? ' animate-pulse' : ''}`}
       style={{
-        borderColor: data.hasError ? ERROR_COLOR : selected ? catColor : '#1f2429',
+        borderColor: data.hasError ? ERROR_COLOR : (isHead || arrived) ? catColor : selected ? catColor : '#1f2429',
         boxShadow: data.hasError
           ? `0 0 0 1px ${ERROR_COLOR}66`
+          : isHead ? `0 0 0 2px ${catColor}, 0 0 18px ${catColor}99`
+          : arrived ? `0 0 0 1px ${catColor}88`
           : selected ? `0 0 0 1px ${catColor}40` : undefined,
       }}
     >
@@ -64,6 +75,11 @@ export default function LayerNode({
         {data.hasError && <span className="text-[10px]" title="forward pass failed here">!</span>}
       </div>
       <div className="px-2 py-1.5 font-mono text-[10px] text-[#9aa1a8]">{summary}</div>
+      {explainMode && act && arrived && (
+        <div className="border-t border-[#1f2429] px-2 py-1.5">
+          <MiniViz act={act} hex={catColor} />
+        </div>
+      )}
       {spec?.kind === 'group' && (
         <div className="border-t border-dashed border-[#2a2f36] px-2 py-1 text-[10px] text-[#7a8088]">
           ⤢ Doppelklick → Subcanvas

@@ -9,11 +9,15 @@ import CodePreview from './codegen/CodePreview'
 import Terminal from './terminal/Terminal'
 import { useInferenceStore } from './inference/store'
 import { useChatStore } from './chat/store'
+import { providerById, useProviderStore } from './chat/providerStore'
+import { useVizStore } from './visualization/store'
+import LayerExplain from './visualization/LayerExplain'
 import { useManagedSidecars } from './sidecars/managed'
 import { useProjectStore } from './project/store'
 import Welcome from './project/Welcome'
 import Toolbar from './Toolbar'
 import { isTauri } from './workspace/tauri-fs'
+import { useWorkspaceStore } from './workspace/store'
 import { useDatasetsStore } from './datasets/store'
 import DatasetDetail from './datasets/DatasetDetail'
 import { useTrainingStore } from './training/store'
@@ -82,16 +86,56 @@ function RemoteSidecarBadge() {
   )
 }
 
+function ExplainControls() {
+  const viewMode = useViewModeStore((s) => s.mode)
+  const explain = useVizStore((s) => s.explainMode)
+  const running = useVizStore((s) => s.running)
+  const playing = useVizStore((s) => s.playing)
+  const hasData = useVizStore((s) => Object.keys(s.byNode).length > 0)
+  const toggle = useVizStore((s) => s.toggleExplain)
+  const run = useVizStore((s) => s.run)
+  const playFlow = useVizStore((s) => s.playFlow)
+  if (viewMode === 'training') return null
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        onClick={toggle}
+        className={`rounded px-2 py-0.5 ${explain ? 'bg-violet-900/50 text-violet-200' : 'hover:bg-[#1f2429] hover:text-[#e6e8eb]'}`}
+        title="Visualisiere, was durch die Layer fließt"
+      >Explain</button>
+      {explain && (
+        <button
+          onClick={() => run()}
+          disabled={running}
+          className="rounded bg-[#1d4ed8]/80 px-2 py-0.5 text-[#e6e8eb] hover:bg-[#1d4ed8] disabled:opacity-50"
+          title="Ein Beispiel durch das Modell schicken"
+        >{running ? '…' : '▶ Beispiel'}</button>
+      )}
+      {explain && hasData && (
+        <button
+          onClick={() => playFlow()}
+          disabled={playing}
+          className="rounded border border-[#1f2429] bg-[#13171b] px-2 py-0.5 text-[#9aa1a8] hover:bg-[#1a1f24] hover:text-[#e6e8eb] disabled:opacity-50"
+          title="Fluss noch einmal abspielen"
+        >{playing ? '… läuft' : '↻ Fluss'}</button>
+      )}
+    </div>
+  )
+}
+
 function LLMBadge() {
   const online = useChatStore((s) => s.online)
   const status = useChatStore((s) => s.status)
   const managed = useManagedSidecars((s) => s.llm)
+  const currentId = useProviderStore((s) => s.currentId)
+  const provider = providerById(currentId)
   const prefix = managed ? 'LLM (auto)' : 'LLM'
-  const label =
-    online === null ? `${prefix}: …`
-    : online === false ? `${prefix}: offline`
-    : status === 'streaming' ? `${prefix}: thinking`
-    : `${prefix}: ready`
+  const state =
+    online === null ? '…'
+    : online === false ? 'offline'
+    : status === 'streaming' ? 'thinking'
+    : 'ready'
+  const label = `${prefix} · ${provider.label}: ${state}`
   const color =
     online === false ? 'bg-[#1f2429] text-[#7a8088]'
     : status === 'streaming' ? 'bg-violet-900/40 text-violet-300'
@@ -105,12 +149,18 @@ function ProjectHeader() {
   const closeProject = useProjectStore((s) => s.closeProject)
   const currentId = useConnectionsStore((s) => s.currentId)
   if (status.kind !== 'loaded') {
-    return <span className="font-semibold tracking-tight">MLForge</span>
+    return (
+      <div className="flex items-center gap-2">
+        <img src="/favicon.svg" alt="" className="h-5 w-5" />
+        <span className="font-semibold tracking-tight">SpinoML</span>
+      </div>
+    )
   }
   const conn = getCurrentConnection()
   return (
-    <div className="flex items-baseline gap-2">
-      <span className="font-semibold tracking-tight">MLForge</span>
+    <div className="flex items-center gap-2">
+      <img src="/favicon.svg" alt="" className="h-5 w-5" />
+      <span className="font-semibold tracking-tight">SpinoML</span>
       <span className="text-[#7a8088]">·</span>
       <span className="text-[#e6e8eb]" title={status.meta.goal || status.meta.description}>
         {status.meta.name}
@@ -177,10 +227,10 @@ function useSaved(id: string) {
 }
 
 export default function App() {
-  const cols = useSaved('mlforge.cols')
-  const center = useSaved('mlforge.center')
-  const right = useSaved('mlforge.right')
-  const left = useSaved('mlforge.left')
+  const cols = useSaved('spinoml.cols')
+  const center = useSaved('spinoml.center')
+  const right = useSaved('spinoml.right')
+  const left = useSaved('spinoml.left')
   const status = useProjectStore((s) => s.status)
   const refresh = useProjectStore((s) => s.refresh)
 
@@ -188,12 +238,26 @@ export default function App() {
     void refresh()
   }, [refresh])
 
+  // Workspace switched → drop caches keyed to the OLD root and reload the
+  // datasets + experiments lists. Without this, those sections keep showing the
+  // previous workspace's entries/runs (they only self-fetch when empty).
+  const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot)
+  useEffect(() => {
+    if (!isTauri()) return
+    useDatasetsStore.setState({ selectedRel: null, inspects: {}, stats: {}, smoke: {} })
+    useTrainingStore.setState({ selectedRunId: null, runs: [] })
+    if (!workspaceRoot) return
+    void useDatasetsStore.getState().refresh()
+    void useTrainingStore.getState().refresh()
+  }, [workspaceRoot])
+
   const showWelcome = isTauri() && status.kind !== 'loaded'
   const selectedDataset = useDatasetsStore((s) => s.selectedRel)
   const selectedRun = useTrainingStore((s) => s.selectedRunId)
   const newRunOpen = useTrainingStore((s) => s.newRunOpen)
   const compareOpen = useTrainingStore((s) => s.compareOpen)
   const viewMode = useViewModeStore((s) => s.mode)
+  const explainMode = useVizStore((s) => s.explainMode)
 
   return (
     <div className="flex h-screen w-screen flex-col bg-[#0b0d10] text-[#e6e8eb]">
@@ -204,6 +268,7 @@ export default function App() {
           <ModeToggle />
         </div>
         <div className="flex items-center gap-2 text-xs text-[#7a8088]">
+          <ExplainControls />
           <RemoteSidecarBadge />
           <InferenceBadge />
           <LLMBadge />
@@ -251,7 +316,7 @@ export default function App() {
               defaultLayout={right.defaultLayout}
               onLayoutChanged={right.onLayoutChanged}
             >
-              <Panel defaultSize="50%" minSize="100px">{viewMode === 'training' ? <TrainingInspector /> : <Inspector />}</Panel>
+              <Panel defaultSize="50%" minSize="100px">{viewMode === 'training' ? <TrainingInspector /> : (explainMode ? <LayerExplain /> : <Inspector />)}</Panel>
               <Separator className={VBAR} />
               <Panel defaultSize="50%" minSize="100px"><ChatPanel /></Panel>
             </Group>

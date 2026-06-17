@@ -17,9 +17,9 @@
 // emits a `remote-sidecar:status` Tauri event so the frontend can render
 // progress ("Installing torch on the HPC, this will take a minute…").
 //
-// Env preference: a fresh venv at `<root>/.mlforge/venv/`. The user can
+// Env preference: a fresh venv at `<root>/.spinoml/venv/`. The user can
 // pre-create that path with their own python (module load + python -m venv)
-// and we'll detect + reuse. A `<root>/.mlforge/env.sh` is sourced before
+// and we'll detect + reuse. A `<root>/.spinoml/env.sh` is sourced before
 // every command if present — single-file escape hatch for users who need
 // `module load python` or `conda activate` first.
 
@@ -101,16 +101,16 @@ struct ProbeResult {
 
 fn probe(alias: &str, root: &str) -> Result<ProbeResult, String> {
     let root_q = shell_quote_path(root);
-    let env_sh = shell_quote_path(&format!("{}/.mlforge/env.sh", root.trim_end_matches('/')));
+    let env_sh = shell_quote_path(&format!("{}/.spinoml/env.sh", root.trim_end_matches('/')));
     let script = format!(
         "set -e
 ROOT={root_q}
-MLDIR=\"$ROOT/.mlforge\"
+MLDIR=\"$ROOT/.spinoml\"
 mkdir -p \"$MLDIR\"
 # optional env.sh hook (module loads / conda activate)
 if [ -f {env_sh} ]; then . {env_sh}; fi
 PY=$(command -v python3 || command -v python || true)
-[ -n \"$PY\" ] || {{ echo MLFORGE_NO_PYTHON >&2; exit 10; }}
+[ -n \"$PY\" ] || {{ echo SPINOML_NO_PYTHON >&2; exit 10; }}
 echo \"PY_VER=$($PY -c 'import sys; print(\\\".\\\".join(map(str, sys.version_info[:3])))')\"
 if [ -x \"$MLDIR/venv/bin/python\" ]; then
   echo VENV_PRESENT
@@ -142,26 +142,26 @@ fi"
 
 fn install(alias: &str, root: &str) -> Result<(), String> {
     let root_q = shell_quote_path(root);
-    let env_sh = shell_quote_path(&format!("{}/.mlforge/env.sh", root.trim_end_matches('/')));
+    let env_sh = shell_quote_path(&format!("{}/.spinoml/env.sh", root.trim_end_matches('/')));
     // CPU-only torch wheel saves ~2GB of GPU runtime that the sidecar
     // doesn't need (training happens elsewhere; the sidecar only does
     // shape inference + a few-sample smoke run).
     let script = format!(
         "set -e
 ROOT={root_q}
-MLDIR=\"$ROOT/.mlforge\"
+MLDIR=\"$ROOT/.spinoml\"
 mkdir -p \"$MLDIR\"
 if [ -f {env_sh} ]; then . {env_sh}; fi
 PY=$(command -v python3 || command -v python)
-echo \"[mlforge] creating venv at $MLDIR/venv with $PY\"
+echo \"[spinoml] creating venv at $MLDIR/venv with $PY\"
 \"$PY\" -m venv \"$MLDIR/venv\"
 \"$MLDIR/venv/bin/pip\" install --quiet --upgrade pip
 \"$MLDIR/venv/bin/pip\" install --quiet --index-url https://download.pytorch.org/whl/cpu torch
 \"$MLDIR/venv/bin/pip\" install --quiet numpy pandas pillow python-dateutil
-echo MLFORGE_INSTALL_DONE"
+echo SPINOML_INSTALL_DONE"
     );
     let out = run_remote(alias, &script, None)?;
-    if !out.contains("MLFORGE_INSTALL_DONE") {
+    if !out.contains("SPINOML_INSTALL_DONE") {
         return Err(format!("install did not complete: {}", out.trim()));
     }
     Ok(())
@@ -176,7 +176,7 @@ echo MLFORGE_INSTALL_DONE"
 fn cleanup_stale_remote(alias: &str, root: &str) -> Result<(), String> {
     let root_q = shell_quote_path(root);
     let script = format!(
-        "ROOT={root_q}; MLDIR=\"$ROOT/.mlforge\"
+        "ROOT={root_q}; MLDIR=\"$ROOT/.spinoml\"
 fuser -k {port}/tcp 2>/dev/null || true
 pkill -9 -f \"$MLDIR/venv/bin/python.*sidecar-torch\" 2>/dev/null || true
 for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -207,7 +207,7 @@ fn deploy(alias: &str, root: &str, sidecar_dir: &PathBuf) -> Result<(), String> 
     let ds_py = sidecar_dir.join("dataset_handlers.py");
     if !main_py.exists() || !ds_py.exists() {
         return Err(format!(
-            "sidecar-torch source missing on laptop ({}). MLForge bundle may be incomplete.",
+            "sidecar-torch source missing on laptop ({}). SpinoML bundle may be incomplete.",
             sidecar_dir.display()
         ));
     }
@@ -215,7 +215,7 @@ fn deploy(alias: &str, root: &str, sidecar_dir: &PathBuf) -> Result<(), String> 
     let ds_bytes = std::fs::read(&ds_py).map_err(|e| format!("read dataset_handlers.py: {e}"))?;
 
     let root_t = root.trim_end_matches('/');
-    let dst_dir = format!("{root_t}/.mlforge/sidecar-torch");
+    let dst_dir = format!("{root_t}/.spinoml/sidecar-torch");
     let dst_dir_q = shell_quote_path(&dst_dir);
     let main_q = shell_quote_path(&format!("{dst_dir}/main.py"));
     let ds_q = shell_quote_path(&format!("{dst_dir}/dataset_handlers.py"));
@@ -237,15 +237,15 @@ fn build_run_command(alias: &str, root: &str) -> Command {
     ));
     cmd.arg(alias);
     let root_q = shell_quote_path(root);
-    let env_sh = shell_quote_path(&format!("{}/.mlforge/env.sh", root.trim_end_matches('/')));
+    let env_sh = shell_quote_path(&format!("{}/.spinoml/env.sh", root.trim_end_matches('/')));
     // The remote command:
-    //   1. cd into mlforge dir
+    //   1. cd into spinoml dir
     //   2. source env.sh if present (lets users `module load` first)
     //   3. exec the sidecar with the chosen port
     let remote = format!(
-        "ROOT={root_q}; MLDIR=\"$ROOT/.mlforge\"; \
+        "ROOT={root_q}; MLDIR=\"$ROOT/.spinoml\"; \
          if [ -f {env_sh} ]; then . {env_sh}; fi; \
-         cd \"$MLDIR\" && MLFORGE_TORCH_PORT={port} exec \"$MLDIR/venv/bin/python\" -u sidecar-torch/main.py",
+         cd \"$MLDIR\" && SPINOML_TORCH_PORT={port} exec \"$MLDIR/venv/bin/python\" -u sidecar-torch/main.py",
         port = REMOTE_REMOTE_PORT
     );
     cmd.arg(remote);
@@ -348,7 +348,7 @@ fn run_bootstrap(app: &AppHandle, alias: &str, root: &str) -> Result<RemoteSidec
         emit(app, &RemoteSidecarStatus::Preparing {
             phase: "install".into(),
             message: format!(
-                "Installing torch + numpy + pandas + pillow into $ROOT/.mlforge/venv (python {}). \
+                "Installing torch + numpy + pandas + pillow into $ROOT/.spinoml/venv (python {}). \
                  This is a one-time download and can take a couple of minutes.",
                 probe_result.python_version
             ),
@@ -405,7 +405,7 @@ fn run_bootstrap(app: &AppHandle, alias: &str, root: &str) -> Result<RemoteSidec
         let r = BufReader::new(stdout);
         let mut announced = false;
         for line in r.lines().flatten() {
-            eprintln!("[mlforge-torch-remote] {line}");
+            eprintln!("[spinoml-torch-remote] {line}");
             if !announced && line.contains("listening on") {
                 announced = true;
                 let _ = tx.send(Ok(()));
@@ -426,7 +426,7 @@ fn run_bootstrap(app: &AppHandle, alias: &str, root: &str) -> Result<RemoteSidec
     std::thread::spawn(move || {
         let r = BufReader::new(stderr);
         for line in r.lines().flatten() {
-            eprintln!("[mlforge-torch-remote stderr] {line}");
+            eprintln!("[spinoml-torch-remote stderr] {line}");
             if line.contains("Could not request local forwarding")
                 || line.contains("cannot listen to port")
                 || (line.contains("bind") && line.contains("Address already in use"))

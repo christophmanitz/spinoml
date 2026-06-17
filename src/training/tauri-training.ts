@@ -11,8 +11,8 @@ export const tauriTraining = {
   status: (runId: string) => invoke<RunStatus>('training_run_status', { runId }),
   readFile: (runId: string, name: string) =>
     invoke<string>('read_training_run_file', { runId, name }),
-  start: (runId: string, runJson: string, modelMlforge: string, modelPy: string) =>
-    invoke<void>('start_training_run', { runId, runJson, modelMlforge, modelPy }),
+  start: (runId: string, runJson: string, modelSpinoml: string, modelPy: string) =>
+    invoke<void>('start_training_run', { runId, runJson, modelSpinoml, modelPy }),
   stop: (runId: string) => invoke<void>('stop_training_run', { runId }),
   remove: (runId: string) => invoke<void>('delete_training_run', { runId }),
   promote: (runId: string, destName: string) =>

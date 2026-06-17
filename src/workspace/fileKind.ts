@@ -31,9 +31,9 @@ function ext(name: string): string {
 /** Classify a file by name. Folders are classified separately (see below). */
 export function classifyFile(name: string): FileKind {
   const e = ext(name)
-  if (e === '.mlforge')
+  if (e === '.spinoml')
     return { section: 'models', icon: '▦', label: 'Modell', color: 'text-[#6ab7ff]', dim: false }
-  if (e === '.mltrain')
+  if (e === '.spinotrain')
     return { section: 'training', icon: '⚙', label: 'Training', color: 'text-[#b98bff]', dim: false }
   if (e === '.py')
     return { section: 'models', icon: '🐍', label: 'generiert', color: 'text-[#5fd39a]', dim: true }

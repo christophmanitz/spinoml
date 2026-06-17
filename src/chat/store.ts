@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { llmHealth, streamChat, type ChatEvent } from './client'
 import { useGraphStore, autoPositionAfter } from '../canvas/GraphStore'
 import { useTrainingGraphStore } from '../training/graph/store'
+import { useViewModeStore } from '../training/graph/viewMode'
 import { useInferenceStore } from '../inference/store'
 import { useProjectStore } from '../project/store'
 import { useDatasetsStore } from '../datasets/store'
@@ -9,6 +10,7 @@ import { useWorkspaceStore } from '../workspace/store'
 import { isTauri } from '../workspace/tauri-fs'
 import { notes as notesBackend } from '../connections/backend'
 import { getCurrentConnection, sshTarget } from '../connections/store'
+import { getCurrentLlmRequest } from './providerStore'
 
 export type ToolCall = {
   id: string
@@ -79,9 +81,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     let mutatedGraph = false
     let mutatedTraining = false
 
+    const llm = getCurrentLlmRequest()
+
     try {
       await streamChat(
-        { user: trimmed, messages: history, graph, training_graph, error: error ?? undefined, project: project ?? undefined },
+        { user: trimmed, messages: history, graph, training_graph, error: error ?? undefined, project: project ?? undefined, llm },
         (ev) => {
           if (ev.type === 'action') {
             if (ev.op.startsWith('training:')) mutatedTraining = true
@@ -100,7 +104,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       patchAssistant(assistantId, set, get, (a) => a.status === 'streaming' ? { ...a, status: 'done' } : a)
       set({ status: 'idle' })
       if (mutatedGraph) useGraphStore.getState().autoLayout()
-      if (mutatedTraining) useTrainingGraphStore.getState().autoLayout()
+      if (mutatedTraining) {
+        useTrainingGraphStore.getState().autoLayout()
+        // Surface the chatbot's training-graph edits: switch to the training view
+        // so the user actually SEES what changed (it lives on a separate canvas).
+        useViewModeStore.getState().setMode('training')
+      }
     }
   },
 }))

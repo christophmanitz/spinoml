@@ -11,10 +11,22 @@ live, what to verify, what not to break.
 src/
   canvas/         React Flow canvas + Zustand GraphStore (the single source
                   of truth for the in-memory graph: nodes, edges, selection,
-                  inferred shapes, autoLayout, undo target state)
+                  inferred shapes, autoLayout, undo target state).
+                  subgraphPorts.ts — auto-port sync: an edge into a Subgraph
+                  node creates/claims a read-only PROXY input inside (marked
+                  params._proxyOf), inheriting the outer source's config;
+                  removing the edge releases (hand) or deletes (auto) it.
+                  Runs in GraphStore onConnect/onEdgesChange/updateNodeParams.
   layers/         registry.ts — THE registry. Adding a layer type = editing
                   this one file. defaultParamsFor + coerceParams live here.
-  codegen/        generator.ts — graph → PyTorch nn.Module source.
+                  The `Graph` node (kind input, graphInput:true) is ONE whole
+                  PyG Data (x+edge_index+batch+edge_attr) — binds 1:1 to a graph
+                  dataset / manifest branch; one intuitive node per GNN input.
+  codegen/        generator.ts — graph → PyTorch nn.Module source. A Graph
+                  input becomes a Data forward-arg; where a built-in GNN/pool
+                  consumes it the generator emits `x, edge_index, batch =
+                  g.x, …` (explicit), but a Custom/Subgraph consumer gets the
+                  WHOLE Data (full access — like hand-written code).
                   CodePreview.tsx — Monaco editor binding.
   inference/      client.ts (HTTP to torch sidecar) + store.ts (debounced,
                   re-entrancy-guarded subscription to GraphStore).
@@ -41,10 +53,22 @@ src/
                   store.ts (per-relpath inspect/stats/smoke cache)
                   DatasetExplorer.tsx (list under workspace/datasets/)
                   DatasetDetail.tsx (Overview/Stats/SmokeTest tabs)
-                  types.ts (shared kinds for all 6 dataset formats).
+                  types.ts (shared kinds for all dataset formats, incl. the
+                  `manifest` kind — a JSON descriptor pairing a table to per-
+                  branch graph sources row-by-row, e.g. ligand SMILES + protein
+                  .pt + target column, for dual-encoders. Each Input binds a
+                  '<branch>.<field>' slot via `bind_field` in the Inspector).
   templates/      Built-in architecture starters.
+  visualization/  "Explain"-Modus (3Blue1Brown-Stil). store.ts = ephemerer
+                  Viz-Store (per-Node Aktivierungen + Gewichte, gekeyed by
+                  nodeId; NIE in GraphStore — wird bei Struktur-Änderung
+                  verworfen). client.ts → POST /activations am torch-Sidecar.
+                  LayerExplain.tsx = kategorie-getriebenes Detail-Panel (ersetzt
+                  den Inspector wenn explainMode an); MiniViz.tsx = Node-Vorschau;
+                  primitives.tsx = SVG-Heatmap/Bars. Run ist on-demand (▶ im
+                  Header), NICHT bei jedem Tastendruck.
   history/        Undo/redo subscribing to GraphStore structural changes.
-  persistence/    .mlforge file format, autosave to localStorage.
+  persistence/    .spinoml file format, autosave to localStorage.
   sidecars/       managed.ts — query whether Rust spawned the sidecars.
   ErrorBoundary.tsx   Wraps <App/> — catches render-time crashes.
   Toolbar.tsx     Top-bar File / Edit / Templates menus.
@@ -68,15 +92,41 @@ src-tauri/
 
 sidecar-torch/main.py             HTTP/JSON server on 127.0.0.1:7421.
                                   Endpoints: /infer, /dataset/inspect,
-                                  /dataset/stats, /dataset/smoke.
+                                  /dataset/stats, /dataset/smoke, /activations
+                                  (real forward pass → per-module activations +
+                                  weights, downsampled; feeds the Explain viz.
+                                  Optional `checkpoint` abspath → loads trained
+                                  weights from a run's checkpoints/best.pt
+                                  (strict=False, falls back to random + note on
+                                  mismatch); returns weights_source). GNN-aware:
+                                  `graph_attrs` keeps node×feature tensors un-
+                                  stripped, an int [2,E] input is previewed as a
+                                  graph (edges), and a synthetic edge_index is a
+                                  random graph so the GNN viz is meaningful.
 sidecar-torch/dataset_handlers.py per-kind inspect/stats/sample_tensor for
                                   tabular, image_folder, tensor, protein,
-                                  molecule, huggingface. Lazy-imports heavy
-                                  deps so missing pandas/PIL/rdkit/biopython
-                                  gracefully degrades to a missing_dep error.
-sidecar-llm/main.mjs    HTTP/SSE server on 127.0.0.1:7422, runs Claude
-                        Agent SDK + in-process MCP server with the
-                        graph-mutation tools.
+                                  molecule, huggingface, pyg. Lazy-imports heavy
+                                  deps so missing pandas/PIL/rdkit/biopython/
+                                  torch_geometric gracefully degrades to a
+                                  missing_dep error. sample_tensor takes an
+                                  options.field (x/edge_index/edge_attr/pos/batch/y)
+                                  so ONE graph dataset feeds all GNN inputs:
+                                  molecule builds an atom/bond graph (RDKit, also
+                                  from a SMILES COLUMN of a tabular file via
+                                  options.target), pyg loads a PyG dataset (`.pyg`
+                                  = `pyg:Planetoid/Cora`), and the tensor kind
+                                  loads a saved PyG Data `.pt` (their graphein
+                                  pipeline output) exposing all fields.
+sidecar-llm/main.mjs    HTTP/SSE server on 127.0.0.1:7422. Three LLM source
+                        paths chosen per /chat request via `payload.llm.kind`:
+                        'subscription' (claude-agent-sdk + OAuth, the default
+                        + in-process MCP server), 'anthropic' (@anthropic-ai/sdk
+                        Messages API), 'openai-compat' (openai SDK — OpenAI,
+                        Gemini, Ollama). buildToolSpecs() is the single
+                        provider-neutral tool registry; all three paths share
+                        the same handlers + `actions` SSE mirror. Frontend
+                        provider/key selection lives in src/chat/providerStore.ts
+                        (localStorage) + ProviderSettings.tsx.
 
 scripts/verify-codegen.ts    runs generator over 4 graphs and execs the
                              generated Python to confirm shape/output.
@@ -90,7 +140,7 @@ scripts/verify-sidecar.ts    autostarts the torch sidecar and asserts
 
 | | browser dev | Tauri dev | installed .deb |
 |-|-|-|-|
-| launch | `npm run dev` + http://localhost:5173 | `npm run tauri dev` | `mlforge` from launcher |
+| launch | `npm run dev` + http://localhost:5173 | `npm run tauri dev` | `spinoml` from launcher |
 | filesystem | localStorage virtual FS only | localStorage *or* a workspace | localStorage *or* a workspace |
 | sidecars | manual (`npm run sidecar:torch` + `…:llm`) | spawned by Rust | spawned by Rust |
 | `isTauri()` | false | true | true |
@@ -122,14 +172,14 @@ FS (or vice versa).
 A remote connection is a `{ alias, root }` pair. `alias` must exist in
 `~/.ssh/config` and be reachable WITHOUT a password prompt
 (`BatchMode=yes` is set for all ssh_* commands except the terminal).
-`root` is either absolute (`/scratch/.../mlforge`) or tilde-prefixed
-(`~/mlforge`); `shell_quote_path()` in `ssh.rs` handles the tilde
+`root` is either absolute (`/scratch/.../spinoml`) or tilde-prefixed
+(`~/spinoml`); `shell_quote_path()` in `ssh.rs` handles the tilde
 substitution to `"$HOME"`.
 
 ## Verification commands you should run
 
 ```bash
-conda activate mlforge-dev          # always start here
+conda activate spinoml-dev          # always start here
 npm run build                       # tsc + vite, must be green
 npm run verify:codegen              # 4 codegen cases, runs python on each
 npm run verify:sidecar              # autostarts torch sidecar + asserts
@@ -178,15 +228,19 @@ Adding e.g. a `list-of-int` field touches:
 
 ### Add a new LLM tool
 
-1. `sidecar-llm/main.mjs` `buildMcpServer`: add another `tool(name, desc,
-   zodSchema, handler)`. The handler mutates the in-memory `ctx`
-   (so subsequent tool calls in the same turn see the new state) AND
-   pushes an `action` event via `actions.push(...)`.
+1. `sidecar-llm/main.mjs` `buildToolSpecs`: add another `tool(name, desc,
+   zodSchema, handler)` (the local shadow returns a spec, not an SDK tool).
+   The handler mutates the in-memory `ctx` (so subsequent tool calls in the
+   same turn see the new state) AND pushes an `action` event via
+   `actions.push(...)`. All three provider paths reuse the spec automatically.
 2. `invoke_handler` (Rust) — no change; LLM tools live in node.
 3. `src/chat/store.ts` `dispatchAction`: add a case that maps the
    `action` op to a GraphStore mutation.
-4. Update `allowedTools` in `query()` config in main.mjs.
-5. Bump `maxTurns` if your tool takes many calls per request.
+4. Update `allowedTools` in the subscription `query()` config in main.mjs
+   (only the subscription path needs the `mcp__graph__<name>` allow-list; the
+   anthropic / openai-compat loops expose every spec automatically).
+5. Bump `maxTurns` (subscription) / `MAX_TOOL_TURNS` (direct-API loops) if your
+   tool takes many calls per request.
 6. Update CLAUDE-the-model's awareness via `buildSystemPrompt`: mention
    the new tool, its idiomatic use, and dim-correctness rules.
 
@@ -295,7 +349,7 @@ not catch it cleanly. Fix path:
    layerType + params`, `edges.source/target`). Position changes are
    intentionally not undoable. autoLayout writes new positions but its
    structural fingerprint is unchanged, so it doesn't pollute the stack.
-7. **`pyTwinPath(relpath)` mapping**: `.mlforge` → `.py` with the same
+7. **`pyTwinPath(relpath)` mapping**: `.spinoml` → `.py` with the same
    stem, sanitised. Save in Tauri mode writes both atomically (well,
    sequentially with no rollback — best-effort). Don't introduce a
    second naming scheme.

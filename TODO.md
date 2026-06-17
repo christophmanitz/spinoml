@@ -55,7 +55,7 @@ serializeParam + an Inspector FixHint + verify:codegen/verify:sidecar cases).
 
 Stand der Architektur, an die wir andocken:
 
-- `models/*.mlforge` ist der Modellgraph (Source of Truth)
+- `models/*.spinoml` ist der Modellgraph (Source of Truth)
 - `models/*.py` wird via `generator.ts` aus dem Graph emittiert
   (pure `nn.Module`, kein Training)
 - `datasets/` enthält die geladenen Datensätze (6 Formate)
@@ -72,8 +72,8 @@ Das Trainings-System soll **drei orthogonale Achsen** sauber bedienen:
    ssh-spawned shell) / **SLURM-Job auf Compute-Knoten**
 2. **WIE wird Training konfiguriert** — separater visueller
    Trainings-Graph (eigene Canvas-Ansicht), nicht Formulare
-3. **WIE überlebt der Run einen MLForge-Close** — alle Trainings laufen
-   detached; MLForge ist nur eine Sicht auf den Status
+3. **WIE überlebt der Run einen SpinoML-Close** — alle Trainings laufen
+   detached; SpinoML ist nur eine Sicht auf den Status
 
 Diese drei Achsen geben die Phasen-Reihenfolge.
 
@@ -110,7 +110,7 @@ experiments/
   runs/
     2026-06-15T12-30-00_iris-mlp_a8f3/
       run.json              ← frozen config + meta (s.u.)
-      model.mlforge         ← snapshot des Architektur-Graphs
+      model.spinoml         ← snapshot des Architektur-Graphs
       model.py              ← snapshot des generierten Codes
       train.py              ← snapshot des Trainings-Codes
       events.jsonl          ← append-only event stream (eine Zeile / Event)
@@ -154,7 +154,7 @@ Frontend tailt die Datei (lokal: `fs.watchFile`; remote: `ssh + tail -f`).
 
 ### 13.3 Trainings-Skript-Template
 
-Pure-Python, **kein MLForge-Runtime-Dep** außer torch:
+Pure-Python, **kein SpinoML-Runtime-Dep** außer torch:
 
 ```
 sidecar-torch/training_template.py
@@ -209,7 +209,7 @@ Graph geknüpft.
   `TrainingCanvas`/`TrainingPalette`/`TrainingNode`/`TrainingInspector`
   parallel zur Architektur-Canvas; App.tsx swappt Palette/Canvas/Inspector.
 - 14c — „▶ Run starten" direkt aus dem Graph (Inspector-CompilePanel →
-  `useTrainingStore.startRun`), Save/Load `.mltrain` unter
+  `useTrainingStore.startRun`), Save/Load `.spinotrain` unter
   `experiments/training-graphs/` (`TrainingGraphBar` + `graph/files.ts`).
 - Abweichung vom Plan: KEIN Rename `GraphStore`→`useArchitectureGraphStore`
   (zu invasiv für den Nutzen); stattdessen ein parallel lebender
@@ -223,7 +223,7 @@ Graph geknüpft.
   (`TrainingCompile.warnings`) im Inspector. Nicht-blockierend, weil der Trainer
   knoten-typ-getrieben ist (Edges sind rein visuell) — ein unverdrahteter Graph
   liefe identisch, die Warnung fängt aber den „ich dachte das ist verbunden"-Fall.
-- ✅ `.mltrain` im FileExplorer-Baum (2026-06-15): Klick auf eine `.mltrain`-Datei
+- ✅ `.spinotrain` im FileExplorer-Baum (2026-06-15): Klick auf eine `.spinotrain`-Datei
   lädt den Trainings-Graph auf den Canvas und schaltet in den Training-Modus.
 - Offen: echter Smoke-Test des Trainings-Graphs (1 Batch forward/backward über den
   Sidecar) — braucht einen neuen Sidecar-Endpunkt; bewusst verschoben.
@@ -233,8 +233,8 @@ Graph geknüpft.
 `Canvas.tsx` bekommt einen Mode-Toggle oben: **Architecture** ↔
 **Training**. Beide nutzen die gleiche React-Flow-Engine, aber:
 
-- Architecture-Mode arbeitet auf `models/*.mlforge` (heute)
-- Training-Mode arbeitet auf `experiments/training-graphs/<name>.mltrain`
+- Architecture-Mode arbeitet auf `models/*.spinoml` (heute)
+- Training-Mode arbeitet auf `experiments/training-graphs/<name>.spinotrain`
   — gleiches Persistenz-Schema, anderes Suffix
 
 `GraphStore` wird zu `useArchitectureGraphStore` umbenannt und ein
@@ -250,7 +250,7 @@ aber separate Datei `training/registry.ts`):
 **Source/Sink**:
 - `DatasetSource` — Reference auf `datasets/<name>`, mit Field
   `dataset-ref` (das gibt's schon aus Phase 11)
-- `ModelSource` — Reference auf `models/<name>.mlforge`, mit
+- `ModelSource` — Reference auf `models/<name>.spinoml`, mit
   Live-Param-Count im Inspector
 
 **Data-Pipeline**:
@@ -437,7 +437,7 @@ verlinkt wird.
   (`ssh_start_training_run` / `ssh_list_training_runs` /
   `ssh_training_run_status` / `ssh_read_training_run_file` /
   `ssh_stop_training_run` / `ssh_delete_training_run`). Start schreibt das Run-
-  Dir auf den Host (run.json/model.mlforge/model.py + train.py aus dem lokalen
+  Dir auf den Host (run.json/model.spinoml/model.py + train.py aus dem lokalen
   Bundle) und launcht detached via `nohup setsid <python> -u train.py
   > stdout 2> stderr < /dev/null & echo $! > pid` — überlebt ssh-Session UND
   App-Close. Status = `kill -0 <pid>` + status-File über ssh; Liste in EINEM
@@ -556,7 +556,7 @@ Codegen-Snippet erweitert um Header:
 
 ```bash
 #!/bin/bash
-#SBATCH --job-name=mlforge-iris-mlp-a8f3
+#SBATCH --job-name=spinoml-iris-mlp-a8f3
 #SBATCH --partition=gpu-l40
 #SBATCH --time=04:00:00
 #SBATCH --mem=32G
@@ -643,7 +643,7 @@ Letzte Phase macht's komfortabel:
 
 ### Resilienz — wirklich entkoppelt vom UI
 
-Der harte Test für „läuft weiter wenn MLForge zu":
+Der harte Test für „läuft weiter wenn SpinoML zu":
 
 | Backend | Mechanismus | Recovery beim Re-Open |
 |-|-|-|
@@ -684,7 +684,7 @@ Trainings-Logs (events.jsonl, stdout.log) können sensitive
 Informationen enthalten (Sample-Inputs, Modell-Outputs).
 Standardmäßig nur 127.0.0.1, nie nach außen. Wenn W&B-Logger
 aktiv, expliziter Consent + Token-Storage in
-`~/.config/mlforge/secrets` (nicht in `mlforge.project.json`).
+`~/.config/spinoml/secrets` (nicht in `spinoml.project.json`).
 
 ## Phase-Reihenfolge — Empfehlung
 

@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react'
 import { useDatasetsStore, type SmokeHistoryEntry } from './store'
 import { useGraphStore } from '../canvas/GraphStore'
 import { iconFor, colorFor, formatSize } from './icons'
+import { NodeLinkGraph } from '../visualization/primitives'
 import type {
   InspectResult, StatsResult, SmokeResult,
-  TabularInspect, ImageFolderInspect, TensorInspect, ProteinInspect, MoleculeInspect, HuggingfaceInspect,
+  TabularInspect, ImageFolderInspect, TensorInspect, ProteinInspect, MoleculeInspect, HuggingfaceInspect, PygInspect, GraphFolderInspect, ManifestInspect, GraphField,
   TabularStats, ImageFolderStats, TensorStats, MoleculeStats,
 } from './types'
 
@@ -73,6 +74,10 @@ export default function DatasetDetail({ relpath }: { relpath: string }) {
           {inspect?.loading && <div className="text-[#7a8088]">inspecting…</div>}
           {inspect?.error && <ErrorBox msg={inspect.error} />}
           {data && !data.ok && <InspectError data={data} />}
+          {/* A broken/empty .manifest still gets the editor so it can be fixed/created. */}
+          {tab === 'overview' && data && !data.ok && relpath.endsWith('.manifest') && (
+            <div className="mt-2"><ManifestEditor relpath={relpath} /></div>
+          )}
           {tab === 'overview' && data && data.ok && <OverviewBody data={data} relpath={relpath} />}
           {tab === 'stats' && (
             <StatsBody loading={stats?.loading} error={stats?.error} data={stats?.data ?? null} kind={kind} />
@@ -103,7 +108,7 @@ function InspectError({ data }: { data: InspectResult }) {
       <div>{data.error ?? 'inspect failed'}</div>
       {data.missing_dep && (
         <div className="mt-1 text-[10px] text-rose-200/80">
-          tip: <code>pip install {data.missing_dep}</code> in der mlforge-dev env
+          tip: <code>pip install {data.missing_dep}</code> in der spinoml-dev env
         </div>
       )}
     </div>
@@ -119,6 +124,9 @@ function OverviewBody({ data, relpath }: { data: InspectResult; relpath: string 
     case 'protein': return <ProteinOverview d={data} relpath={relpath} />
     case 'molecule': return <MoleculeOverview d={data} relpath={relpath} />
     case 'huggingface': return <HfOverview d={data} />
+    case 'pyg': return <PygOverview d={data} />
+    case 'graph_folder': return <GraphFolderOverview d={data} />
+    case 'manifest': return <ManifestOverview d={data} relpath={relpath} />
     default: return <div className="text-[#7a8088]">Unbekanntes Format.</div>
   }
 }
@@ -216,6 +224,19 @@ function ImageOverview({ d, relpath: _relpath }: { d: ImageFolderInspect; relpat
 }
 
 function TensorOverview({ d, relpath: _relpath }: { d: TensorInspect; relpath: string }) {
+  if (d.is_graph) {
+    return (
+      <div className="space-y-2">
+        <div className="text-[#9aa1a8]">PyTorch-Geometric-Graph · {d.num_nodes} Knoten · {d.num_edges} Kanten</div>
+        <GraphFieldTable fields={d.fields ?? []} />
+        {d.x_preview && <XPreviewView x={d.x_preview} />}
+        <div className="text-[10px] text-[#7a8088]">
+          Binde an GNN-Inputs mit passendem <strong>Namen</strong> (<code>x</code>, <code>edge_index</code>,{' '}
+          <code>edge_attr</code>, …) — jeder Input zieht das gleichnamige Feld.
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="space-y-2">
       {d.shape && (
@@ -308,7 +329,20 @@ function MoleculeOverview({ d, relpath: _relpath }: { d: MoleculeInspect; relpat
           ))}
         </div>
       )}
+      {d.graph0 && (
+        <div>
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">
+            erste Struktur als Graph · {d.graph0.n_nodes} Atome
+          </div>
+          <NodeLinkGraph edges={d.graph0.edges} nNodes={d.graph0.n_nodes} hex="#a78bfa" size={150} />
+          <div className="truncate font-mono text-[10px] text-[#7a8088]">{d.graph0.smiles}</div>
+        </div>
+      )}
       <UseAsInputButton shape={[1, 64]} label="Use [1, 64] byte-encoded as input" />
+      <div className="text-[10px] text-[#7a8088]">
+        Als Graph nutzbar (RDKit): binde dieselbe Datei an Inputs <code>x</code> (Atom-Merkmale),
+        <code> edge_index</code> (Bindungen) und <code>batch</code> für ein GNN.
+      </div>
     </div>
   )
 }
@@ -335,6 +369,302 @@ function HfOverview({ d }: { d: HuggingfaceInspect }) {
             <span className="ml-2 truncate text-[#7a8088]">{v}</span>
           </div>
         ))}
+      </div>
+    </div>
+  )
+}
+
+function XPreviewView({ x }: { x: { rows: number; cols: number; grid: number[][] } }) {
+  const nCols = x.grid[0]?.length ?? 0
+  return (
+    <div>
+      <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">
+        Werte in x (erste {x.grid.length}/{x.rows} Knoten × {nCols}/{x.cols} Features)
+      </div>
+      <div className="max-h-48 overflow-auto rounded border border-[#1f2429]">
+        <table className="font-mono text-[10px]">
+          <thead className="sticky top-0 bg-[#0b0e11] text-[#5b6168]">
+            <tr>
+              <th className="px-1.5 py-0.5 text-left">Knoten</th>
+              {Array.from({ length: nCols }).map((_, c) => (
+                <th key={c} className="px-1.5 py-0.5 text-right">f{c}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {x.grid.map((row, r) => (
+              <tr key={r} className="odd:bg-[#0e1216]">
+                <td className="px-1.5 py-0.5 text-[#7a8088]">{r}</td>
+                {row.map((v, c) => (
+                  <td key={c} className="px-1.5 py-0.5 text-right text-[#e6e8eb]">{v}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-0.5 text-[10px] text-[#5b6168]">jede Zeile = ein Knoten · Werte gerundet</div>
+    </div>
+  )
+}
+
+function GraphFieldTable({ fields }: { fields: GraphField[] }) {
+  if (!fields.length) return null
+  return (
+    <div>
+      <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">Felder pro Graph</div>
+      <div className="space-y-0.5 font-mono text-[10px]">
+        {fields.map((f) => (
+          <div key={f.name} className="flex justify-between">
+            <span className="text-[#e6e8eb]">{f.name}</span>
+            <span className="text-[#7a8088]">[{f.shape.join(', ')}] · {f.dtype.replace('torch.', '')}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function GraphFolderOverview({ d }: { d: GraphFolderInspect }) {
+  return (
+    <div className="space-y-2">
+      <div className="text-[#9aa1a8]">
+        {d.n_graphs.toLocaleString()} Graphen · {d.num_node_features} Knoten-Features
+        {d.edge_dim ? ` · ${d.edge_dim} Kanten-Features` : ''}
+      </div>
+      <GraphFieldTable fields={d.fields} />
+      {d.x_preview && <XPreviewView x={d.x_preview} />}
+      <div className="text-[10px] text-[#5b6168]">
+        3D-Koordinaten u. Ä. stecken in den Knoten-Features (<code>x</code>) — siehe Werte oben.
+      </div>
+      {d.preview && d.preview.edges.length > 0 && (
+        <div>
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">erster Graph ({d.example})</div>
+          <NodeLinkGraph edges={d.preview.edges} nNodes={d.preview.n_nodes} hex="#34d399" size={160} />
+        </div>
+      )}
+      <div className="text-[10px] text-[#7a8088]">
+        Datensatz = dieser Ordner. Binde ihn an GNN-Inputs mit passendem <strong>Namen</strong>{' '}
+        (<code>x</code>, <code>edge_index</code>, <code>edge_attr</code>, <code>y</code>) — jeder Input zieht sein Feld.
+      </div>
+    </div>
+  )
+}
+
+function PygOverview({ d }: { d: PygInspect }) {
+  return (
+    <div className="space-y-2">
+      <div className="text-[#9aa1a8]"><code className="text-[#e6e8eb]">{d.name}</code></div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px]">
+        <span className="text-[#7a8088]">Graphen</span><span className="text-[#e6e8eb]">{d.num_graphs.toLocaleString()}</span>
+        <span className="text-[#7a8088]">Knoten</span><span className="text-[#e6e8eb]">{d.num_nodes.toLocaleString()}</span>
+        <span className="text-[#7a8088]">Kanten</span><span className="text-[#e6e8eb]">{d.num_edges.toLocaleString()}</span>
+        <span className="text-[#7a8088]">Merkmale/Knoten</span><span className="text-[#e6e8eb]">{d.num_node_features}</span>
+        <span className="text-[#7a8088]">Klassen</span><span className="text-[#e6e8eb]">{d.num_classes}</span>
+      </div>
+      <div className="text-[10px] text-[#7a8088]">
+        Als Graph nutzbar: binde dieselbe Datei an Inputs <code>x</code> (Knoten-Merkmale),
+        <code> edge_index</code> (Kanten) und <code>batch</code> — jeder Input zieht sein Feld.
+      </div>
+    </div>
+  )
+}
+
+// ── Graphical manifest editor: edit the .manifest JSON via a form, write to disk ──
+type BranchMode = 'molecule' | 'dir' | 'path'
+type BranchCfg = { name: string; column: string; mode: BranchMode; dir: string; match: 'exact' | 'contains'; ext: string }
+type ManifestCfg = { table: string; branches: BranchCfg[]; target: { column: string; type: 'regression' | 'classification' }; cache: boolean }
+
+function normalizeManifest(raw: any): ManifestCfg {
+  const branches: BranchCfg[] = Object.entries(raw?.pairs ?? {}).map(([name, s]: [string, any]) => ({
+    name,
+    column: String(s?.column ?? ''),
+    mode: s?.kind === 'molecule' ? 'molecule' : s?.dir ? 'dir' : 'path',
+    dir: String(s?.dir ?? ''),
+    match: s?.match === 'exact' ? 'exact' : 'contains',
+    ext: String(s?.ext ?? '.pt'),
+  }))
+  return {
+    table: String(raw?.table ?? ''),
+    branches: branches.length ? branches : [{ name: 'graph', column: '', mode: 'molecule', dir: '', match: 'contains', ext: '.pt' }],
+    target: { column: String(raw?.target?.column ?? ''), type: raw?.target?.type === 'classification' ? 'classification' : 'regression' },
+    cache: raw?.cache !== false, // default on
+  }
+}
+
+function buildManifestJson(cfg: ManifestCfg): unknown {
+  const pairs: Record<string, unknown> = {}
+  for (const b of cfg.branches) {
+    if (!b.name) continue
+    if (b.mode === 'molecule') pairs[b.name] = { column: b.column, kind: 'molecule' }
+    else if (b.mode === 'dir') pairs[b.name] = { column: b.column, dir: b.dir, match: b.match, ext: b.ext }
+    else pairs[b.name] = { column: b.column }
+  }
+  const out: Record<string, unknown> = { table: cfg.table, pairs }
+  if (cfg.target.column) out.target = { column: cfg.target.column, type: cfg.target.type }
+  if (!cfg.cache) out.cache = false // cache is on by default; only persist when off
+  return out
+}
+
+function ManifestEditor({ relpath }: { relpath: string }) {
+  const [cfg, setCfg] = useState<ManifestCfg | null>(null)
+  const [status, setStatus] = useState<string>('')
+  const inspectAction = useDatasetsStore((s) => s.inspect)
+  const inspects = useDatasetsStore((s) => s.inspects)
+  const datasets = useDatasetsStore((s) => s.entries)
+
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      try {
+        const { fs } = await import('../connections/backend')
+        const txt = await fs.read(relpath)
+        if (alive) setCfg(normalizeManifest(JSON.parse(txt)))
+      } catch {
+        if (alive) setCfg(normalizeManifest({}))
+      }
+    })()
+    return () => { alive = false }
+  }, [relpath])
+
+  // Column suggestions from the referenced table (inspected as tabular).
+  const tableRel = cfg?.table ? `datasets/${cfg.table}` : ''
+  useEffect(() => { if (tableRel) void inspectAction(tableRel) }, [tableRel, inspectAction])
+  const tIns = tableRel ? inspects[tableRel]?.data : null
+  const columns: string[] = tIns && tIns.ok && tIns.kind === 'tabular' ? tIns.columns : []
+  const tableOptions = datasets.filter((e) => /\.(csv|tsv|parquet)$/i.test(e.name)).map((e) => e.name)
+
+  if (!cfg) return <div className="text-[10px] text-[#7a8088]">lädt…</div>
+
+  const up = (patch: Partial<ManifestCfg>) => { setCfg({ ...cfg, ...patch }); setStatus('') }
+  const upBranch = (i: number, patch: Partial<BranchCfg>) =>
+    up({ branches: cfg.branches.map((b, j) => (j === i ? { ...b, ...patch } : b)) })
+  const addBranch = () => up({ branches: [...cfg.branches, { name: '', column: '', mode: 'dir', dir: '', match: 'contains', ext: '.pt' }] })
+  const delBranch = (i: number) => up({ branches: cfg.branches.filter((_, j) => j !== i) })
+
+  const save = async () => {
+    try {
+      const { fs } = await import('../connections/backend')
+      await fs.write(relpath, JSON.stringify(buildManifestJson(cfg), null, 2) + '\n')
+      setStatus('gespeichert ✓')
+      void inspectAction(relpath, true) // refresh the slots view below
+    } catch (e) {
+      setStatus(`Fehler: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  const inp = 'rounded border border-[#1f2429] bg-[#0b0e11] px-1.5 py-1 text-[11px] text-[#e6e8eb]'
+  return (
+    <div className="space-y-2 rounded border border-[#1f2429] bg-[#0d1117] p-2">
+      <div className="text-[10px] uppercase tracking-wider text-[#7a8088]">Manifest bearbeiten</div>
+
+      <label className="flex items-center gap-2 text-[11px] text-[#9aa1a8]">
+        <span className="w-16 shrink-0">Tabelle</span>
+        <input className={`${inp} flex-1`} list="mf-tables" value={cfg.table}
+          onChange={(e) => up({ table: e.target.value })} placeholder="reactions.csv" />
+        <datalist id="mf-tables">{tableOptions.map((t) => <option key={t} value={t} />)}</datalist>
+      </label>
+
+      <datalist id="mf-cols">{columns.map((c) => <option key={c} value={c} />)}</datalist>
+
+      <div className="text-[10px] uppercase tracking-wider text-[#7a8088]">Branches (= Encoder-Inputs)</div>
+      {cfg.branches.map((b, i) => (
+        <div key={i} className="space-y-1 rounded border border-[#1f2429] bg-[#0b0e11] p-1.5">
+          <div className="flex items-center gap-1">
+            <input className={`${inp} w-24`} value={b.name} onChange={(e) => upBranch(i, { name: e.target.value })} placeholder="ligand" />
+            <input className={`${inp} flex-1`} list="mf-cols" value={b.column} onChange={(e) => upBranch(i, { column: e.target.value })} placeholder="Spalte" />
+            <button onClick={() => delBranch(i)} className="px-1 text-[11px] text-rose-400 hover:text-rose-300" title="Branch entfernen">✕</button>
+          </div>
+          <div className="flex flex-wrap items-center gap-1">
+            <select className={inp} value={b.mode} onChange={(e) => upBranch(i, { mode: e.target.value as BranchMode })}>
+              <option value="molecule">SMILES → Graph (RDKit)</option>
+              <option value="dir">ID → Datei in Verzeichnis</option>
+              <option value="path">Spalte = Pfad</option>
+            </select>
+            {b.mode === 'dir' && <>
+              <input className={`${inp} w-32`} value={b.dir} onChange={(e) => upBranch(i, { dir: e.target.value })} placeholder="graphs/proteins" />
+              <select className={inp} value={b.match} onChange={(e) => upBranch(i, { match: e.target.value as 'exact' | 'contains' })}>
+                <option value="contains">ID im Dateinamen</option>
+                <option value="exact">exakt &lt;id&gt;&lt;ext&gt;</option>
+              </select>
+              <input className={`${inp} w-16`} value={b.ext} onChange={(e) => upBranch(i, { ext: e.target.value })} placeholder=".pt" />
+            </>}
+          </div>
+        </div>
+      ))}
+      <button onClick={addBranch} className="rounded border border-[#1f2429] px-2 py-0.5 text-[11px] text-[#9aa1a8] hover:bg-[#13171b]">+ Branch</button>
+
+      <div className="text-[10px] uppercase tracking-wider text-[#7a8088]">Target</div>
+      <div className="flex items-center gap-1">
+        <input className={`${inp} flex-1`} list="mf-cols" value={cfg.target.column}
+          onChange={(e) => up({ target: { ...cfg.target, column: e.target.value } })} placeholder="affinity" />
+        <select className={inp} value={cfg.target.type}
+          onChange={(e) => up({ target: { ...cfg.target, type: e.target.value as 'regression' | 'classification' } })}>
+          <option value="regression">Regression</option>
+          <option value="classification">Klassifikation</option>
+        </select>
+      </div>
+
+      <label className="flex items-center gap-1.5 text-[11px] text-[#9aa1a8]">
+        <input type="checkbox" checked={cfg.cache} onChange={(e) => up({ cache: e.target.checked })} />
+        Molekül-Graphen (RDKit) als <code>.pt</code> cachen (in <code>datasets/.graphcache/</code>)
+      </label>
+
+      <div className="flex items-center gap-2 pt-1">
+        <button onClick={() => void save()} className="rounded bg-[#13344f] px-3 py-1 text-[11px] text-[#6ab7ff] hover:bg-[#184466]">Speichern</button>
+        {status && <span className="text-[10px] text-emerald-300/80">{status}</span>}
+      </div>
+    </div>
+  )
+}
+
+function ManifestOverview({ d, relpath }: { d: ManifestInspect; relpath: string }) {
+  const byBranch = new Map<string, typeof d.slots>()
+  for (const s of d.slots) {
+    if (s.field === 'target') continue
+    const branch = s.field.split('.')[0]
+    if (!byBranch.has(branch)) byBranch.set(branch, [])
+    byBranch.get(branch)!.push(s)
+  }
+  return (
+    <div className="space-y-2">
+      <div className="text-[#9aa1a8]">
+        {d.n_rows.toLocaleString()} Paare · Tabelle <code className="text-[#e6e8eb]">{d.table}</code>
+      </div>
+      <div className="text-[10px] text-[#7a8088]">
+        Jede Zeile koppelt {d.branches.map((b, i) => (
+          <span key={b}><code className="text-[#c8cdd3]">{b}</code>{i < d.branches.length - 1 ? ' + ' : ''}</span>
+        ))}{d.target ? <> → Ziel <code className="text-[#c8cdd3]">{d.target.column}</code> ({d.target.type})</> : ''}.
+        Bind jeden Branch-Slot unten an den passenden Encoder-Input (Inspector).
+      </div>
+      <ManifestEditor relpath={relpath} />
+      {[...byBranch.entries()].map(([branch, slots]) => (
+        <div key={branch}>
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">{branch}</div>
+          <div className="space-y-0.5">
+            {slots.map((s) => (
+              <div key={s.field} className="flex items-center justify-between rounded bg-[#0b0e11] px-1.5 py-1 font-mono text-[10px]">
+                <span className="text-[#c8cdd3]">{s.field}</span>
+                <span className="text-[#7a8088]">[{s.shape.join(', ')}] · {s.dtype}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      {d.target && (
+        <div className="flex items-center justify-between rounded bg-[#0b0e11] px-1.5 py-1 font-mono text-[10px]">
+          <span className="text-emerald-300/90">target</span>
+          <span className="text-[#7a8088]">{d.target.column} · {d.target.type}</span>
+        </div>
+      )}
+      {d.notes && d.notes.length > 0 && (
+        <div className="space-y-0.5 rounded border border-amber-900/40 bg-amber-950/20 p-1.5">
+          {d.notes.map((n, i) => <div key={i} className="text-[10px] text-amber-400/90">⚠ {n}</div>)}
+        </div>
+      )}
+      <div className="text-[10px] text-[#5b6168]">
+        Slots zeigen die Formen aus Zeile 0. „contains"-Auflösung matcht die ID im Dateinamen
+        (z. B. <code>P12345</code> → <code>AF-P12345-F1-model_v4.pt</code>).
       </div>
     </div>
   )
@@ -589,9 +919,11 @@ function SmokeError({
   }
   const hint = buildHint(result, requestedShape)
   const updateNodeParams = useGraphStore((s) => s.updateNodeParams)
-  const inputNodes = useGraphStore((s) =>
-    s.nodes.filter((n) => n.data.layerType === 'Input'),
-  )
+  // Select the stable nodes array, then filter in render — a `.filter()` INSIDE
+  // the selector returns a fresh array each call ("getSnapshot should be cached"
+  // → infinite loop → crash). Include Graph (kind input) too.
+  const nodes = useGraphStore((s) => s.nodes)
+  const inputNodes = nodes.filter((n) => n.data.layerType === 'Input' || n.data.layerType === 'Graph')
   const inspectData = useDatasetsStore((s) => s.inspects[relpath]?.data)
   const naturalShape = sampleNaturalShape(inspectData)
 
@@ -672,7 +1004,7 @@ function buildHint(
 ): string | null {
   if (result.stage === 'sample') {
     if (result.error.includes('pandas') || result.error.includes('rdkit') || result.error.includes('Pillow') || result.error.includes('biopython')) {
-      return 'Eine optionale Python-Lib fehlt. Tipp: in der mlforge-dev env nachinstallieren (z.B. pip install pandas pillow rdkit-pypi biopython datasets).'
+      return 'Eine optionale Python-Lib fehlt. Tipp: in der spinoml-dev env nachinstallieren (z.B. pip install pandas pillow rdkit-pypi biopython datasets).'
     }
     return 'Der Datensatz konnte nicht geladen werden — Pfad oder Format-Erkennung prüfen.'
   }

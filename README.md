@@ -1,8 +1,10 @@
 <div align="center">
 
-<img src="assets/banner.svg" alt="MLForge" width="100%" />
+<img src="assets/banner.svg" alt="SpinoML" width="100%" />
 
 <br/>
+
+**_SpinoML_ — Super Perfect Intuitive and Organized Machine Learning.**
 
 **Build, validate, generate and train PyTorch models on a visual canvas — with Claude as a co-pilot that edits the graph live.**
 
@@ -20,12 +22,12 @@
 
 ---
 
-## What is MLForge?
+## What is SpinoML?
 
-MLForge is a desktop studio for designing neural networks **visually** and taking them
+SpinoML is a desktop studio for designing neural networks **visually** and taking them
 all the way to a running training job — without leaving the canvas.
 
-Drag layers onto a graph, wire them together, and MLForge continuously:
+Drag layers onto a graph, wire them together, and SpinoML continuously:
 
 - **infers the tensor shapes** through every layer and flags mismatches inline,
 - **generates clean `nn.Module` PyTorch source** in real time,
@@ -104,10 +106,10 @@ drives a folder on your laptop or a scratch directory on an HPC cluster.
 
 ## 🚀 Getting started
 
-> Everything runs inside the `mlforge-dev` conda env (node 20, rust stable, python 3.12).
+> Everything runs inside the `spinoml-dev` conda env (node 20, rust stable, python 3.12).
 
 ```bash
-conda activate mlforge-dev
+conda activate spinoml-dev
 npm install
 
 # Native app — the Rust shell auto-spawns both sidecars and kills them on close:
@@ -134,8 +136,8 @@ sudo apt install -y \
 
 ```bash
 npm run tauri build      # writes a .deb to src-tauri/target/release/bundle/deb/
-sudo dpkg -i src-tauri/target/release/bundle/deb/mlforge_*_amd64.deb
-mlforge                  # launch from the menu or the terminal
+sudo dpkg -i src-tauri/target/release/bundle/deb/spinoml_*_amd64.deb
+spinoml                  # launch from the menu or the terminal
 ```
 
 The bundle (~80 MB) embeds both sidecars. On the target machine the app expects
@@ -146,7 +148,7 @@ any missing piece just disables the matching sidecar — the rest of the UI keep
 
 ## 🤖 Claude integration
 
-MLForge talks to Claude through the **Claude Agent SDK** running in the Node sidecar.
+SpinoML talks to Claude through the **Claude Agent SDK** running in the Node sidecar.
 It uses Claude Code's local OAuth, so:
 
 - install the Claude Code CLI and run `claude setup-token` once (Max subscription), and
@@ -216,7 +218,7 @@ A deeper operational runbook lives in [`CLAUDE.md`](CLAUDE.md).
 
 ## 📄 License
 
-**Source-available — Noncommercial, No-Derivatives.** MLForge is free to **run and use
+**Source-available — Noncommercial, No-Derivatives.** SpinoML is free to **run and use
 for noncommercial purposes** (personal, educational, academic), and the source is open to
 read. You may **not** use it commercially, modify it, or redistribute it without the prior
 **written** permission of the copyright holder. See [`LICENSE`](LICENSE) for the binding terms.

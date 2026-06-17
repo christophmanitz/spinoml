@@ -10,10 +10,10 @@ import PyCodeModal, { type PyPreview } from './PyCodeModal'
 import FileViewerModal from './FileViewerModal'
 import { confirmDialog } from '../ui/confirm'
 
-const DRAG_MIME = 'application/mlforge-workspace-entry'
+const DRAG_MIME = 'application/spinoml-workspace-entry'
 
 function pyNameFor(name: string): string {
-  return name.replace(/\.mlforge$/i, '').replace(/\W+/g, '_') + '.py'
+  return name.replace(/\.spinoml$/i, '').replace(/\W+/g, '_') + '.py'
 }
 
 // Shared props threaded down to every row.
@@ -56,7 +56,7 @@ export default function FileExplorer() {
   const importFile = (parentId: string) => {
     const input = document.createElement('input')
     input.type = 'file'
-    input.accept = '.mlforge,.json,application/json'
+    input.accept = '.spinoml,.json,application/json'
     input.onchange = async () => {
       const file = input.files?.[0]
       if (!file) return
@@ -121,7 +121,7 @@ export default function FileExplorer() {
           )}
           <IconButton title="Neues Modell" onClick={() => createIn(createFile)}>📄+</IconButton>
           <IconButton title="Neuer Ordner" onClick={() => createIn(createFolder)}>📁+</IconButton>
-          <IconButton title="Modell importieren (.mlforge)" onClick={() => {
+          <IconButton title="Modell importieren (.spinoml)" onClick={() => {
             const parentId = useWorkspaceStore.getState().entries['models']?.kind === 'folder' ? 'models' : ROOT_ID
             importFile(parentId)
           }}>⇪</IconButton>
@@ -345,7 +345,7 @@ function IconButton({ children, onClick, title }:
 }
 
 // Renders an explicit, sibling-set list of entry ids (one section's contents, or
-// a folder's children). Hides .py twins of sibling .mlforge files — those are
+// a folder's children). Hides .py twins of sibling .spinoml files — those are
 // shown as a child row under the model instead.
 function EntryList({ ids, depth, ctx }: { ids: string[]; depth: number; ctx: RowCtx }) {
   const entries = useWorkspaceStore.getState().entries
@@ -353,7 +353,7 @@ function EntryList({ ids, depth, ctx }: { ids: string[]; depth: number; ctx: Row
   const twinNames = new Set(
     sorted
       .map((id) => entries[id])
-      .filter((e): e is Entry => !!e && e.kind === 'file' && e.name.toLowerCase().endsWith('.mlforge'))
+      .filter((e): e is Entry => !!e && e.kind === 'file' && e.name.toLowerCase().endsWith('.spinoml'))
       .map((e) => pyNameFor(e.name)),
   )
   return (
@@ -380,7 +380,7 @@ function EntryNode({ id, depth, ctx }: { id: string; depth: number; ctx: RowCtx 
   return (
     <>
       <Row id={id} depth={depth} ctx={ctx} childTree={subTree} />
-      {isFile && expanded && e.name.toLowerCase().endsWith('.mlforge') && (
+      {isFile && expanded && e.name.toLowerCase().endsWith('.spinoml') && (
         <PyChildRow fileId={id} fileName={e.name} depth={depth + 1} openPy={ctx.openPy} />
       )}
     </>
@@ -437,9 +437,9 @@ function Row({
     if (isFolder) { toggle(id); return }
     if (!isFile) return
     const lower = entry.name.toLowerCase()
-    if (lower.endsWith('.mlforge')) { open(id); return }
-    // .mltrain: load the training graph onto the training canvas + switch mode.
-    if (lower.endsWith('.mltrain')) {
+    if (lower.endsWith('.spinoml')) { open(id); return }
+    // .spinotrain: load the training graph onto the training canvas + switch mode.
+    if (lower.endsWith('.spinotrain')) {
       void import('../training/graph/files').then(({ loadTrainingGraph }) => loadTrainingGraph(id))
         .then(() => import('../training/graph/viewMode'))
         .then(({ useViewModeStore }) => useViewModeStore.getState().setMode('training'))
@@ -532,7 +532,7 @@ function Row({
               <span className="text-[9px] text-[#5b6168] group-hover:hidden">{kind.label}</span>
             )}
             <div className="hidden gap-0.5 text-[#5b6168] group-hover:flex">
-              {isFile && entry.name.toLowerCase().endsWith('.mlforge') && (
+              {isFile && entry.name.toLowerCase().endsWith('.spinoml') && (
                 <IconButton title="Generierten PyTorch ansehen" onClick={() => {
                   openPy({ fileId: id, pyName: pyNameFor(entry.name) })
                 }}>🐍</IconButton>
@@ -599,7 +599,7 @@ function ContextMenu({
   const entry = useWorkspaceStore((s) => s.entries[menu.id])
   if (!entry) return null
   const isFolder = entry.kind === 'folder'
-  const isMlforge = entry.kind === 'file' && entry.name.toLowerCase().endsWith('.mlforge')
+  const isSpinoml = entry.kind === 'file' && entry.name.toLowerCase().endsWith('.spinoml')
 
   return (
     <div
@@ -609,7 +609,7 @@ function ContextMenu({
     >
       {entry.kind === 'file' && (
         <>
-          {isMlforge && (
+          {isSpinoml && (
             <>
               <MenuItem onClick={() => { useWorkspaceStore.getState().openFile(menu.id); close() }}>
                 Im Canvas öffnen
@@ -638,7 +638,7 @@ function ContextMenu({
             })
             close()
           }}>Neuer Ordner</MenuItem>
-          <MenuItem onClick={() => { importFile(menu.id); close() }}>Importieren (.mlforge)…</MenuItem>
+          <MenuItem onClick={() => { importFile(menu.id); close() }}>Importieren (.spinoml)…</MenuItem>
           <div className="my-1 h-px bg-[#1f2429]" />
         </>
       )}

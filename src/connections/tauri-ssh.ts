@@ -17,7 +17,7 @@ export type RemoteProjectLoad = {
   meta: ProjectMeta | null
   root_exists: boolean
   has_legacy_files: boolean
-  legacy_mlforge_count: number
+  legacy_spinoml_count: number
 }
 
 export type CurrentRemote = {
@@ -85,9 +85,9 @@ export const tauriSsh = {
   // ── remote training executor (Phase 16) ──
   startTrainingRun: (
     alias: string, root: string, runId: string, python: string,
-    runJson: string, modelMlforge: string, modelPy: string,
+    runJson: string, modelSpinoml: string, modelPy: string,
   ) =>
-    invoke<void>('ssh_start_training_run', { alias, root, runId, python, runJson, modelMlforge, modelPy }),
+    invoke<void>('ssh_start_training_run', { alias, root, runId, python, runJson, modelSpinoml, modelPy }),
 
   listTrainingRuns: (alias: string, root: string) =>
     invoke<RunSummary[]>('ssh_list_training_runs', { alias, root }),

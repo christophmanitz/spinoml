@@ -1,0 +1,42 @@
+{
+  "run_id": "2026-06-16T10-21-09_dual_j2qf",
+  "run_label": "dual",
+  "created_at": "2026-06-16T10:21:09.786Z",
+  "status": "queued",
+  "model_path": "models/dual.spinoml",
+  "backend": {
+    "kind": "local"
+  },
+  "dataset": {
+    "path": "/home/christoph/projects/spinoml/examples/reaction-workspace/datasets/rxn.manifest",
+    "relpath": "datasets/rxn.manifest",
+    "kind": "manifest",
+    "feature_columns": null,
+    "target_column": "affinity"
+  },
+  "training": {
+    "epochs": 200,
+    "batch_size": 4,
+    "val_split": 0.2,
+    "seed": 42,
+    "log_every_n_steps": 1,
+    "optimizer": {
+      "kind": "Adam",
+      "lr": 0.001,
+      "weight_decay": 0,
+      "momentum": 0.9
+    },
+    "loss": {
+      "kind": "MSELoss"
+    },
+    "scheduler": {
+      "kind": "ReduceLROnPlateau",
+      "patience": 15
+    },
+    "metrics": [
+      "mse",
+      "mae",
+      "r2"
+    ]
+  }
+}

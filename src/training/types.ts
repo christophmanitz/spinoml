@@ -60,7 +60,9 @@ export type DatasetConfig = {
   path: string
   /** Workspace-relative path, kept for display + future remote rsync. */
   relpath: string
-  kind: 'tabular'
+  // 'manifest' = paired graph dataset (e.g. ligand+protein); target lives in the
+  // .manifest itself, so feature_columns/target_column are unused for it.
+  kind: 'tabular' | 'manifest'
   feature_columns: string[] | null
   target_column: string
 }

@@ -12,6 +12,7 @@ import {
 } from '@xyflow/react'
 import { defaultParamsFor, coerceParams } from '../layers/registry'
 import { useLayoutStore, type FlowDir } from './layoutStore'
+import { reconcileSubgraphPorts } from './subgraphPorts'
 
 export type LayerNodeData = {
   layerType: string
@@ -73,9 +74,15 @@ export const useGraphStore = create<State>((set, get) => ({
   selectedNodeId: null,
 
   onNodesChange: (changes) => set({ nodes: applyNodeChanges(changes, get().nodes) }),
-  onEdgesChange: (changes) => set({ edges: applyEdgeChanges(changes, get().edges) }),
-  onConnect: (connection) =>
-    set({ edges: addEdge({ ...connection, animated: true }, get().edges) }),
+  onEdgesChange: (changes) => {
+    const edges = applyEdgeChanges(changes, get().edges)
+    // Edge removed/added near a Subgraph node → re-sync its input proxies.
+    set({ edges, nodes: reconcileSubgraphPorts(get().nodes, edges) })
+  },
+  onConnect: (connection) => {
+    const edges = addEdge({ ...connection, animated: true }, get().edges)
+    set({ edges, nodes: reconcileSubgraphPorts(get().nodes, edges) })
+  },
 
   addLayer: (layerType, position, opts) => {
     const id = opts?.id && !get().nodes.some((n) => n.id === opts.id) ? opts.id : newNodeId()
@@ -91,13 +98,13 @@ export const useGraphStore = create<State>((set, get) => ({
   },
 
   updateNodeParams: (id, params) => {
-    set({
-      nodes: get().nodes.map((n) => {
-        if (n.id !== id) return n
-        const merged = { ...n.data.params, ...params }
-        return { ...n, data: { ...n.data, params: coerceParams(n.data.layerType, merged) } }
-      }),
+    const nodes = get().nodes.map((n) => {
+      if (n.id !== id) return n
+      const merged = { ...n.data.params, ...params }
+      return { ...n, data: { ...n.data, params: coerceParams(n.data.layerType, merged) } }
     })
+    // If the edited node feeds a Subgraph, its proxy mirrors the new config.
+    set({ nodes: reconcileSubgraphPorts(nodes, get().edges) })
   },
 
   replaceNodeLayer: (id, newLayerType, extraParams) => {
@@ -124,19 +131,20 @@ export const useGraphStore = create<State>((set, get) => ({
 
   deleteNode: (id) => {
     if (id === 'input') return
+    const edges = get().edges.filter((e) => e.source !== id && e.target !== id)
+    const nodes = get().nodes.filter((n) => n.id !== id)
     set({
-      nodes: get().nodes.filter((n) => n.id !== id),
-      edges: get().edges.filter((e) => e.source !== id && e.target !== id),
+      nodes: reconcileSubgraphPorts(nodes, edges),
+      edges,
       selectedNodeId: get().selectedNodeId === id ? null : get().selectedNodeId,
     })
   },
 
   connectNodes: (source, target) => {
-    const edges = get().edges
-    if (edges.some((e) => e.source === source && e.target === target)) return
-    set({
-      edges: addEdge({ source, target, animated: true, id: `e${edges.length + 1}` }, edges),
-    })
+    const cur = get().edges
+    if (cur.some((e) => e.source === source && e.target === target)) return
+    const edges = addEdge({ source, target, animated: true, id: `e${cur.length + 1}` }, cur)
+    set({ edges, nodes: reconcileSubgraphPorts(get().nodes, edges) })
   },
 
   autoLayout: () => {

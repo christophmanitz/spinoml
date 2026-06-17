@@ -1,10 +1,10 @@
-MLForge — Noncommercial No-Derivatives Source-Available License
+SpinoML — Noncommercial No-Derivatives Source-Available License
 Copyright (c) 2026 Christoph Manitz. All Rights Reserved.
 
 ================================================================================
 SUMMARY (non-binding)
 ================================================================================
-You MAY run and use MLForge for personal, educational, academic, and other
+You MAY run and use SpinoML for personal, educational, academic, and other
 NONCOMMERCIAL purposes, free of charge. You MAY view the source code.
 You MAY NOT use it commercially, modify it, or distribute it. The full,
 binding terms are below.
@@ -12,7 +12,7 @@ binding terms are below.
 ================================================================================
 1. DEFINITIONS
 ================================================================================
-"Software" means the MLForge software in this repository, including its source
+"Software" means the SpinoML software in this repository, including its source
 code, object code, documentation, assets, designs, and all associated files.
 
 "Author" means Christoph Manitz, the copyright holder.

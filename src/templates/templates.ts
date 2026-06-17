@@ -127,6 +127,165 @@ export function buildRankBindBilinear(): GraphSnapshot {
   }
 }
 
+/** GCN node classifier (Cora-style). Two GCNConv layers with ReLU + dropout.
+ *  One `Graph` input carries the whole graph (x + edge_index + batch); the
+ *  encoder unpacks it (`x, edge_index, batch = data.x, …`). [N, 16] → 7 logits. */
+export function buildGcnNodeClassifier(): GraphSnapshot {
+  return {
+    nodes: [
+      { id: 'data', layerType: 'Graph', params: { name: 'data', shape: [10, 16], n_edges: 40 }, position: { x: 0, y: 0 } },
+      { id: 'g1', layerType: 'GCNConv', params: { in_channels: -1, out_channels: 32 }, position: { x: 280, y: 0 } },
+      { id: 'a1', layerType: 'ReLU', params: {}, position: { x: 520, y: 0 } },
+      { id: 'd1', layerType: 'Dropout', params: { p: 0.5 }, position: { x: 740, y: 0 } },
+      { id: 'g2', layerType: 'GCNConv', params: { in_channels: 32, out_channels: 7 }, position: { x: 960, y: 0 } },
+      { id: 'out', layerType: 'Output', params: { name: 'logits' }, position: { x: 1200, y: 0 } },
+    ],
+    edges: [
+      { source: 'data', target: 'g1' },
+      { source: 'g1', target: 'a1' },
+      { source: 'a1', target: 'd1' },
+      { source: 'd1', target: 'g2' },
+      { source: 'g2', target: 'out' },
+    ],
+  }
+}
+
+/** GAT node classifier. First layer uses 8 attention heads (concat → 8×8=64),
+ *  second collapses to the class count with a single head. Fed by one `Graph`
+ *  input (unpacked to x/edge_index/batch in forward). */
+export function buildGatNodeClassifier(): GraphSnapshot {
+  return {
+    nodes: [
+      { id: 'data', layerType: 'Graph', params: { name: 'data', shape: [10, 16], n_edges: 40 }, position: { x: 0, y: 0 } },
+      { id: 'g1', layerType: 'GATConv', params: { in_channels: -1, out_channels: 8, heads: 8, concat: true, dropout: 0.6 }, position: { x: 280, y: 0 } },
+      { id: 'a1', layerType: 'ReLU', params: {}, position: { x: 540, y: 0 } },
+      { id: 'd1', layerType: 'Dropout', params: { p: 0.6 }, position: { x: 760, y: 0 } },
+      { id: 'g2', layerType: 'GATConv', params: { in_channels: 64, out_channels: 7, heads: 1, concat: false, dropout: 0.6 }, position: { x: 980, y: 0 } },
+      { id: 'out', layerType: 'Output', params: { name: 'logits' }, position: { x: 1240, y: 0 } },
+    ],
+    edges: [
+      { source: 'data', target: 'g1' },
+      { source: 'g1', target: 'a1' },
+      { source: 'a1', target: 'd1' },
+      { source: 'd1', target: 'g2' },
+      { source: 'g2', target: 'out' },
+    ],
+  }
+}
+
+/** GCN graph classifier. Two GCNConv blocks, then a GlobalMeanPool readout
+ *  collapses each graph's nodes into one vector ([N_nodes,F] → [N_graphs,F]),
+ *  then a Linear head → class logits per graph. One `Graph` input provides x +
+ *  edge_index + batch (`batch` says which graph each node belongs to). */
+export function buildGcnGraphClassifier(): GraphSnapshot {
+  return {
+    nodes: [
+      { id: 'data', layerType: 'Graph', params: { name: 'data', shape: [30, 16], n_edges: 80 }, position: { x: 0, y: 0 } },
+      { id: 'g1', layerType: 'GCNConv', params: { in_channels: -1, out_channels: 32 }, position: { x: 280, y: 0 } },
+      { id: 'a1', layerType: 'ReLU', params: {}, position: { x: 500, y: 0 } },
+      { id: 'g2', layerType: 'GCNConv', params: { in_channels: 32, out_channels: 64 }, position: { x: 700, y: 0 } },
+      { id: 'a2', layerType: 'ReLU', params: {}, position: { x: 920, y: 0 } },
+      { id: 'pool', layerType: 'GlobalMeanPool', params: {}, position: { x: 1120, y: 0 } },
+      { id: 'fc', layerType: 'Linear', params: { in_features: 64, out_features: 6 }, position: { x: 1340, y: 0 } },
+      { id: 'out', layerType: 'Output', params: { name: 'logits' }, position: { x: 1560, y: 0 } },
+    ],
+    edges: [
+      { source: 'data', target: 'g1' },
+      { source: 'g1', target: 'a1' },
+      { source: 'a1', target: 'g2' },
+      { source: 'g2', target: 'a2' },
+      { source: 'a2', target: 'pool' },
+      { source: 'pool', target: 'fc' },
+      { source: 'fc', target: 'out' },
+    ],
+  }
+}
+
+/** kNN-graph classifier on plain features (no edge_index Input). A BuildGraph
+ *  node connects each row to its k nearest neighbours, producing edge_index for
+ *  the GCN layers automatically — turning tabular/feature data into a graph. */
+export function buildKnnGraphClassifier(): GraphSnapshot {
+  return {
+    nodes: [
+      { id: 'x', layerType: 'Input', params: { name: 'x', shape: [100, 16], dtype: 'float32' }, position: { x: 0, y: 0 } },
+      { id: 'bg', layerType: 'BuildGraph', params: { method: 'knn', k: 6, loop: false, cosine: false }, position: { x: 280, y: 0 } },
+      { id: 'g1', layerType: 'GCNConv', params: { in_channels: -1, out_channels: 32 }, position: { x: 540, y: 0 } },
+      { id: 'a1', layerType: 'ReLU', params: {}, position: { x: 760, y: 0 } },
+      { id: 'g2', layerType: 'GCNConv', params: { in_channels: 32, out_channels: 7 }, position: { x: 960, y: 0 } },
+      { id: 'out', layerType: 'Output', params: { name: 'logits' }, position: { x: 1200, y: 0 } },
+    ],
+    edges: [
+      { source: 'x', target: 'bg' },
+      { source: 'bg', target: 'g1' },
+      { source: 'g1', target: 'a1' },
+      { source: 'a1', target: 'g2' },
+      { source: 'g2', target: 'out' },
+    ],
+  }
+}
+
+/** A GNN encoder as a self-contained Subgraph: ONE `Graph` input (a whole PyG
+ *  Data) → GCNConv → ReLU → GCNConv → GlobalMeanPool → one graph-level embedding.
+ *  The encoder's forward is exactly idiomatic PyG —
+ *    def forward(self, data):
+ *      x, edge_index, batch = data.x, data.edge_index, data.batch
+ *      ...
+ *  Each encoder owns its own graph (its own Data), which is why the dual-encoder
+ *  uses two of these: the two molecules never share connectivity. */
+function gnnEncoderSubgraph(inDim: number, hidden: number, outDim: number): GraphSnapshot {
+  return {
+    nodes: [
+      { id: 'data', layerType: 'Graph', params: { name: 'data', shape: [32, inDim], n_edges: 64 }, position: { x: 40, y: 20 } },
+      // in_channels=-1 → lazy: binds to ANY node-feature dim without editing.
+      { id: 'g1', layerType: 'GCNConv', params: { in_channels: -1, out_channels: hidden }, position: { x: 40, y: 140 } },
+      { id: 'a1', layerType: 'ReLU', params: {}, position: { x: 40, y: 260 } },
+      { id: 'g2', layerType: 'GCNConv', params: { in_channels: hidden, out_channels: outDim }, position: { x: 40, y: 380 } },
+      { id: 'pool', layerType: 'GlobalMeanPool', params: {}, position: { x: 40, y: 500 } },
+      { id: 'out', layerType: 'Output', params: { name: 'emb' }, position: { x: 40, y: 620 } },
+    ],
+    edges: [
+      { source: 'data', target: 'g1' },
+      { source: 'g1', target: 'a1' },
+      { source: 'a1', target: 'g2' },
+      { source: 'g2', target: 'pool' },
+      { source: 'pool', target: 'out' },
+    ],
+  }
+}
+
+/** Dual-encoder for paired graph inputs (ligand + protein → affinity / EC).
+ *  Two `Graph` inputs (each binds 1:1 to a graph dataset / manifest branch) feed
+ *  two independent GNN encoder Subgraphs; their pooled embeddings concatenate
+ *  into an MLP head. The model's forward is `forward(self, ligand, protein)` —
+ *  two whole graphs in, one score out. The pairing (which ligand goes with which
+ *  protein) comes from the manifest dataset: bind each Graph node to its branch. */
+export function buildDualEncoderGnn(): GraphSnapshot {
+  const LIG_IN = 9, PROT_IN = 20, HID = 64, EMB = 128
+  return {
+    nodes: [
+      { id: 'ligand', layerType: 'Graph', params: { name: 'ligand', shape: [32, LIG_IN], n_edges: 64 }, position: { x: 0, y: 80 } },
+      { id: 'protein', layerType: 'Graph', params: { name: 'protein', shape: [128, PROT_IN], n_edges: 256 }, position: { x: 0, y: 460 } },
+      { id: 'lig_enc', layerType: 'Subgraph', params: { class_name: 'LigandEncoder', subgraph: gnnEncoderSubgraph(LIG_IN, HID, EMB) }, position: { x: 320, y: 80 } },
+      { id: 'prot_enc', layerType: 'Subgraph', params: { class_name: 'ProteinEncoder', subgraph: gnnEncoderSubgraph(PROT_IN, HID, EMB) }, position: { x: 320, y: 460 } },
+      { id: 'merge', layerType: 'Concat', params: { dim: -1 }, position: { x: 620, y: 270 } },
+      { id: 'fc1', layerType: 'Linear', params: { in_features: EMB * 2, out_features: HID }, position: { x: 840, y: 270 } },
+      { id: 'act', layerType: 'ReLU', params: {}, position: { x: 1060, y: 270 } },
+      { id: 'fc2', layerType: 'Linear', params: { in_features: HID, out_features: 1 }, position: { x: 1260, y: 270 } },
+      { id: 'out', layerType: 'Output', params: { name: 'affinity' }, position: { x: 1480, y: 270 } },
+    ],
+    edges: [
+      { source: 'ligand', target: 'lig_enc' },
+      { source: 'protein', target: 'prot_enc' },
+      { source: 'lig_enc', target: 'merge' },
+      { source: 'prot_enc', target: 'merge' },
+      { source: 'merge', target: 'fc1' },
+      { source: 'fc1', target: 'act' },
+      { source: 'act', target: 'fc2' },
+      { source: 'fc2', target: 'out' },
+    ],
+  }
+}
+
 export const TEMPLATES: Template[] = [
   {
     id: 'empty',
@@ -190,9 +349,39 @@ export const TEMPLATES: Template[] = [
       ]),
   },
   {
+    id: 'gcn-node-classifier',
+    name: 'GCN node classifier',
+    description: '2× GCNConv + ReLU/Dropout · Knoten-Klassifikation · ein Graph-Knoten (x+edge_index+batch) · 16 Features → 7 Klassen',
+    build: buildGcnNodeClassifier,
+  },
+  {
+    id: 'gat-node-classifier',
+    name: 'GAT node classifier',
+    description: 'Attention-GNN · GATConv(8 Köpfe) → GATConv · Knoten-Klassifikation · 16 Features → 7 Klassen',
+    build: buildGatNodeClassifier,
+  },
+  {
+    id: 'gcn-graph-classifier',
+    name: 'GCN graph classifier',
+    description: '2× GCNConv → GlobalMeanPool → Linear · ganze Graphen klassifizieren · ein Graph-Knoten (x+edge_index+batch) · → 6 Klassen',
+    build: buildGcnGraphClassifier,
+  },
+  {
+    id: 'knn-graph-classifier',
+    name: 'kNN graph (features→GCN)',
+    description: 'BuildGraph(kNN) baut den Graphen aus Features → 2× GCNConv · KEIN edge_index-Input nötig · 16 Features → 7 Klassen',
+    build: buildKnnGraphClassifier,
+  },
+  {
     id: 'rankbind-bilinear',
     name: 'RankBind (bilinear)',
     description: 'score = f(L)ᵀ M g(P) + b · two projectors + low-rank bilinear head, via Custom code nodes',
     build: buildRankBindBilinear,
+  },
+  {
+    id: 'dual-encoder-gnn',
+    name: 'Dual-Encoder GNN (Ligand + Protein)',
+    description: '2 GNN-Encoder (eigener Graph je Branch, als Subgraph) → Concat → MLP · gepaarte Graph-Inputs → affinity/EC · jeden Branch ans Manifest binden',
+    build: buildDualEncoderGnn,
   },
 ]

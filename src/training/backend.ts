@@ -38,11 +38,11 @@ export const training = {
     const r = remote()
     return r ? tauriSsh.readTrainingRunFile(sshTarget(r), r.root, runId, name) : tauriTraining.readFile(runId, name)
   },
-  start: (runId: string, runJson: string, modelMlforge: string, modelPy: string): Promise<void> => {
+  start: (runId: string, runJson: string, modelSpinoml: string, modelPy: string): Promise<void> => {
     const r = remote()
     return r
-      ? tauriSsh.startTrainingRun(sshTarget(r), r.root, runId, remotePython(r), runJson, modelMlforge, modelPy)
-      : tauriTraining.start(runId, runJson, modelMlforge, modelPy)
+      ? tauriSsh.startTrainingRun(sshTarget(r), r.root, runId, remotePython(r), runJson, modelSpinoml, modelPy)
+      : tauriTraining.start(runId, runJson, modelSpinoml, modelPy)
   },
   stop: (runId: string): Promise<void> => {
     const r = remote()

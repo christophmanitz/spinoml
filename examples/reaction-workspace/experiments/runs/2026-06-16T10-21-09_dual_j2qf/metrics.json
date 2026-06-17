@@ -1,0 +1,7 @@
+{
+  "status": "done",
+  "total_seconds": 78.39,
+  "best_val_loss": 0.243833,
+  "epochs": 200,
+  "n_params": 34369
+}

@@ -30,7 +30,7 @@ export type File = {
 export type Entry = Folder | File
 
 export const ROOT_ID = 'root'
-const STORAGE_KEY = 'mlforge.workspace.v1'
+const STORAGE_KEY = 'spinoml.workspace.v1'
 
 type Mode = 'browser' | 'tauri'
 
@@ -63,8 +63,8 @@ type State = {
   refreshFromDisk: () => Promise<void>
 }
 
-function pyTwinPath(mlforgeRel: string): string {
-  return mlforgeRel.replace(/\.mlforge$/i, '').replace(/[^\w\/]+/g, '_') + '.py'
+function pyTwinPath(spinomlRel: string): string {
+  return spinomlRel.replace(/\.spinoml$/i, '').replace(/[^\w\/]+/g, '_') + '.py'
 }
 
 function parentRelOf(relpath: string): string {
@@ -164,7 +164,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       const parent = get().entries[parentId]
       if (!parent || parent.kind !== 'folder') return ''
       const parentRel = parentId === ROOT_ID ? '' : parentId
-      const wantName = uniqueName(name ?? 'untitled.mlforge', siblingNames(get().entries, parentId))
+      const wantName = uniqueName(name ?? 'untitled.spinoml', siblingNames(get().entries, parentId))
       const relpath = joinRel(parentRel, wantName)
       const content = serializeCurrent()
       await fsBackend.write(relpath, content)
@@ -178,7 +178,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     const parent = get().entries[parentId]
     if (!parent || parent.kind !== 'folder') return ''
     const id = newId()
-    const wantName = uniqueName(name ?? 'untitled.mlforge', siblingNames(get().entries, parentId))
+    const wantName = uniqueName(name ?? 'untitled.spinoml', siblingNames(get().entries, parentId))
     const file: File = {
       kind: 'file', id, name: wantName, parentId,
       content: serializeCurrent(),
@@ -236,7 +236,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       const final = uniqueName(trimmed, siblingNames(get().entries, e.parentId ?? ROOT_ID))
       const newRel = joinRel(parentRel, final)
       await fsBackend.rename(id, newRel)
-      if (e.kind === 'file' && id.toLowerCase().endsWith('.mlforge')) {
+      if (e.kind === 'file' && id.toLowerCase().endsWith('.spinoml')) {
         try { await fsBackend.rename(pyTwinPath(id), pyTwinPath(newRel)) } catch { /* maybe absent */ }
       }
       const wasActive = get().activeFileId === id
@@ -258,7 +258,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       const e = get().entries[id]
       if (!e) return
       await fsBackend.remove(id)
-      if (e.kind === 'file' && id.toLowerCase().endsWith('.mlforge')) {
+      if (e.kind === 'file' && id.toLowerCase().endsWith('.spinoml')) {
         try { await fsBackend.remove(pyTwinPath(id)) } catch { /* maybe absent */ }
       }
       await get().refreshFromDisk()
@@ -303,7 +303,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       const destRel = newParentId === ROOT_ID ? '' : newParentId
       const newRel = joinRel(destRel, node.name)
       await fsBackend.rename(id, newRel)
-      if (node.kind === 'file' && id.toLowerCase().endsWith('.mlforge')) {
+      if (node.kind === 'file' && id.toLowerCase().endsWith('.spinoml')) {
         try { await fsBackend.rename(pyTwinPath(id), pyTwinPath(newRel)) } catch { /* maybe absent */ }
       }
       const wasActive = get().activeFileId === id
@@ -400,7 +400,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
   },
 
   saveAsNew: async (parentId, name) => {
-    return get().createFile(parentId, name.endsWith('.mlforge') ? name : `${name}.mlforge`)
+    return get().createFile(parentId, name.endsWith('.spinoml') ? name : `${name}.spinoml`)
   },
 
   closeActive: () => set({ activeFileId: null, dirty: false }),
@@ -412,7 +412,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     if (get().mode === 'tauri') {
       const parentRel = parentId === ROOT_ID ? '' : parentId
       const wantName = uniqueName(
-        name.endsWith('.mlforge') ? name : `${name}.mlforge`,
+        name.endsWith('.spinoml') ? name : `${name}.spinoml`,
         siblingNames(get().entries, parentId),
       )
       const relpath = joinRel(parentRel, wantName)
@@ -425,7 +425,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     }
     const id = newId()
     const wantName = uniqueName(
-      name.endsWith('.mlforge') ? name : `${name}.mlforge`,
+      name.endsWith('.spinoml') ? name : `${name}.spinoml`,
       siblingNames(get().entries, parentId),
     )
     const file: File = {

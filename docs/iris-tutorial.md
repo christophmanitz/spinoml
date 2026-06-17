@@ -1,6 +1,6 @@
 ---
-title: "MLForge Tutorial --- Iris-Klassifikator von Null"
-author: "MLForge"
+title: "SpinoML Tutorial --- Iris-Klassifikator von Null"
+author: "SpinoML"
 date: "v0.1"
 geometry: margin=2.2cm
 fontsize: 11pt
@@ -13,24 +13,24 @@ header-includes: |
   \usepackage{fancyhdr}
   \pagestyle{fancy}
   \fancyhf{}
-  \fancyhead[L]{\small MLForge --- Iris Tutorial}
+  \fancyhead[L]{\small SpinoML --- Iris Tutorial}
   \fancyhead[R]{\small \thepage}
   \renewcommand{\headrulewidth}{0.4pt}
 ---
 
 # Worum es geht
 
-Dieses Tutorial führt dich Schritt für Schritt durch MLForge -- vom leeren
+Dieses Tutorial führt dich Schritt für Schritt durch SpinoML -- vom leeren
 Workspace bis zum funktionierenden Klassifikator auf dem **Iris**-Datensatz
 (die "Hello World" der Tabular-ML). Am Ende hast du:
 
-- ein **MLForge-Projekt** mit klarer Ordnerstruktur,
+- ein **SpinoML-Projekt** mit klarer Ordnerstruktur,
 - `iris.csv` als verwalteten Datensatz mit Statistiken und Spaltenauswahl,
 - einen kleinen **MLP-Klassifikator** auf dem Canvas, an `iris.csv` gebunden,
 - einen erfolgreich durchgelaufenen **Smoke Test** mit echten Daten,
 - den generierten PyTorch-Code als `.py`-Datei zum Weiterverwenden.
 
-Aufwand: ca. 15 Minuten. Vorausgesetzt: MLForge läuft (`npm run tauri dev`
+Aufwand: ca. 15 Minuten. Vorausgesetzt: SpinoML läuft (`npm run tauri dev`
 oder eine installierte `.deb`).
 
 \vspace{1em}
@@ -46,19 +46,19 @@ trennbar -- ideal zum Aufwärmen.}}
 
 # 1 -- Projekt anlegen
 
-Beim Start zeigt MLForge ein **Welcome-Panel**. Klicke auf
+Beim Start zeigt SpinoML ein **Welcome-Panel**. Klicke auf
 *"Projekt öffnen / Ordner wählen..."* und wähle (oder erstelle) einen Ordner
-für dieses Projekt -- z.B. `~/projects/mlforge-iris-tutorial`.
+für dieses Projekt -- z.B. `~/projects/spinoml-iris-tutorial`.
 
 - Ist der Ordner **leer**, erscheint *"Projekt initialisieren"*.
-- Hat er bereits lose `.mlforge`-Dateien, kommt *"In Projekt konvertieren"*.
+- Hat er bereits lose `.spinoml`-Dateien, kommt *"In Projekt konvertieren"*.
 
 Klick drauf, fülle das Formular aus:
 
 | Feld          | Beispiel                                                       |
 |---------------|----------------------------------------------------------------|
 | Name          | `iris-classifier`                                              |
-| Description   | Erstes End-to-End-Tutorial mit MLForge.                        |
+| Description   | Erstes End-to-End-Tutorial mit SpinoML.                        |
 | Goal          | 3-Klassen-Klassifikator für Iris auf Kron-/Kelchblatt-Maßen.   |
 
 `Goal` ist nicht nur Doku -- **Claude liest dieses Feld bei jedem Chat-Turn**,
@@ -70,14 +70,14 @@ Nach dem Klick auf *"Projekt anlegen"* hast du folgende Struktur:
 
 ```
 iris-classifier/
-|-- mlforge.project.json    <- Metadaten
-|-- models/                 <- .mlforge-Dateien
+|-- spinoml.project.json    <- Metadaten
+|-- models/                 <- .spinoml-Dateien
 |-- datasets/               <- Datensaetze
 |-- notes/                  <- Markdown-Notizen (Claude darf hier schreiben)
 `-- experiments/            <- smoke-results.jsonl etc.
 ```
 
-Die Toolbar oben zeigt jetzt **MLForge * iris-classifier**.
+Die Toolbar oben zeigt jetzt **SpinoML * iris-classifier**.
 
 # 2 -- Iris-Datensatz besorgen
 
@@ -85,7 +85,7 @@ Falls noch nicht da, kannst du `iris.csv` aus mehreren Quellen ziehen.
 Variante mit `curl` direkt in den Workspace:
 
 ```bash
-cd ~/projects/mlforge-iris-tutorial/datasets
+cd ~/projects/spinoml-iris-tutorial/datasets
 curl -s https://gist.githubusercontent.com/curran/a08a1080b88344b0c8a7/raw/iris.csv \
   > iris.csv
 head -3 iris.csv
@@ -159,7 +159,7 @@ Canvas ziehen und mit Pfeilen verbinden:
 ```
 
 Wichtig: für tabulare Daten **immer Linear** wählen, nicht Conv2d.
-Das setzt MLForge auch automatisch um -- wenn du versehentlich
+Das setzt SpinoML auch automatisch um -- wenn du versehentlich
 einen Conv-Block drauf hast und ein 2D-Tabular-Input dahinter, zeigt der
 Inspector einen amber Button *"swap -> mit Linear ersetzen (in\_features=4)"* zum
 Reparieren in einem Klick.
@@ -253,7 +253,7 @@ Claude kennt jetzt durch den Projekt-Kontext bereits:
 - `name`: iris-classifier
 - `goal`: 3-Klassen-Klassifikator für Iris auf Kron-/Kelchblatt-Maßen
 - `active_dataset`: `datasets/iris.csv` (inkl. Spalten + Stats)
-- `active_model`: dein offenes `.mlforge`
+- `active_model`: dein offenes `.spinoml`
 
 und nutzt seine MCP-Tools, um den Graph **direkt zu bearbeiten**: er fügt
 `BatchNorm1d`, `Dropout`, ggf. einen zweiten Hidden-Layer ein, prüft die
@@ -272,7 +272,7 @@ lesen kann. So entsteht **Session-übergreifende Kontinuität**.
 
 # 8 -- Code exportieren
 
-Im File-Explorer auf die `.mlforge`-Datei rechtsklicken ->
+Im File-Explorer auf die `.spinoml`-Datei rechtsklicken ->
 *"View generated PyTorch..."*. Das öffnet ein Monaco-Editor-Modal mit dem
 vollständigen Modell. Ein typisches Ergebnis:
 
@@ -305,7 +305,7 @@ if __name__ == "__main__":
 ```
 
 Eine `.py`-Datei mit demselben Inhalt liegt automatisch neben der
-`.mlforge` in `models/`. Du kannst sie 1:1 in dein Training-Notebook
+`.spinoml` in `models/`. Du kannst sie 1:1 in dein Training-Notebook
 übernehmen -- z.B. so:
 
 ```python
@@ -338,7 +338,7 @@ Auf einem üblichen Laptop landet die Accuracy nach 200 Epochs bei ~0.97.
 | Dataset an Input binden                    | Inspector -> `dataset`-Dropdown          |
 | Smoke Test                                 | Dataset-Modal -> *Smoke test*-Tab        |
 | Rang-Mismatch reparieren                   | Inspector -> amber *"swap -> ersetzen"*-Button |
-| Generierten Code anschauen                 | File-Explorer -> Rechts-Klick auf `.mlforge` |
+| Generierten Code anschauen                 | File-Explorer -> Rechts-Klick auf `.spinoml` |
 | Claude eine Entscheidung notieren lassen   | Chat: *"schreib in notes/X.md ..."*       |
 
 # 10 -- Weiter

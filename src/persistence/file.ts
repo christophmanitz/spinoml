@@ -4,16 +4,16 @@ import { captureRootSnapshot } from '../canvas/scopeStore'
 
 export const FORMAT_VERSION = 1
 
-export type MLForgeFile = {
-  format: 'mlforge'
+export type SpinoMLFile = {
+  format: 'spinoml'
   version: number
   savedAt: string
   graph: GraphSnapshot
 }
 
 export function serializeCurrent(): string {
-  const file: MLForgeFile = {
-    format: 'mlforge',
+  const file: SpinoMLFile = {
+    format: 'spinoml',
     version: FORMAT_VERSION,
     savedAt: new Date().toISOString(),
     graph: captureRootSnapshot(),
@@ -26,8 +26,8 @@ export function parseFile(text: string): GraphSnapshot {
   try { obj = JSON.parse(text) }
   catch (e) { throw new Error(`not valid JSON: ${(e as Error).message}`) }
   if (!obj || typeof obj !== 'object') throw new Error('expected a JSON object')
-  const file = obj as Partial<MLForgeFile>
-  if (file.format !== 'mlforge') throw new Error('not a mlforge file (missing format)')
+  const file = obj as Partial<SpinoMLFile>
+  if (file.format !== 'spinoml') throw new Error('not a spinoml file (missing format)')
   if (typeof file.version !== 'number') throw new Error('missing version')
   if (file.version > FORMAT_VERSION) {
     throw new Error(`file format v${file.version} is newer than this app (v${FORMAT_VERSION})`)
@@ -39,7 +39,7 @@ export function parseFile(text: string): GraphSnapshot {
   return graph as GraphSnapshot
 }
 
-export function downloadCurrent(filename = 'model.mlforge'): void {
+export function downloadCurrent(filename = 'model.spinoml'): void {
   const blob = new Blob([serializeCurrent()], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -54,7 +54,7 @@ export function downloadCurrent(filename = 'model.mlforge'): void {
 export function pickAndLoad(onLoaded: (snapshot: GraphSnapshot, filename: string) => void): void {
   const input = document.createElement('input')
   input.type = 'file'
-  input.accept = '.mlforge,.json,application/json'
+  input.accept = '.spinoml,.json,application/json'
   input.onchange = async () => {
     const file = input.files?.[0]
     if (!file) return
@@ -72,7 +72,7 @@ export function pickAndLoad(onLoaded: (snapshot: GraphSnapshot, filename: string
 // ────────────────────────────────────────────────────────────────────────────
 // Auto-save to localStorage
 
-const AUTOSAVE_KEY = 'mlforge.autosave.v1'
+const AUTOSAVE_KEY = 'spinoml.autosave.v1'
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null
 
 function writeAutosave() {

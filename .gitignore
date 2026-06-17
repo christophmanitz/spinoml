@@ -25,7 +25,7 @@ sidecar-torch/*.pyc
 sidecar-torch/.venv
 
 # Project files
-*.mlforge
+*.spinoml
 
 # Secrets
 .env

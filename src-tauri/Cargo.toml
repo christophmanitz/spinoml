@@ -15,7 +15,7 @@ name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "mlforge"
+name = "spinoml"
 path = "src/main.rs"
 
 [build-dependencies]

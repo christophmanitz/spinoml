@@ -43,6 +43,6 @@ SSE event shapes (one JSON object per `data:` line):
 Start:
 
 ```bash
-conda activate mlforge-dev
+conda activate spinoml-dev
 node sidecar-llm/main.mjs       # or: npm run sidecar:llm
 ```

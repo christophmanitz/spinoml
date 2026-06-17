@@ -16,7 +16,7 @@ export type FieldSpec =
   /** Single-select column. Same lookup as columns-multi, single string. */
   | { name: string; type: 'column-single'; default: string }
   /** Single-line free text (class name, constructor-arg string). Stored verbatim. */
-  | { name: string; type: 'text'; default: string; placeholder?: string }
+  | { name: string; type: 'text'; default: string; placeholder?: string; datalist?: string[] }
   /** Multi-line source code (Python for a Custom node). Stored & emitted verbatim. */
   | { name: string; type: 'code'; default: string; placeholder?: string }
 
@@ -51,6 +51,12 @@ export type LayerSpec = {
    *  `var = self.attr(pred, edge_index)`, resolving edge_index from an Input
    *  node named 'edge_index'. e.g. GCNConv/GATConv/SAGEConv. */
   needsEdgeIndex?: boolean
+  /** An Input node that carries a WHOLE PyG graph (a Data/Batch object), not a
+   *  bare tensor. In codegen its forward arg is the Data object; where a GNN/pool
+   *  consumes it, the generator emits `x, edge_index, batch = g.x, g.edge_index,
+   *  g.batch` (explicit, nothing hidden) and feeds aux from it. One node binds
+   *  1:1 to a .pt / graph_folder / pyg / molecule / manifest-branch. */
+  graphInput?: boolean
   /** Symbols this layer needs from torch_geometric.nn. The generator unions
    *  these across all used nodes into one `from torch_geometric.nn import …`. */
   pyImports?: string[]
@@ -90,7 +96,9 @@ export const LAYERS: Record<string, LayerSpec> = {
   Input: {
     type: 'Input', category: 'IO', pytorchModule: '', kind: 'input',
     fields: [
-      { name: 'name', type: 'select', options: ['x', 'x1', 'x2', 'x3', 'q', 'k', 'v', 'cond', 'edge_index', 'batch'], default: 'x' } as FieldSpec,
+      // Free text (not a fixed select) so it can match ANY graph-dataset field
+      // name — e.g. a custom 'coords' field; suggestions via datalist.
+      { name: 'name', type: 'text', default: 'x', placeholder: 'x', datalist: ['x', 'x1', 'x2', 'x3', 'q', 'k', 'v', 'cond', 'edge_index', 'edge_attr', 'pos', 'batch', 'y'] } as FieldSpec,
       f.shape('shape', [1, 3, 224, 224]),
       // 'int64' makes the sample input a LongTensor — required by Embedding (token ids).
       { name: 'dtype', type: 'select', options: ['float32', 'int64'], default: 'float32' } as FieldSpec,
@@ -104,6 +112,31 @@ export const LAYERS: Record<string, LayerSpec> = {
       const feats = get(p, 'features', []) as string[]
       const featTag = ds && feats.length ? ` · ${feats.length} feat` : ''
       return `${get(p, 'name', 'x')} ∈ ${JSON.stringify(get(p, 'shape', [1, 3, 224, 224]))}${dsTag}${featTag}`
+    },
+  },
+  Graph: {
+    // ONE node = one whole PyG graph (Data/Batch). Feeds a GNN branch with its
+    // node features + connectivity + graph membership in a single, intuitive
+    // node. The generator unpacks it explicitly at the point of use, so the real
+    // x / edge_index / batch mechanics stay visible — nothing is simplified away.
+    type: 'Graph', category: 'IO', pytorchModule: '', kind: 'input', graphInput: true,
+    fields: [
+      { name: 'name', type: 'text', default: 'data', placeholder: 'data', datalist: ['data', 'graph', 'ligand', 'protein', 'mol', 'enzyme'] } as FieldSpec,
+      // x shape [N nodes, F node-features]. edge_index is [2, n_edges];
+      // edge_attr (if edge_dim>0) is [n_edges, edge_dim]; batch is [N].
+      f.shape('shape', [32, 9]),
+      f.int('n_edges', 64, { min: 0 }),
+      f.int('edge_dim', 0, { min: 0 }),
+      { name: 'dataset', type: 'dataset-ref', default: '' } as FieldSpec,
+      // For a manifest dataset: which branch ('ligand'/'protein'/…) this graph is.
+      { name: 'branch', type: 'text', default: '', placeholder: 'ligand' } as FieldSpec,
+    ],
+    summary: (p) => {
+      const sh = get(p, 'shape', [32, 9]) as number[]
+      const ds = String(get(p, 'dataset', ''))
+      const branch = String(get(p, 'branch', ''))
+      const tag = ds ? ` ← ${ds.split('/').pop()}${branch ? `:${branch}` : ''}` : ''
+      return `${get(p, 'name', 'data')}: graph x${JSON.stringify(sh)}${tag}`
     },
   },
   Output: {
@@ -367,20 +400,22 @@ export const LAYERS: Record<string, LayerSpec> = {
     type: 'GCNConv', category: 'Graph', pytorchModule: 'GCNConv',
     needsEdgeIndex: true, pyImports: ['GCNConv'],
     fields: [
-      f.int('in_channels', 16, { min: 1 }),
+      // in_channels = -1 → PyG lazy init (inferred from the data on first forward),
+      // so a GNN binds to any node-feature dimension without manual editing.
+      f.int('in_channels', -1, { min: -1 }),
       f.int('out_channels', 32, { min: 1 }),
       f.bool('improved', false),
       f.bool('cached', false),
       f.bool('add_self_loops', true),
       f.bool('bias', true),
     ],
-    summary: (p) => `gcn ${get(p, 'in_channels', 16)}→${get(p, 'out_channels', 32)}`,
+    summary: (p) => `gcn ${get(p, 'in_channels', -1) === -1 ? 'auto' : get(p, 'in_channels', -1)}→${get(p, 'out_channels', 32)}`,
   },
   GATConv: {
     type: 'GATConv', category: 'Graph', pytorchModule: 'GATConv',
     needsEdgeIndex: true, pyImports: ['GATConv'],
     fields: [
-      f.int('in_channels', 16, { min: 1 }),
+      f.int('in_channels', -1, { min: -1 }),
       f.int('out_channels', 32, { min: 1 }),
       f.int('heads', 1, { min: 1 }),
       f.bool('concat', true),
@@ -388,30 +423,30 @@ export const LAYERS: Record<string, LayerSpec> = {
       f.bool('bias', true),
     ],
     // out dim = out_channels * heads when concat, else out_channels.
-    summary: (p) => `gat ${get(p, 'in_channels', 16)}→${get(p, 'out_channels', 32)}×${get(p, 'heads', 1)}h`,
+    summary: (p) => `gat ${get(p, 'in_channels', -1) === -1 ? 'auto' : get(p, 'in_channels', -1)}→${get(p, 'out_channels', 32)}×${get(p, 'heads', 1)}h`,
   },
   SAGEConv: {
     type: 'SAGEConv', category: 'Graph', pytorchModule: 'SAGEConv',
     needsEdgeIndex: true, pyImports: ['SAGEConv'],
     fields: [
-      f.int('in_channels', 16, { min: 1 }),
+      f.int('in_channels', -1, { min: -1 }),
       f.int('out_channels', 32, { min: 1 }),
       f.select('aggr', ['mean', 'max', 'add', 'min'], 'mean'),
       f.bool('normalize', false),
       f.bool('bias', true),
     ],
-    summary: (p) => `sage ${get(p, 'in_channels', 16)}→${get(p, 'out_channels', 32)}`,
+    summary: (p) => `sage ${get(p, 'in_channels', -1) === -1 ? 'auto' : get(p, 'in_channels', -1)}→${get(p, 'out_channels', 32)}`,
   },
   GraphConv: {
     type: 'GraphConv', category: 'Graph', pytorchModule: 'GraphConv',
     needsEdgeIndex: true, pyImports: ['GraphConv'],
     fields: [
-      f.int('in_channels', 16, { min: 1 }),
+      f.int('in_channels', -1, { min: -1 }),
       f.int('out_channels', 32, { min: 1 }),
       f.select('aggr', ['add', 'mean', 'max'], 'add'),
       f.bool('bias', true),
     ],
-    summary: (p) => `graphconv ${get(p, 'in_channels', 16)}→${get(p, 'out_channels', 32)}`,
+    summary: (p) => `graphconv ${get(p, 'in_channels', -1) === -1 ? 'auto' : get(p, 'in_channels', -1)}→${get(p, 'out_channels', 32)}`,
   },
   GraphTransformer: {
     // PyG TransformerConv — multi-head graph attention à la the Graph Transformer.
@@ -447,6 +482,58 @@ export const LAYERS: Record<string, LayerSpec> = {
     pyImports: ['global_add_pool'], fields: [],
     forwardExpr: (xs, _p, aux) => `global_add_pool(${xs[0]}, ${aux.batch ?? 'batch'})`,
     summary: () => 'add pool → [B, F]',
+  },
+
+  // ─── Build a graph from node features at runtime (x → edge_index) ───────
+  BuildGraph: {
+    // Computes edge_index from the node features [N, F] so downstream GNN
+    // layers don't need a separate edge_index Input. The generator picks the
+    // produced edge_index up automatically (see codegen aux wiring).
+    type: 'BuildGraph', category: 'IO', pytorchModule: '', kind: 'function',
+    // Pure-torch (cdist + topk) — no torch-cluster / pyg-lib dependency, runs on CPU.
+    // `dims` selects which columns of x define the distance (empty = all); the
+    // node features passed downstream are always the full x.
+    fields: [
+      f.select('method', ['knn', 'radius', 'fully_connected'], 'knn'),
+      f.int('k', 6, { min: 1 }),
+      f.float('radius', 1.0, { min: 0, step: 0.1 }),
+      f.intList('dims', []),
+      f.bool('loop', false),
+      f.bool('cosine', false),
+    ],
+    forwardExpr: (xs, p) => {
+      const x = xs[0]
+      const loop = get(p, 'loop', false)
+      const method = String(get(p, 'method', 'knn'))
+      if (method === 'fully_connected') {
+        const cp = `torch.cartesian_prod(torch.arange(${x}.size(0), device=${x}.device), torch.arange(${x}.size(0), device=${x}.device)).t()`
+        return loop ? cp : `(lambda _ei: _ei[:, _ei[0] != _ei[1]])(${cp})`
+      }
+      // The distance basis: a subset of x columns if `dims` is set, else all of x.
+      const dims = get(p, 'dims', []) as number[]
+      const xd = dims.length ? `${x}[:, [${dims.join(', ')}]]` : x
+      if (method === 'radius') {
+        const r = get(p, 'radius', 1.0)
+        const filt = loop ? '_ei' : '_ei[:, _ei[0] != _ei[1]]'
+        return `(lambda _ei: ${filt})((torch.cdist(${xd}, ${xd}) <= ${r}).nonzero().t())`
+      }
+      // knn: distances → k nearest per node (excluding self unless loop)
+      const k = get(p, 'k', 6)
+      const norm = `(${xd} / ${xd}.norm(dim=1, keepdim=True).clamp_min(1e-12))`
+      const dist = get(p, 'cosine', false) ? `(1 - ${norm} @ ${norm}.t())` : `torch.cdist(${xd}, ${xd})`
+      const nbr = loop
+        ? `${dist}.topk(min(${k}, ${x}.size(0)), largest=False).indices`
+        : `${dist}.topk(min(${k} + 1, ${x}.size(0)), largest=False).indices[:, 1:]`
+      return `(lambda _nbr: torch.stack([torch.arange(${x}.size(0), device=${x}.device).repeat_interleave(_nbr.size(1)), _nbr.reshape(-1)]))(${nbr})`
+    },
+    summary: (p) => {
+      const m = String(get(p, 'method', 'knn'))
+      const dims = get(p, 'dims', []) as number[]
+      const on = dims.length ? ` on dims [${dims.join(',')}]` : ''
+      if (m === 'radius') return `graph: radius r=${get(p, 'radius', 1.0)}${on}`
+      if (m === 'fully_connected') return 'graph: voll-verbunden'
+      return `graph: kNN k=${get(p, 'k', 6)}${on}`
+    },
   },
 
   // ─── Reshape (functional 1→1, no nn.Module) ────────────────────────────
