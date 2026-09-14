@@ -1,7 +1,11 @@
 import { create } from 'zustand'
 
-// LLM source selection for the chatbot. Three transport kinds map onto the
-// sidecar's three code paths (sidecar-llm/main.mjs):
+// LLM source selection for the chatbot. Transport kinds map onto the
+// sidecar's code paths (sidecar-llm/main.mjs):
+//   opencode       → the `opencode` CLI (DEFAULT). The model is driven ONLY
+//                    through the sidecar's MCP tool bridge — every operation
+//                    it proposes flows through the same validation gate as
+//                    the Claude paths. Model = `opencode/<model>`.
 //   subscription  → claude-agent-sdk via the local `claude` CLI (OAuth, no key)
 //   anthropic     → direct Anthropic Messages API (API key)
 //   openai-compat → OpenAI Chat Completions API (OpenAI, Gemini, Ollama, …)
@@ -9,7 +13,7 @@ import { create } from 'zustand'
 // Config (incl. API keys) is persisted to localStorage — same approach as the
 // connections store. Keys live in the desktop app's webview storage only.
 
-export type LlmKind = 'subscription' | 'anthropic' | 'openai-compat'
+export type LlmKind = 'opencode' | 'subscription' | 'anthropic' | 'openai-compat'
 
 export type ProviderSpec = {
   id: string
@@ -28,6 +32,15 @@ export type ProviderSpec = {
 }
 
 export const PROVIDERS: ProviderSpec[] = [
+  {
+    id: 'opencode',
+    label: 'OpenCode',
+    kind: 'opencode',
+    needsKey: false,
+    defaultModel: 'opencode/big-pickle',
+    models: ['opencode/big-pickle', 'opencode/mimo-v2.5-free', 'opencode/ling-3.0-flash-fin-free'],
+    hint: 'Standard-Provider. Lokale opencode-CLI; Modellliste wird vom CLi geladen.',
+  },
   {
     id: 'claude-subscription',
     label: 'Claude (Subscription)',

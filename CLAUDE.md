@@ -5,6 +5,15 @@ session that touches this repo. It assumes you've read README.md once for
 context. Everything below is operational: how to make changes, where things
 live, what to verify, what not to break.
 
+> **READ `docs/FEATURES.md` FIRST when implementing or operating SpinoML.**
+> It is the capability catalog — what features exist, how a user/the chatbot
+> drives them, and which source file is the truth for each — so you can act
+> without re-deriving the app. CLAUDE.md (this file) is the *code-change*
+> runbook (how/where to edit + invariants); FEATURES.md is *what it does*.
+> **MANDATE:** whenever you add or change a user-facing feature, update the
+> relevant section of `docs/FEATURES.md` AND add a dated line to its Changelog,
+> in the same change. Keep it concepts+pointers — never duplicate code there.
+
 ## TL;DR project map
 
 ```
@@ -22,6 +31,25 @@ src/
                   The `Graph` node (kind input, graphInput:true) is ONE whole
                   PyG Data (x+edge_index+batch+edge_attr) — binds 1:1 to a graph
                   dataset / manifest branch; one intuitive node per GNN input.
+                  The `Sequence` node (kind input, int64) is a token-id input
+                  (char/byte vocab) bound to a manifest branch `kind:"sequence"`.
+                  The `ESPF` node (kind input, int64) tokenizes a SMILES branch
+                  (`kind:"espf"`) into INTERPRETABLE substructure subword tokens
+                  via the vendored MolTrans ESPF BPE codebook (sidecar-torch/espf/,
+                  BSD-3) — feeds an Embedding like Sequence but chemically
+                  meaningful (token id ↔ named substructure; surfaced as labels in
+                  the Explain view). Sidecar tokenizes inline (dataset_handlers.
+                  tokenize_espf); training reads a compact codebook the sidecar
+                  caches next to the manifest in <manifest_dir>/.espf/ (primed on
+                  inspect — the .graphcache analog). No `subword-nmt` dep: the BPE
+                  apply is pure-Python (parity-tested vs the reference).
+                  The `DataOp` node (kind 'dataop', category 'Data') is a
+                  DATA-stage node, NOT a model layer: it carries a Python
+                  `script` run OFFLINE (via the chatbot's write_file+run_script)
+                  to download/tokenize/cache a dataset; in generator.ts it is a
+                  pure passthrough (aliases its predecessor's var, emits nothing
+                  into forward) so it never perturbs model codegen. Inspector's
+                  DataOpPanel "Vorverarbeitung ausführen" kicks off that run.
   codegen/        generator.ts — graph → PyTorch nn.Module source. A Graph
                   input becomes a Data forward-arg; where a built-in GNN/pool
                   consumes it the generator emits `x, edge_index, batch =
@@ -117,19 +145,44 @@ sidecar-torch/dataset_handlers.py per-kind inspect/stats/sample_tensor for
                                   = `pyg:Planetoid/Cora`), and the tensor kind
                                   loads a saved PyG Data `.pt` (their graphein
                                   pipeline output) exposing all fields.
-sidecar-llm/main.mjs    HTTP/SSE server on 127.0.0.1:7422. Three LLM source
-                        paths chosen per /chat request via `payload.llm.kind`:
-                        'subscription' (claude-agent-sdk + OAuth, the default
-                        + in-process MCP server), 'anthropic' (@anthropic-ai/sdk
-                        Messages API), 'openai-compat' (openai SDK — OpenAI,
-                        Gemini, Ollama). buildToolSpecs() is the single
+sidecar-llm/main.mjs    HTTP/SSE server on 127.0.0.1:7422. LLM source paths chosen
+                        per /chat request via `payload.llm.kind`: 'opencode' (the
+                        DEFAULT — spawns `opencode run --format json -m <model>`
+                        per turn; the model is exposed ONLY the `graph` MCP tool
+                        server `sidecar-llm/mcp-bridge.mjs` (stdio → `POST
+                        /internal/mcp/<requestId>/list|call`) so all its operations
+                        flow through the same validation gate as Claude. Built-in
+                        opencode tools (read/bash/write/…) disabled via inline
+                        config. Frontend model list: `GET /opencode/models`.),
+                        'subscription' (claude-agent-sdk + OAuth, in-process MCP
+                        server), 'anthropic' (@anthropic-ai/sdk Messages API),
+                        'openai-compat' (openai SDK — OpenAI, Gemini, Ollama).
+                        buildToolSpecs() is the single
                         provider-neutral tool registry; all three paths share
                         the same handlers + `actions` SSE mirror. Frontend
                         provider/key selection lives in src/chat/providerStore.ts
                         (localStorage) + ProviderSettings.tsx.
+                        Agent tools beyond graph mutation: read_file / write_file
+                        (incl. .py/.sh under agent/, datasets/, notes/) / list_dir
+                        / run_script (mode 'shell' = run now where the workspace
+                        lives, HARD-CAPPED at 2 min on a remote login node then
+                        killed + told to use SLURM; 'slurm' = sbatch for heavy
+                        compute; shell stdout/stderr STREAM live to the chat via
+                        the `log` SSE event) / slurm_status,
+                        all routed local-or-ssh like writeDatasetFile. `agent/`
+                        is the scratch dir. run_script is GUI-GATED: it calls
+                        askUser({kind:'confirm'}) and only runs on approval.
+                        ASK/ANSWER CHANNEL: askUser() emits an SSE `ask` event and
+                        AWAITS the answer POSTed to the new `POST /respond`
+                        endpoint (pendingAsks map, per-turn registry rejected on
+                        turn-end/disconnect). Backs both the ask_user tool and the
+                        run confirm. Frontend: client.ts `ask`+respondToChat,
+                        store.ts pendingAsk/answerAsk, ChatPanel QuestionCard.
+                        Chat font scale = src/chat/uiStore.ts (A−/A+ in header).
 
-scripts/verify-codegen.ts    runs generator over 4 graphs and execs the
-                             generated Python to confirm shape/output.
+scripts/verify-codegen.ts    runs generator over ~13 graphs and execs the
+                             generated Python to confirm shape/output (incl. a
+                             DataOp-passthrough case asserting it emits nothing).
 scripts/verify-sidecar.ts    autostarts the torch sidecar and asserts
                              happy-path + intentional-error responses.
 ```
@@ -183,6 +236,8 @@ conda activate spinoml-dev          # always start here
 npm run build                       # tsc + vite, must be green
 npm run verify:codegen              # 4 codegen cases, runs python on each
 npm run verify:sidecar              # autostarts torch sidecar + asserts
+npm run verify:opencode             # LLM sidecar must be up; asserts /opencode/models
+                                    # + a real opencode chat + clean bogus-model error
 ```
 
 After Rust changes:
@@ -238,7 +293,9 @@ Adding e.g. a `list-of-int` field touches:
    `action` op to a GraphStore mutation.
 4. Update `allowedTools` in the subscription `query()` config in main.mjs
    (only the subscription path needs the `mcp__graph__<name>` allow-list; the
-   anthropic / openai-compat loops expose every spec automatically).
+   anthropic / openai-compat loops expose every spec automatically, and the
+   opencode path serves every spec via the MCP bridge `mcp-bridge.mjs` without
+   an allow-list).
 5. Bump `maxTurns` (subscription) / `MAX_TOOL_TURNS` (direct-API loops) if your
    tool takes many calls per request.
 6. Update CLAUDE-the-model's awareness via `buildSystemPrompt`: mention
@@ -260,6 +317,34 @@ Adding e.g. a `list-of-int` field touches:
    from inspect, and switch cases in `OverviewBody`/`StatsBody`.
 5. Optional Python deps: lazy-import inside the handler; on `ImportError` return
    `_missing_dep(kind, "pip-name")` — the UI shows a hint with the pip command.
+
+### Multitask training (multiple output heads)
+
+The trainer is uniformly multi-head; single-task is just one head.
+- **Data model**: `TrainingConfig.heads?: Head[]` (types.ts). Each `Head` =
+  `{output, target, loss, weight, label_smoothing?}`. `output` matches a model
+  `Output` node's name (the dict key `forward()` returns); '' = the sole output.
+  When `heads` is present (≥1) the run is multitask; otherwise the legacy
+  `loss` + `dataset.target_column` path is used.
+- **Graph**: a `Head` node (training registry, category Objective, `multi`).
+  ≥1 Head node → multitask; the single `Loss` node + `DatasetSource.target`
+  become optional. Compiled in `trainingGenerator.ts` (`byType('Head')`); the
+  Head node's `target` column field resolves against the graph's DatasetSource
+  (TrainingInspector computes `boundDataset` from it since a Head has no
+  `dataset` param of its own).
+- **Python** (`training_template.py`): `resolve_heads()` builds the head list
+  (single-task synthesises one head); `load_tabular`/`load_manifest_graphs`
+  return per-head targets keyed by output name; `MultiTaskDataset` +
+  `make_collate` yield `(xb, {output → y})`; `resolve_outputs()` maps the model
+  return (dict by name / tuple by order / single tensor) to per-head tensors;
+  the objective is the weighted sum of per-head losses. Per-head metrics are
+  emitted namespaced `"<output>/<metric>"` (so `metricSeries` auto-charts them),
+  and `eval.summary`/`sample.preds` carry a per-head `heads:[…]` array.
+- **UI**: `RunDetailModal` renders one eval section per head (multitask) via
+  `latestEvalHeads`/`EvalDiagram`; `NewRunModal` shows a read-only heads summary
+  instead of the single target picker when `cfg.heads` is set.
+- **Verify**: `npm run verify:traingen` covers both compile and an end-to-end
+  2-head (classification + regression) run.
 
 ### Add a Rust filesystem command
 

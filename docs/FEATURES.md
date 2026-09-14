@@ -1,0 +1,301 @@
+# SpinoML — feature & operation guide (read this first)
+
+> **Purpose.** This is the fast, LLM-oriented map of *what SpinoML can do and how
+> to operate it* — so you (a future Claude session, or the in-app chatbot) can act
+> immediately without re-deriving the whole app. CLAUDE.md is the *code-change
+> runbook* ("how/where to edit"); this file is the *capability catalog* ("what
+> exists, how it's used, where the source of truth lives").
+>
+> **Maintenance rule (do not skip).** This doc is **concepts + pointers**, never a
+> copy of code. When you add/change a user-facing feature, (1) update the relevant
+> section here and (2) add a dated line to the **Changelog** at the bottom. Exact
+> enumerations (every layer, every dataset kind) live in the cited source files —
+> link to them, don't duplicate them (duplicates rot).
+
+---
+
+## 1. What SpinoML is
+
+A desktop (Tauri) + browser app for building, inspecting, training, and explaining
+PyTorch models **visually on a canvas**, with an LLM chatbot that can drive every
+operation. Target user builds paper-grade ML (graph/GNN + molecular/protein
+dual-encoders). The canvas → PyTorch codegen is **pure** (same graph → same code).
+
+Three runtimes (see CLAUDE.md "Two execution modes"): browser dev, Tauri dev,
+installed `.deb`. Two FS backends in Tauri: **local** folder or **remote-ssh** HPC
+workspace (dispatched in `src/connections/backend.ts`).
+
+## 2. The three canvases
+
+Each is a separate Zustand store + registry + codegen, file-bound via
+`canvasdoc/CanvasFileGate`:
+
+| Canvas | Builds | Registry (source of truth) | Codegen | File |
+|---|---|---|---|---|
+| **Architecture** | a `nn.Module` | `src/layers/registry.ts` | `src/codegen/generator.ts` | `*.spinoml` |
+| **Training** | a training config | `src/training/graph/registry.ts` | `src/codegen/trainingGenerator.ts` | `*.spinotrain` |
+| **Data** | one linear pandas pipeline | `src/data/graph/registry.ts` | `src/codegen/dataGenerator.ts` | `*.spinodata` |
+
+## 3. Architecture nodes (the model)
+
+The full list + every param lives in **`src/layers/registry.ts`** (`LAYERS`). Mental
+model by `kind`:
+
+- **`input`** — becomes a `forward()` argument. Types:
+  - `Input` — a plain tensor (set `shape`, `dtype`).
+  - `Graph` (`graphInput:true`) — ONE whole PyG `Data` (x+edge_index+batch+edge_attr);
+    feed a GNN/pool and the generator unpacks `x, edge_index, batch = g.x, …`.
+  - `Sequence` — token-id `LongTensor` (int64) → Embedding/Transformer. Bound to a
+    manifest branch `kind:"sequence"` (char/byte tokenizer).
+  - `ESPF` — SMILES tokenized into **interpretable substructure** subword tokens
+    (MolTrans ESPF codebook) → Embedding. Bound to a manifest branch `kind:"espf"`.
+    Params: `codebook` (`drug`/`protein`), `shape` (max tokens, default 50). Token
+    id ↔ named substructure; substructures surface in the Explain view.
+- **`output`** — `Output` node; its `name` is the dict key `forward()` returns
+  (multi-output models return a dict; ≥1 `Head` in training → multitask).
+- **`manifest`** — `Manifest` node: a **non-emitting** pairing descriptor. Bind it
+  to a `.manifest` and draw one edge → each typed input to declare which branch
+  feeds which. Generates no model code (see §5).
+- **`module`** — standard `nn.*` layers (Conv/Linear/Norm/Activation/Pool/Attention/
+  Recurrent) + GNN (`GCNConv`/`GATConv`/`SAGEConv`/`GraphConv`/`GraphTransformer`,
+  `GlobalMean/Max/AddPool`). GNN layers act on node features `[N, in_ch]` (no batch).
+- **`merge`** (`Concat`/`Add`/`Multiply`/`Stack`) — N→1; **`function`**
+  (`Reshape`/`View`/`Permute`/`Transpose`, global pools) — 1→1.
+- **`custom`** — free-form `nn.Module` from source. **`group`** (`Subgraph`) — nested
+  reusable class (double-click → subcanvas); put each dual-encoder branch in its own.
+- **`dataop`** — `DataOp` (category Data): carries a Python `script` run OFFLINE via
+  the chatbot (`write_file`+`run_script`) to download/tokenize/cache a dataset; a
+  pure passthrough in codegen.
+
+**Adding a layer = editing `registry.ts` only** (recipe in CLAUDE.md). Codegen is
+uniform; multi-input/branching layers need teaching `generator.ts`.
+
+## 4. Datasets
+
+Kinds + handlers live in **`sidecar-torch/dataset_handlers.py`** (and the UI types in
+`src/datasets/types.ts`). Each kind has inspect / stats / sample. Kinds: tabular,
+image_folder, tensor (`.pt`/`.npy`), protein (`.pdb`), molecule (SMILES), pyg,
+huggingface, **manifest** (§5). A **prepared dataset DIRECTORY** (a folder whose primary
+content is a table — `pairs.csv`/`data.csv`/the main CSV — optionally with side files like
+`sequences.csv`, per-id embeddings, a `prep_card.json`; e.g. a TDC BindingDB export) is read
+as **tabular on its inner table** (`detect_kind`/`_table_path`/`_dir_table`; inspect surfaces
+the `bundle`), so such dirs are selectable for external validation (§6b). Heavy deps
+(pandas/PIL/rdkit/biopython/torch_geometric) are lazy-imported → graceful `missing_dep`
+instead of a crash. Datasets appear live in the Datasets tab when written under `datasets/`.
+
+## 5. Manifests (paired / dual-encoder datasets)
+
+A `.manifest` is a JSON descriptor pairing a **table** to **per-branch sources**
+row-by-row (e.g. ligand SMILES + protein graph + target). Authoring: the chatbot's
+`write_dataset_file`. Schema + branch resolution doc: the comment block above
+`_read_manifest` in `sidecar-torch/dataset_handlers.py`.
+
+Branch `kind` (HOW a cell becomes a tensor, and which input node consumes it):
+
+| `kind` | cell → tensor | input node | key fields |
+|---|---|---|---|
+| `molecule` | RDKit atom/bond graph from SMILES | `Graph` | `column` |
+| `espf` | ESPF substructure subword ids (MolTrans) | `ESPF` | `column`, `codebook` (`drug`/`protein`), `max_len` |
+| `sequence` | char/byte token ids | `Sequence` | `column`, `vocab` (`protein`/`smiles`/chars/omit), `max_len` |
+| *(file)* | `torch.load` a `.pt` | `Graph` | `column`, `dir` (ABSOLUTE), `match` (`exact`/`contains`), `ext` |
+
+Any branch may also carry **`lookup`** — JOIN a side table by key to resolve the real
+cell value before tokenizing/loading (e.g. a `prot_seq` branch keyed by `uniprot`
+pulls the sequence from `sequences.csv`): `{column: "uniprot", lookup: "sequences.csv",
+lookup_key: "uniprot", lookup_value: "sequence", kind: "espf", codebook: "protein"}`.
+Tensor branches batch by N-D padding (`_pad_stack`): 1-D tokens → `[B, Lmax]`, 2-D
+per-residue/atom features/embeddings → `[B, Lmax, D]`.
+
+`target`: `{column, type:"classification"|"regression"}`. Inspecting a manifest in
+the Datasets tab shows each branch's suggested node type + the Embedding
+`num_embeddings` for sequence/ESPF branches. Sidecar tokenizes inline at
+sample/train; ESPF caches a compact codebook to `<manifest_dir>/.espf/` (the
+`.graphcache` analog) so the standalone training snapshot is self-contained.
+
+## 6. Training
+
+- Uniform **multitask**: `TrainingConfig.heads?: Head[]` (one head per model output);
+  single-task = one head. Graph: a `Head` node (Objective). Compiled in
+  `trainingGenerator.ts`; executed by `sidecar-torch/training_template.py`.
+- A **run** = a self-contained dir `experiments/runs/<id>/` (frozen `model.py` +
+  `train.py` snapshot + `run.json`); see `src-tauri/src/training.rs`. Runs locally
+  (`setsid python train.py`) or via SLURM on remote. The training store polls run
+  status (slower cadence on remote ssh).
+- Trainable dataset kinds: **tabular** + **manifest**. Manifest branches batch as
+  PyG `Batch` (graphs) or padded `[B, Lmax]` LongTensors (sequence/ESPF).
+- **GPU**: `training_template.py` picks `cuda` when available, moves the model AND
+  every batch (`to_device`, recurses tuples/dicts/PyG Batch) onto it; eval tensors
+  come back to CPU for the JSON summaries. The actual device is recorded in
+  `metrics.json` (`device`/`gpu`) and the `model.built` event. The SLURM form's
+  `#SBATCH --gres=gpu:1` + `module load <cuda>` (ssh.rs) now actually trains on the
+  GPU — before, the template never left the CPU regardless of the allocation.
+- Verify: `npm run verify:traingen` (compile + 2-head e2e).
+
+## 6b. External validation (run a trained model on a foreign/benchmark dataset)
+
+Validate a FINISHED run's checkpoint on a NEW labeled dataset → eval metrics, no
+retraining. An **eval run is a normal run** with `run.json` `eval_only:true` +
+`validate:{checkpoint_from, source_run, adapter}` — launched via the same
+`training.start` (no new Rust command). `training_template.py` `main()` branches to
+the eval-only path: load the source `best.pt`, evaluate the WHOLE external dataset
+once via the shared `evaluate()`/`emit_eval()` (same `eval.summary`/`sample.preds`
+the Run-Detail UI renders), write `metrics.json`, done. Classification targets are
+encoded against the checkpoint's **trained** `head_classes` (correctness — indices
+must match the model).
+
+- **Entry**: "Externe Validierung" button on a finished run (`RunDetailModal`,
+  shown when `has_checkpoint && !eval_only`). Eval runs get a **VAL** badge in
+  `ExperimentsExplorer` and an "EXTERNE VALIDIERUNG" banner in the detail modal.
+- **Adapter** (`src/training/adapter.ts`, pure + unit-tested): `modelContract`
+  derives the model's trained schema (features-in-order / target / branches) from
+  the source run + its dataset inspect; `suggestAdapter` auto-maps the external
+  columns (exact → fuzzy name → numeric dtype → SMILES sniff), flagging unmatched
+  roles. `EvalRunModal.tsx` shows the mapping as an editable table (auto = the
+  suggestion, edit = manual → **hybrid**). The eval loader consumes the chosen
+  external `feature_columns`/`target_column` directly — rename/select/reorder needs
+  **no materialization**.
+- **Per-output selection**: a multi-output model can be validated on a subset of its
+  heads — de-select outputs the external set has no target for (e.g. validate only the
+  classification head when there's no affinity column). `EvalRunModal` checkboxes →
+  `EvalRunInput.heads` → `training.heads` for the eval run.
+- **Manifest model on a prepared DIRECTORY**: `EvalRunModal` generates an *editable
+  adapted manifest* (`buildAdaptedManifest`) — reuses the source model's branch
+  kinds/codebooks and points each branch at a directory resource: SMILES column →
+  drug-ESPF; ligand 3D → inline `molecule` graph (no precompute); protein sequence →
+  `lookup` join into `sequences.csv`; per-protein `.pt` → `dir`. The modal **inspects
+  the written manifest first** so the sidecar materializes the `.espf` cache the run
+  needs, then validates the selected output(s).
+- **Complex adaptation** (units, log-scale, computed cols, structure→graph, building
+  a matching manifest): the "Im Daten-Canvas anpassen" button seeds the Data canvas
+  (§2) on the external dataset → user builds a pandas pipeline → `WriteDataset` →
+  validate on the adapted output. The eval engine is kind-agnostic (tabular,
+  molecule/SMILES, manifest, structure files) — it runs the model over whatever the
+  loader yields.
+- Verify: `npm run verify:traingen` (case 5: train → eval-only on a RENAMED dataset
+  → asserts no training loop, trained-class confusion, `metrics.json` eval_only).
+
+## 7. The in-app chatbot (`sidecar-llm/main.mjs`)
+
+SSE server on :7422. Four provider paths (`opencode` [DEFAULT] / `subscription` /
+`anthropic` / `openai-compat`) share one tool registry (`buildToolSpecs`). The
+`opencode` path spawns the `opencode` CLI per chat turn (`opencode run --format
+json --model <model>`) with the model driven ONLY through a stdio MCP tool
+server (`sidecar-llm/mcp-bridge.mjs`, named `graph` → tools appear as
+`graph_<name>`); every opencode built-in tool is disabled so nothing can bypass
+the graph-validation gate. Tool calls proxy via `POST /internal/mcp/<requestId>/
+list|call` to the SAME handlers as the other paths. Model list for the settings
+UI: `GET /opencode/models` (`opencode models`, cached 60s). System prompt:
+`buildSystemPrompt`. Tools (each mirrors an `action` to the frontend store):
+- Graph mutation: `add_layer` / `connect` / `update_params` / `add_subgraph` / …
+  (architecture), `add_data_node` (data canvas), training-param tools.
+- Files/exec: `read_file` / `write_file` / `list_dir` / `write_dataset_file`
+  (manifests/CSVs) / `run_script` (mode `shell` = run now, GUI-gated; `slurm` =
+  sbatch) / `slurm_status`. All routed local-or-ssh. `agent/` is the scratch dir.
+- Ask/answer: `ask_user` + run confirm via the `ask`/`POST /respond` channel.
+- Provenance: `record_step` → `notes/lab-notebook.md` (reproducibility).
+
+When you add an LLM tool or a node, update the relevant strings in `main.mjs`
+(`add_layer` list/prose, `write_dataset_file` schema, `buildSystemPrompt`) so the
+chatbot knows about it — recipe in CLAUDE.md "Add a new LLM tool".
+
+## 8. Inspect / smoke-test / Explain
+
+- **Shape inference**: `src/inference/store.ts` (debounced, re-entrancy-guarded) →
+  `inferredOutputShape` on nodes.
+- **Smoke test**: `src/datasets/store.ts` `runSmoke` → POST `/dataset/*` and
+  `/infer`; feeds real sampled data through the model (kind-driven over input nodes).
+- **Explain mode** (`src/visualization/`): on-demand forward pass → POST
+  `/activations` → per-node activations + weights (downsampled). The `tokens`
+  preview shows ESPF substructure **labels** when the input is an ESPF node.
+
+## 9. Common tasks (how to do X)
+
+- **Build a dual-encoder (ligand + protein → affinity)**: `Manifest` → `Graph`
+  (ligand `kind:"molecule"`) + `Graph`/`Sequence`/`ESPF` (protein) → per-branch
+  encoder (own `Subgraph`) → `Concat`/bilinear head → `Output`; manifest `target` =
+  affinity. Templates: `src/templates/templates.ts` (`buildDualEncoderGnn`).
+- **Tokenize SMILES interpretably**: manifest branch `kind:"espf"` + an `ESPF` node
+  → `Embedding(num_embeddings=ESPF vocab)` → 1D-CNN/Transformer.
+- **Offline preprocessing**: a `DataOp` node (or the Data canvas), script under
+  `agent/`, run via `run_script`; write outputs under `datasets/`.
+
+## Changelog (append one dated line per feature; newest first)
+
+- 2026-09-14 — **OpenCode as first-class LLM provider** (default): `kind:'opencode'` in
+  the sidecar spawns `opencode run --format json` per chat turn; the model is exposed
+  ONLY the `graph` MCP tool server (`sidecar-llm/mcp-bridge.mjs`, stdio → `POST
+  /internal/mcp/<requestId>/list|call`) → same `execTool` validation gate as Claude.
+  Built-in opencode tools (read/bash/write/…) disabled via inline config
+  (`OPENCODE_CONFIG_CONTENT`). `GET /opencode/models` (cached). Frontend:
+  `providerStore.ts` adds an `opencode` provider (first, default `opencode/big-pickle`),
+  `ProviderSettings.tsx` model datalist fed from the live list, badge shows the model.
+  Verify: `npm run verify:opencode`. Docs/CLAUDE.md updated.
+- 2026-06-26 — **Duplicate edge-id fix** (`training/graph/store.ts`, `data/graph/store.ts`):
+  edge ids were `e${edges.length+1}`, which collides after a delete-then-add (load
+  e1..e10, delete one, add → e10 again) → duplicate React keys that destabilize
+  React Flow (observed as a frozen webview). Added `freshEdgeId` (max existing
+  `e<n>` + 1), used in both onConnect and connectNodes.
+- 2026-06-24 — **Manifest preprocessing speedup** (`training_template.py`):
+  `load_manifest_graphs` now memoizes each branch's result by raw cell value
+  (in-memory dedup — collapses ESPF tokenization / `torch.load` / lookup from
+  #rows to #unique values, 10-50× on dual-encoder sets like BindingDB) AND caches
+  ESPF token ids to disk (`.graphcache/espf_<codebook>_<hash>.pt`, deterministic
+  per codebook+max_len+value) so re-runs start fast. Emits periodic
+  `dataset.preprocess {done,total,kept,skipped}` events so a long single-threaded
+  preprocess no longer looks frozen (no event between run.start and dataset.loaded).
+- 2026-06-24 — **SLURM run logs + hardware fix** (`RunDetailModal.tsx`, `ssh.rs`,
+  `training.rs`): the Logs tab now reads `slurm-<jobid>.out/.err` for SLURM runs
+  (job id from the `pid` file `slurm:<id>`) instead of the non-existent
+  `stdout.log/stderr.log` — `is_readable()` whitelists those names. The Hardware tab
+  passes the run id to `gpuStats`; `ssh_gpu_stats` probes the COMPUTE node via
+  `srun --overlap --jobid=<id> nvidia-smi` (was hitting the login node, which has no
+  GPU), falling back to the login-node probe when the alloc is gone.
+- 2026-06-24 — **Run status filter**: the Experiments browser (`ExperimentsExplorer.tsx`)
+  gained client-side status-filter chips (Alle / running / queued / done / failed /
+  cancelled, with counts; only statuses present are shown). Also removed the redundant
+  Auto-Modus info banner in the chat panel (the toggle button stays).
+- 2026-06-24 — **GPU training fix**: `training_template.py` now moves the model and
+  every batch onto `cuda` when available (new `to_device` helper; eval tensors return
+  to CPU for summaries). Previously the run stayed on CPU even with `#SBATCH --gres=gpu:1`
+  + a CUDA module loaded — `device_type` was computed but never applied. Records the
+  real `device`/`gpu` in `metrics.json` + `model.built`. (Was filed as the "cosmetic"
+  Bug #7 in the 2026-06-19 handoff; it was the actual GPU-placement bug.)
+- 2026-06-23 — **External-validation fixes**: a manifest model ALWAYS uses the
+  manifest-builder (not column-mapping) so it loads as a manifest (4 branch args,
+  not a flat tensor); EvalRunModal gained **SLURM/local backend selection** (defaults
+  to SLURM on a remote HPC); directory resources (table columns, side CSVs, sub-dirs)
+  are shown for reference. `buildAdaptedManifest` now takes fs-derived `DirResources`.
+- 2026-06-23 — **Dual-encoder external validation**: manifest `lookup` branch (JOIN a
+  side table by key, e.g. protein sequence by uniprot), N-D `_pad_stack` (2-D
+  embeddings → `[B,Lmax,D]`), `batch_len` handles mixed graph/tensor branches,
+  per-output head selection, and a directory→adapted-manifest builder
+  (`buildAdaptedManifest`) in EvalRunModal. Validates a manifest dual-encoder on a
+  prepared directory (e.g. TDC BindingDB) using only the available output(s).
+- 2026-06-23 — **Prepared dataset directories**: a folder with a primary table
+  (`pairs.csv`/…) + side files (sequences/embeddings/`prep_card.json`) is recognized
+  as tabular on its inner table; selectable for external validation. (sidecar
+  `detect_kind`/`_table_path`, `load_tabular`; EvalRunModal includes dirs.) NEEDS
+  remote-sidecar redeploy for a remote workspace.
+- 2026-06-23 — **External validation + data adapter**: validate a trained run's
+  checkpoint on a foreign/benchmark dataset (eval-only run via `training.start`,
+  reusing the eval engine + UI). Auto/manual/hybrid column-mapping adapter
+  (`adapter.ts`, `EvalRunModal.tsx`) fits the external dataset to the model's
+  trained schema; Data-canvas escalation for complex transforms. Trained-class
+  encoding preserved. See §6b.
+
+- 2026-06-23 — **Fix (canvas edges)**: nodes re-measure handle bounds on any size
+  change (ResizeObserver in `LayerNode.tsx`), so edges no longer render at stale
+  positions when a node grows (summary/shape line/Explain preview).
+- 2026-06-23 — **Fix (HPC state persistence)**: backgrounding/reloading a remote
+  project no longer resets the chatbot or closes the open `.spinoml`. (a) Same-root
+  re-bootstrap preserves `activeFileId` and `refresh()` doesn't blank to Welcome
+  when already loaded (`project/store.ts`); (b) the open-file BINDING is persisted
+  per workspace and restored after bootstrap — content comes from the autosave, so
+  unsaved edits survive (`recentWorkspaces.ts`, `workspace/store.ts`); (c) chat
+  history is persisted to localStorage and restored on reload, cleared only on an
+  explicit project close (`chat/store.ts`).
+- 2026-06-23 — **ESPF node**: `ESPF` input + manifest `kind:"espf"` (MolTrans
+  substructure tokenizer, vendored codebook `sidecar-torch/espf/`, pure-Python BPE,
+  interpretable labels in Explain). See `memory/espf-tokenization-node.md`.
+- 2026-06-23 — **Sequence branches**: manifest `kind:"sequence"` (char/byte
+  tokenizer) feeding the `Sequence` input node, end-to-end sample + train.

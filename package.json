@@ -14,6 +14,7 @@
     "verify:codegen": "tsx scripts/verify-codegen.ts",
     "verify:traingen": "tsx scripts/verify-traingen.ts",
     "verify:sidecar": "tsx scripts/verify-sidecar.ts",
+    "verify:opencode": "tsx scripts/verify-opencode.ts",
     "sidecar:torch": "python sidecar-torch/main.py",
     "sidecar:llm": "node sidecar-llm/main.mjs"
   },
@@ -27,7 +28,9 @@
     "@xyflow/react": "^12.11.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
+    "react-markdown": "^10.1.0",
     "react-resizable-panels": "^4.11.2",
+    "remark-gfm": "^4.0.1",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

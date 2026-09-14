@@ -1,8 +1,9 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { PROVIDERS, providerById, useProviderStore } from './providerStore'
+import { fetchOpenCodeModels } from './client'
 
 const INPUT =
-  'w-full rounded border border-[#1f2429] bg-[#0b0e11] px-2 py-1 text-[12px] text-[#e6e8eb] outline-none focus:border-[#6ab7ff]'
+  'w-full rounded border border-[#1f2429] bg-[#0b0e11] px-2 py-1 text-[12px] text-[#e6e8eb] outline-none focus:border-[var(--accent)]'
 
 export default function ProviderSettings({ onClose }: { onClose: () => void }) {
   const currentId = useProviderStore((s) => s.currentId)
@@ -18,6 +19,16 @@ export default function ProviderSettings({ onClose }: { onClose: () => void }) {
 
   const provider = providerById(currentId)
   const cfg = configs[provider.id] ?? {}
+  const isOpenCode = provider.kind === 'opencode'
+  // Live model list from the `opencode models` CLI (cached in the sidecar);
+  // merged into the datalist ahead of the static suggestions.
+  const [liveModels, setLiveModels] = useState<string[]>([])
+  useEffect(() => {
+    if (!isOpenCode) return
+    let live = true
+    fetchOpenCodeModels().then((m) => { if (live) setLiveModels(m) })
+    return () => { live = false }
+  }, [isOpenCode])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6" onClick={onClose}>
@@ -36,7 +47,7 @@ export default function ProviderSettings({ onClose }: { onClose: () => void }) {
 
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 text-xs">
           <label className="flex flex-col gap-1">
-            <span className="text-[11px] uppercase tracking-wide text-[#7a8088]">Provider</span>
+            <span className="text-[11px] uppercase tracking-wide text-[#6f767e]">Provider</span>
             <select
               className={INPUT}
               value={currentId}
@@ -54,7 +65,7 @@ export default function ProviderSettings({ onClose }: { onClose: () => void }) {
             <>
               {provider.needsKey && (
                 <label className="flex flex-col gap-1">
-                  <span className="text-[11px] uppercase tracking-wide text-[#7a8088]">API-Key</span>
+                  <span className="text-[11px] uppercase tracking-wide text-[#6f767e]">API-Key</span>
                   <input
                     type="password"
                     className={INPUT}
@@ -67,7 +78,7 @@ export default function ProviderSettings({ onClose }: { onClose: () => void }) {
               )}
 
               <label className="flex flex-col gap-1">
-                <span className="text-[11px] uppercase tracking-wide text-[#7a8088]">Modell</span>
+                <span className="text-[11px] uppercase tracking-wide text-[#6f767e]">Modell</span>
                 <input
                   className={INPUT}
                   list={`models-${provider.id}`}
@@ -76,19 +87,24 @@ export default function ProviderSettings({ onClose }: { onClose: () => void }) {
                   onChange={(e) => setConfig(provider.id, { model: e.target.value })}
                 />
                 <datalist id={`models-${provider.id}`}>
-                  {(provider.models ?? []).map((m) => <option key={m} value={m} />)}
+                  {[
+                    ...(isOpenCode && liveModels.length ? liveModels : []),
+                    ...(provider.models ?? []),
+                  ].filter((m, i, arr) => arr.indexOf(m) === i).map((m) => <option key={m} value={m} />)}
                 </datalist>
               </label>
 
-              <label className="flex flex-col gap-1">
-                <span className="text-[11px] uppercase tracking-wide text-[#7a8088]">Base-URL (optional)</span>
-                <input
-                  className={INPUT}
-                  placeholder={provider.baseUrl ?? 'Standard'}
-                  value={cfg.baseUrl ?? ''}
-                  onChange={(e) => setConfig(provider.id, { baseUrl: e.target.value })}
-                />
-              </label>
+              {provider.kind === 'openai-compat' && (
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] uppercase tracking-wide text-[#6f767e]">Base-URL (optional)</span>
+                  <input
+                    className={INPUT}
+                    placeholder={provider.baseUrl ?? 'Standard'}
+                    value={cfg.baseUrl ?? ''}
+                    onChange={(e) => setConfig(provider.id, { baseUrl: e.target.value })}
+                  />
+                </label>
+              )}
             </>
           )}
 
