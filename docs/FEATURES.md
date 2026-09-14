@@ -302,6 +302,15 @@ chatbot knows about it — recipe in CLAUDE.md "Add a new LLM tool".
   `run.determinism` events emitted — a fast CI-compatible end-to-end sanity
   gate.
 
+- 2026-09-14 — **Checkpoint correctness (Phase 26)**: checkpoints now preserve
+  the full resumable state — model/optimizer/scheduler state, epoch, a new
+  `global_step` counter (tracked across epochs, restored on resume), RNG
+  streams (`torch` CPU + all CUDA devices, NumPy, Python stdlib) restored via
+  `_restore_rng()` so a resumed run continues from the saved random streams,
+  and the frozen experiment `config`. A cancelled run saves `last.pt` for the
+  last completed epoch, making stop → load → resume a first-class flow. New
+  `npm run verify:checkpoint` covers train→save→resume→cancel (31 checks).
+
 - 2026-09-14 — **Numerical failure detection (Phase 25)**: the trainer monitors
   train loss (per batch), parameter gradients (before every optimizer step),
   and val loss/accuracy/metrics (after every evaluate pass, incl. eval-only)

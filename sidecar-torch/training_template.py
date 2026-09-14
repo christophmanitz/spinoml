@@ -98,6 +98,57 @@ def require_finite(name: str, value, where: str) -> None:
                         "result is unusable; not reporting success.")
 
 
+def _rng_state() -> dict:
+    """Phase 26 — capture the RNG states (torch CPU + all CUDA devices, NumPy,
+    Python stdlib) so a resumed run continues from the same random streams.
+    'Where supported' — each backend is best-effort and skipped on absence."""
+    import torch
+    state: dict = {"torch": torch.get_rng_state()}
+    try:
+        state["torch_cuda"] = torch.cuda.get_rng_state_all()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import numpy as np
+        state["numpy"] = np.random.get_state()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import random
+        state["python"] = random.getstate()
+    except Exception:  # noqa: BLE001
+        pass
+    return state
+
+
+def _restore_rng(state: dict) -> None:
+    """Restore RNG states captured by _rng_state (best-effort, never fatal —
+    a missing backend simply keeps the fresh-seed stream)."""
+    import torch
+    if "torch" in state:
+        try:
+            torch.set_rng_state(state["torch"])
+        except Exception:  # noqa: BLE001
+            pass
+    if state.get("torch_cuda"):
+        try:
+            torch.cuda.set_rng_state_all(state["torch_cuda"])
+        except Exception:  # noqa: BLE001
+            pass
+    if "numpy" in state:
+        try:
+            import numpy as np
+            np.random.set_state(state["numpy"])
+        except Exception:  # noqa: BLE001
+            pass
+    if "python" in state:
+        try:
+            import random
+            random.setstate(state["python"])
+        except Exception:  # noqa: BLE001
+            pass
+
+
 # ─── Dataset fingerprint verification (Phase 18) ──────────────────────────
 # The fingerprint is computed by the SIDECAR at inspect time
 # (dataset_handlers._fingerprint_for) and frozen into run.json. We recompute
@@ -1478,8 +1529,9 @@ def main() -> None:
     best_val = float("inf")
     start_epoch = 0
 
-    # ── resume from a prior checkpoint (Phase 17) ──
+    # ── resume from a prior checkpoint (Phase 17; RNG/global_step Phase 26) ──
     resume_from = cfg.get("resume_from") or train_cfg.get("resume_from")
+    global_step = 0
     if resume_from:
         try:
             rp = Path(os.path.expanduser(str(resume_from)))
@@ -1493,16 +1545,47 @@ def main() -> None:
                 scheduler.load_state_dict(ckpt["sched_state"])
             best_val = float(ckpt.get("best_val", best_val))
             start_epoch = int(ckpt.get("epoch", -1)) + 1
+            global_step = int(ckpt.get("global_step", 0))
+            # Phase 26 — continue from the saved random streams where available.
+            if isinstance(ckpt.get("rng"), dict):
+                _restore_rng(ckpt["rng"])
             emit("run.resumed", source=str(resume_from), start_epoch=start_epoch,
-                 prev_val_loss=ckpt.get("val_loss"))
+                 global_step=global_step, prev_val_loss=ckpt.get("val_loss"))
         except Exception as e:  # noqa: BLE001
             fail("resume", f"cannot resume from {resume_from!r}: {e}", traceback.format_exc())
 
     end_epoch = start_epoch + epochs
 
+    def build_ckpt(epoch: int, val_loss_v=None) -> dict:
+        """Phase 26 — a checkpoint preserves everything a resume needs:
+        model/optimizer/scheduler state, epoch, global step, RNG streams
+        (where supported), and the frozen experiment configuration."""
+        return {
+            "epoch": epoch,
+            "global_step": int(global_step),
+            "model_state": model.state_dict(),
+            "optim_state": optimizer.state_dict(),
+            "sched_state": scheduler.state_dict() if scheduler is not None else None,
+            "best_val": best_val,
+            "val_loss": val_loss_v,
+            # single-task keeps the flat `classes` (Explain viz reads it);
+            # multitask records per-head class lists too.
+            "classes": (None if multitask else head_classes.get(head_names[0])),
+            "head_classes": head_classes,
+            "rng": _rng_state(),
+            "config": cfg,
+        }
+
     try:
         for epoch in range(start_epoch, end_epoch):
             if STATUS.read_text().strip() == "cancelled":
+                # Phase 26 — a stopped run must leave a resumable checkpoint
+                # (last completed epoch) so stop → load → resume works.
+                last_done = max(start_epoch, epoch - 1)
+                try:
+                    torch.save(build_ckpt(last_done), CKPT_DIR / "last.pt")
+                except Exception:  # noqa: BLE001
+                    pass
                 emit("run.cancelled", epoch=epoch)
                 METRICS.write_text(json.dumps({"status": "cancelled", "epoch": epoch}, indent=2))
                 return
@@ -1513,6 +1596,7 @@ def main() -> None:
             step = 0
             optimizer.zero_grad()
             for xb, yb in train_loader:
+                global_step += 1
                 xb, yb = to_device(xb, device), to_device(yb, device)
                 with torch.autocast(device_type=device_type, dtype=amp_dtype, enabled=use_amp):
                     _, loss = forward_loss(xb, yb)
@@ -1591,15 +1675,7 @@ def main() -> None:
             # ── checkpoint best ──
             if monitor < best_val:
                 best_val = monitor
-                torch.save({"epoch": epoch, "model_state": model.state_dict(),
-                            "optim_state": optimizer.state_dict(),
-                            "sched_state": scheduler.state_dict() if scheduler is not None else None,
-                            "best_val": best_val, "val_loss": val_loss,
-                            # single-task keeps the flat `classes` (Explain viz reads it);
-                            # multitask records per-head class lists too.
-                            "classes": (None if multitask else head_classes.get(head_names[0])),
-                            "head_classes": head_classes},
-                           CKPT_DIR / "best.pt")
+                torch.save(build_ckpt(epoch, val_loss_v=val_loss), CKPT_DIR / "best.pt")
                 emit("checkpoint", epoch=epoch, path="checkpoints/best.pt",
                      val_loss=None if val_loss is None else round(val_loss, 6), is_best=True)
                 emit_eval(epoch, heads, head_names, multitask, head_classes, val_cat)
@@ -1618,13 +1694,7 @@ def main() -> None:
                             emit("run.earlystop", epoch=epoch, monitor=early["monitor"], best=round(es_best, 6))
                             break
 
-        torch.save({"epoch": end_epoch - 1, "model_state": model.state_dict(),
-                    "optim_state": optimizer.state_dict(),
-                    "sched_state": scheduler.state_dict() if scheduler is not None else None,
-                    "best_val": best_val,
-                    "classes": (None if multitask else head_classes.get(head_names[0])),
-                    "head_classes": head_classes},
-                   CKPT_DIR / "last.pt")
+        torch.save(build_ckpt(end_epoch - 1, val_loss_v=val_loss), CKPT_DIR / "last.pt")
     except Exception as e:  # noqa: BLE001
         fail("train", str(e), traceback.format_exc())
 

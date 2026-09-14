@@ -2053,6 +2053,19 @@ Random state where supported
 Experiment configuration
 ```
 
+> **2026-09-14 — implemented.** Checkpoints (best.pt + last.pt) now preserve
+> the FULL state list: `model_state`, `optim_state`, `sched_state`, `epoch`,
+> `global_step` (new — tracked across epochs, restored on resume), `rng`
+> (torch CPU + all CUDA streams, NumPy, Python stdlib — captured via
+> `_rng_state()` and restored via `_restore_rng()` on resume), `config` (the
+> frozen run.json dict), plus `best_val`/`classes`/`head_classes` as before.
+> A cancelled run now saves last.pt for the last COMPLETED epoch, so the
+> stop → load → resume loop works.
+> `npm run verify:checkpoint` (`scripts/verify-checkpoint.ts`) covers the
+> whole audit: train → save (all keys asserted) → resume (start_epoch,
+> global_step, scheduler state, epoch continuity) → cancel (resumable
+> checkpoint at last completed epoch). 31 checks, ~30s in CI.
+
 ---
 
 # 28. PHASE 27 – ATOMIC CHECKPOINT WRITES
