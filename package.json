@@ -15,6 +15,7 @@
     "verify:traingen": "tsx scripts/verify-traingen.ts",
     "verify:sidecar": "tsx scripts/verify-sidecar.ts",
     "verify:opencode": "tsx scripts/verify-opencode.ts",
+    "test:graphstore": "tsx scripts/test-graphstore.ts",
     "sidecar:torch": "python sidecar-torch/main.py",
     "sidecar:llm": "node sidecar-llm/main.mjs"
   },

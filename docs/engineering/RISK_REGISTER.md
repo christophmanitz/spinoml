@@ -7,7 +7,7 @@
 
 | ID     | Area      | Risk                                                                | Severity | Test    | Status   | Owned by (TODO §) |
 | ------ | --------- | ------------------------------------------------------------------- | -------- | ------- | -------- | ----------------- |
-| R001   | Graph     | Invalid graph can be committed                                       | CRITICAL | G001    | OPEN     | §4 GraphStore correctness |
+| R001   | Graph     | Invalid graph can be committed                                       | CRITICAL | G001    | ADDRESSED | §4 GraphStore correctness (validate-before-commit + mutation guards landed 2026-09-14) |
 | R002   | Codegen   | Generated code differs from graph                                   | CRITICAL | C001    | OPEN     | §5/6/7 codegen + golden tests |
 | R003   | Shape     | Incorrect shape accepted                                             | CRITICAL | S001    | OPEN     | §8/9/10 shape inference |
 | R004   | Training  | Failed training reported successful                                 | CRITICAL | T001    | OPEN     | §30 local job state machine |
@@ -24,7 +24,7 @@
 | R015   | Security  | `torch.load(weights_only=False)` pickle RCE on foreign `.pt`          | CRITICAL | SEC004  | OPEN     | AUDIT §1.4, plan §47 |
 | R016   | Security  | Missing sidecar path scoping — arbitrary file read/write/exec         | CRITICAL | SEC005  | OPEN     | AUDIT §1.5 |
 | R017   | Quality   | Lint debt (49e/4w) hides real defects; eslint exits 0 (gate no-op)    | MEDIUM   | Q001    | OPEN     | AUDIT §3.1 |
-| R018   | Quality   | No unit tests for state stores (GraphStore/history/workspace)         | HIGH     | Q002    | OPEN     | §4.2 graph mutations |
+| R018   | Quality   | No unit tests for state stores (GraphStore/history/workspace)         | HIGH     | Q002    | OPEN     | §4.2 graph mutations (GraphStore done 2026-09-14 via G001; history/workspace open) |
 | R019   | Remote    | SSH alias `leipzig-hpc` broken in `~/.ssh/config` (CLI/terminal only)  | MEDIUM   | R003    | VERIFIED | fixed 2026-09-14 (`~/.ssh/config` consolidated) |
 | R020   | Remote    | Remote smoke blocked until Phase 12b (abspath not sidecar-addressable)| MEDIUM   | R004    | OPEN     | §12b |
 | R021   | Remote    | Cluster scratch path unknown; `/scratch/<user>` absent (network home) | MEDIUM   | R005    | OPEN     | Phase 12b site prep |

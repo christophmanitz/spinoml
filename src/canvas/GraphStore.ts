@@ -14,6 +14,7 @@ import { defaultParamsFor, coerceParams, LAYERS } from '../layers/registry'
 import { useLayoutStore, type FlowDir } from './layoutStore'
 import { layeredLayout } from './layout'
 import { reconcileSubgraphPorts } from './subgraphPorts'
+import { validateGraphState, wouldCreateCycle, type GraphIssue } from './invariants'
 
 export type LayerNodeData = {
   layerType: string
@@ -56,9 +57,20 @@ type State = {
   replaceNodeLayer: (id: string, newLayerType: string, extraParams?: Record<string, unknown>) => void
   setSelectedNodeId: (id: string | null) => void
   deleteNode: (id: string) => void
-  connectNodes: (source: string, target: string) => void
+  /** Programmatic edge add. Returns true iff the edge was committed. Guards
+   *  (Phase 3 §4.3 — validate BEFORE commit): both endpoints exist, no
+   *  self-loop, and no directed cycle (DAG policy); existing identical edge is
+   *  deduped; a single-input target is rewired (replacing its old incoming
+   *  edge), matching canvas drag behaviour. */
+  connectNodes: (source: string, target: string) => boolean
+  /** Validate the CURRENT graph against the invariant list (§4.1). Pure read —
+   *  no state write, no subscription, safe to call from handlers. */
+  graphIssues: () => GraphIssue[]
   autoLayout: () => void
-  loadSnapshot: (snapshot: GraphSnapshot) => void
+  /** Replace the whole graph. Returns false (and does NOT commit) when the
+   *  snapshot violates error-level invariants — a corrupt/numbered file must
+   *  never become the authoritative graph (§4.3, §5). */
+  loadSnapshot: (snapshot: GraphSnapshot) => boolean
   resetGraph: () => void
 }
 
@@ -82,12 +94,23 @@ export const useGraphStore = create<State>((set, get) => ({
   },
   onConnect: (connection) => {
     if (!connection.source || !connection.target) return
-    const base = baseForConnect(get().nodes, get().edges, connection.target)
-    const edges = addEdge({ ...connection, animated: true }, base)
-    set({ edges, nodes: reconcileSubgraphPorts(get().nodes, edges) })
+    const { nodes, edges } = get()
+    const g = validateGuard(nodes, edges, connection.source, connection.target)
+    if (!g.ok) {
+      console.debug('onConnect rejected:', g.reason)
+      return
+    }
+    const base = baseForConnect(nodes, edges, connection.target)
+    const nextEdges = addEdge({ ...connection, animated: true }, base)
+    set({ edges: nextEdges, nodes: reconcileSubgraphPorts(nodes, nextEdges) })
   },
 
   addLayer: (layerType, position, opts) => {
+    // Unknown layer type → refuse BEFORE commit (registry is the only authority).
+    if (!LAYERS[layerType]) {
+      console.warn(`addLayer rejected: unknown layer type '${layerType}'`)
+      return ''
+    }
     const id = opts?.id && !get().nodes.some((n) => n.id === opts.id) ? opts.id : newNodeId()
     const merged = { ...defaultParamsFor(layerType), ...(opts?.params ?? {}) }
     const node: LayerNode = {
@@ -111,6 +134,10 @@ export const useGraphStore = create<State>((set, get) => ({
   },
 
   replaceNodeLayer: (id, newLayerType, extraParams) => {
+    if (!LAYERS[newLayerType]) {
+      console.warn(`replaceNodeLayer rejected: unknown layer type '${newLayerType}'`)
+      return
+    }
     set({
       nodes: get().nodes.map((n) => {
         if (n.id !== id) return n
@@ -144,12 +171,20 @@ export const useGraphStore = create<State>((set, get) => ({
   },
 
   connectNodes: (source, target) => {
-    const cur = get().edges
-    if (cur.some((e) => e.source === source && e.target === target)) return
-    const base = baseForConnect(get().nodes, cur, target)
-    const edges = addEdge({ source, target, animated: true, id: `e${cur.length + 1}` }, base)
-    set({ edges, nodes: reconcileSubgraphPorts(get().nodes, edges) })
+    const { nodes, edges } = get()
+    const g = validateGuard(nodes, edges, source, target)
+    if (!g.ok) {
+      console.debug('connectNodes rejected:', g.reason)
+      return false
+    }
+    if (edges.some((e) => e.source === source && e.target === target)) return true // dedupe, already connected
+    const base = baseForConnect(nodes, edges, target)
+    const nextEdges = addEdge({ source, target, animated: true, id: nextEdgeId(edges) }, base)
+    set({ edges: nextEdges, nodes: reconcileSubgraphPorts(nodes, nextEdges) })
+    return true
   },
+
+  graphIssues: () => validateGraphState(get().nodes, get().edges).issues,
 
   autoLayout: () => {
     const { nodes, edges } = get()
@@ -182,9 +217,17 @@ export const useGraphStore = create<State>((set, get) => ({
       target: e.target,
       animated: true,
     }))
+    // §4.3 validate BEFORE commit: an error-level violation (unknown node ids,
+    // unknown layer, dup ids, self-loop, cycle) must never become the graph.
+    const v = validateGraphState(nodes, edges)
+    if (!v.ok) {
+      console.warn(`loadSnapshot rejected (${v.issues.length} issues):`, v.issues)
+      return false
+    }
     set({ nodes, edges, selectedNodeId: null })
     const needsLayout = snapshot.nodes.some((n) => !n.position)
     if (needsLayout) get().autoLayout()
+    return true
   },
 
   resetGraph: () => {
@@ -265,4 +308,39 @@ export function autoPositionAfter(nodes: LayerNode[], afterId?: string): XYPosit
   const maxY = Math.max(...nodes.map((n) => n.position.y))
   const last = nodes.find((n) => n.position.y === maxY)
   return { x: last?.position.x ?? 250, y: maxY + 110 }
+}
+
+/**
+ * Phase-3 edge-add guard (§4.3): a new source→target wire commits only when
+ *   - both endpoints exist,
+ *   - it is not a self-loop,
+ *   - it does not close a directed cycle (GRAPH_DAG_POLICY).
+ * Fan-in/single-input rules and dedupe are handled by the caller
+ * (baseForConnect rewires single-input targets; connectNodes dedupes).
+ */
+function validateGuard(
+  nodes: LayerNode[],
+  edges: Edge[],
+  source: string,
+  target: string,
+): { ok: boolean; reason?: string } {
+  const byId = new Set(nodes.map((n) => n.id))
+  if (!byId.has(source)) return { ok: false, reason: `unknown source '${source}'` }
+  if (!byId.has(target)) return { ok: false, reason: `unknown target '${target}'` }
+  if (source === target) return { ok: false, reason: 'self-loop' }
+  if (wouldCreateCycle(nodes, edges, source, target)) {
+    return { ok: false, reason: `edge ${source}→${target} would close a directed cycle (DAG policy)` }
+  }
+  return { ok: true }
+}
+
+/** Collision-safe `e<N>` id: max existing numeric suffix + 1. (The old
+ *  `e${edges.length + 1}` scheme collided after edge deletions.) */
+function nextEdgeId(edges: Edge[]): string {
+  let max = 0
+  for (const e of edges) {
+    const m = e.id?.match(/^e(\d+)$/)
+    if (m) max = Math.max(max, parseInt(m[1], 10))
+  }
+  return `e${max + 1}`
 }
