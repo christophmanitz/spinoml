@@ -9,7 +9,7 @@
 | ------ | --------- | ------------------------------------------------------------------- | -------- | ------- | -------- | ----------------- |
 | R001   | Graph     | Invalid graph can be committed                                       | CRITICAL | G001    | ADDRESSED | §4 GraphStore correctness (validate-before-commit + mutation guards landed 2026-09-14) |
 | R002   | Codegen   | Generated code differs from graph                                   | CRITICAL | C001    | OPEN     | §5/6/7 codegen + golden tests |
-| R003   | Shape     | Incorrect shape accepted                                             | CRITICAL | S001    | OPEN     | §8/9/10 shape inference |
+| R003   | Shape     | Incorrect shape accepted                                             | CRITICAL | S001    | OPEN     | §8/9/10 shape inference (training-launch gate landed 2026-09-14, see R028) |
 | R004   | Training  | Failed training reported successful                                 | CRITICAL | T001    | OPEN     | §30 local job state machine |
 | R005   | Checkpoint| Corrupted checkpoint accepted                                        | CRITICAL | T002    | OPEN     | §26/27/28 checkpoint correctness/atomicity/crash |
 | R006   | Dataset   | Split leakage (train/val/test)                                       | CRITICAL | D001    | OPEN     | §19 train/val/test integrity |
@@ -34,6 +34,7 @@
 | R025   | Training  | Metric correctness / per-head eval drift (multitask)                  | HIGH     | T003    | OPEN     | §29/31 metric + event ordering |
 | R026   | Training  | run.json immutability violated (post-launch mutation)                 | HIGH     | T004    | OPEN     | §42 training immutability |
 | R027   | LLM       | Model config scattered through code (provider drift)                  | MEDIUM   | L001    | OPEN     | §0.4 (Phase 0 addressed: providerStore centralized — VERIFY once) |
+| R028   | Training  | Training launched on a model never verified (shapes unknown/invalid) | HIGH     | S002    | ADDRESSED | §10 fail-closed (verifyModelForTraining gates NewRunModal submit 2026-09-14) |
 
 ## Notes on the live environment (2026-09-14)
 

@@ -18,6 +18,7 @@
     "test:graphstore": "tsx scripts/test-graphstore.ts",
     "test:persistence": "tsx scripts/test-persistence.ts",
     "test:determinism": "tsx scripts/test-determinism.ts",
+    "test:verifier": "tsx scripts/test-verifier.ts",
     "sidecar:torch": "python sidecar-torch/main.py",
     "sidecar:llm": "node sidecar-llm/main.mjs"
   },

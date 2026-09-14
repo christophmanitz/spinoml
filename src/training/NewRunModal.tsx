@@ -5,6 +5,7 @@ import { useDatasetsStore } from '../datasets/store'
 import { useConnectionsStore, remotePython, sshTarget, type RemoteSshConnection } from '../connections/store'
 import { useTrainingStore } from './store'
 import { training } from './backend'
+import { verifyModelForTraining } from '../inference/verifier'
 import {
   type LossKind,
   type OptimizerKind,
@@ -190,6 +191,18 @@ export default function NewRunModal() {
     setError(null)
     setSubmitting(true)
     try {
+      // Phase 9 — fail closed: refuse to launch a model that is KNOWN invalid
+      // (compile/construct/forward error on the very file that would train).
+      // UNKNOWN (sidecar offline) blocks too — training must not start when the
+      // model was never verified; the message names the reason so the user can
+      // start the torch sidecar and retry.
+      const verify = await verifyModelForTraining(await fs.read(modelRelpath))
+      if (verify.status === 'invalid') {
+        throw new Error(`Model is not valid for training (${verify.stage}): ${verify.error}`)
+      }
+      if (verify.status === 'unknown') {
+        throw new Error(`Cannot start training: model was not verified (${verify.reason})`)
+      }
       const abspath = await datasetsBackend.abspath(datasetRelpath)
       const backend: RunBackend = backendKind === 'slurm' ? { kind: 'slurm', slurm } : { kind: 'local' }
       // Remember the SLURM config on the connection for next time.

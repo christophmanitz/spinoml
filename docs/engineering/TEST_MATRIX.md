@@ -11,7 +11,7 @@ GraphStore             | `npm run test:graphstore` ✓ (G001: invariants, mutati
 Layer registry         | `verify-codegen` (13 graphs via generator) + G001 param validation | coerceParams per-kind UT  | §4.3 validate-before-commit
 Code generation        | `verify-codegen` 13/13 ✓ + `test:determinism` ✓ (repeatability, shuffled arrays) | golden outputs, multi-input  | §6 golden tests
 Training codegen       | `verify-traingen` ✓ (compile, multitask, eval-only) | immersive failure tests | §24 training failure tests
-Shape inference        | `verify-sidecar` (synthetic /infer) ✓          | fail-closed + race tests     | §8/9/10
+Shape inference        | `verify-sidecar` (synthetic /infer) ✓ + `test:verifier` ✓ (fail-closed gate, INVALID/UNKNOWN/VALID decision matrix, end-to-end with sidecar when reachable) | race condition (stale-response) UT | §8/9/10
 Dataset handling       | `verify-sidecar` (inspect/stats/smoke) ✓       | per-kind handlers, leak tests| §17/18, §19
 Training runs (local)  | `verify-traingen` e2e (2-head, external-val) ✓ | local job state machine     | §30/31/32/33
 Training runs (remote) | none                                          | ssh + slurm run tests        | §34/35/36/37
@@ -36,6 +36,7 @@ Security (sidecars)    | none (known open: CORS `*`, no auth)           | auth +
 | `npm run test:graphstore` | GraphStore invariants + mutation guards        | PASS         |
 | `npm run test:persistence` | persistence round-trip + malformed-file fail-safety | PASS         |
 | `npm run test:determinism` | codegen determinism (repeat + shuffled arrays)  | PASS         |
+| `npm run test:verifier` | fail-closed model gate (decision matrix + e2e) | PASS         |
 | `npm run lint`          | all TS (eslint)                     | FAIL 49e/4w (gate no-op) |
 | `npm run verify:codegen`| generator (13 graphs, exec-ed)      | PASS 13/13  |
 | `npm run verify:traingen`| training codegen (compile + 2 e2e) | PASS         |
@@ -54,7 +55,7 @@ Planned mutation/unit tests referenced by RISK_REGISTER.md:
 
 - G001 — graph invariants + mutation tests (§4.1/4.2)
 - C001 — codegen golden tests (§6), D001/… data-canvas twin
-- S001 — shape-inference contract tests (§8/9)
+- S001 — shape-inference contract tests (§8/9); S002 — fail-closed training-launch gate (§10, test:verifier)
 - T001–T004 — training: job state machine (§30), metric correctness (§29),
   event ordering (§31), immutability (§42)
 - D001 — split leakage (§19); D002 — dataset fingerprinting (§18)
