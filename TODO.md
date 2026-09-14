@@ -2082,6 +2082,14 @@ Atomic rename
 
 The goal is to avoid a partially written checkpoint replacing the last valid checkpoint.
 
+> **2026-09-14 — implemented.** `_atomic_save()` in training_template.py: all
+> three checkpoint writes (best.pt, last.pt, cancel-save) serialize to
+> `<name>.tmp` in the same directory, fsync the file, `os.replace()` onto the
+> final name, then best-effort fsync the directory so the rename itself
+> survives a crash. A stray .tmp is cleaned up in a finally block.
+> verify:checkpoint simulates a partial write + crash via a monkeypatched
+> torch.save → the previous valid checkpoint still loads, no .tmp leftover.
+
 ---
 
 # 29. PHASE 28 – CHECKPOINT CRASH TEST
@@ -2111,6 +2119,16 @@ New valid checkpoint
 ```
 
 and never silently accepts a corrupted checkpoint.
+
+> **2026-09-14 — implemented (Phases 27+28).** Checkpoint writes are atomic
+> (Phase 27: `_atomic_save` — tmp file + fsync + `os.replace` + dir fsync), so
+> a crash mid-save leaves either the previous or the new VALID checkpoint,
+> never a truncated one. Phase 28 tests this end-to-end in
+> `verify:checkpoint`: a SIGKILL right after a checkpoint event leaves every
+> .pt on disk loadable with no .tmp leftovers, and a restart resuming from
+> that checkpoint continues cleanly (`run.resumed`). A deliberately corrupted
+> .pt is rejected loudly — `run.failed` stage `resume`, status failed — never
+> silently accepted.
 
 ---
 

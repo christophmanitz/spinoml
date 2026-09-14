@@ -302,6 +302,13 @@ chatbot knows about it — recipe in CLAUDE.md "Add a new LLM tool".
   `run.determinism` events emitted — a fast CI-compatible end-to-end sanity
   gate.
 
+- 2026-09-14 — **Atomic + crash-safe checkpoints (Phases 27+28)**: `_atomic_save`
+  writes checkpoints via tmp-file → fsync → `os.replace()` → dir-fsync, so a
+  crash mid-save never truncates the previous valid checkpoint. verify:checkpoint
+  now SIGKILLs a live trainer right after a checkpoint event and asserts every
+  .pt on disk still loads (no .tmp leftovers) and a restart resumes cleanly;
+  a deliberately corrupted .pt is rejected loudly (`run.failed` stage `resume`).
+
 - 2026-09-14 — **Checkpoint correctness (Phase 26)**: checkpoints now preserve
   the full resumable state — model/optimizer/scheduler state, epoch, a new
   `global_step` counter (tracked across epochs, restored on resume), RNG

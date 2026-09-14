@@ -230,5 +230,63 @@ console.log('  [atomic write: crash mid-save leaves the previous valid checkpoin
   check('no .tmp leftover', out.includes('NO_TMP True'), out.slice(0, 300))
 }
 
+// ── 5. process crash mid-training: the checkpoint on disk is ALWAYS loadable
+//    (previous valid or new valid), restart resumes cleanly ──
+console.log('  [SIGKILL mid-training: checkpoint loadable, resume works]')
+{
+  const dirF = makeRunDir('f', { epochs: 30 })
+  const child = spawn('python', ['-u', 'train.py'], { cwd: dirF, stdio: 'ignore' })
+  // kill at a random-ish point shortly after the second checkpoint save
+  let killed = false
+  for (let i = 0; i < 4000; i++) {
+    await new Promise((r) => setTimeout(r, 5))
+    const evPath = join(dirF, 'events.jsonl')
+    if (existsSync(evPath) && readFileSync(evPath, 'utf8').includes('"kind": "checkpoint"')) {
+      child.kill('SIGKILL')
+      killed = true
+      break
+    }
+  }
+  check('killed after a checkpoint save', killed)
+  await new Promise<void>((resolve) => child.on('close', () => resolve()))
+  // whatever .pt files exist must be loadable (atomic write guarantee)
+  const ckptDir = join(dirF, 'checkpoints')
+  const ptFiles = ['best.pt', 'last.pt'].filter((n) => existsSync(join(ckptDir, n)))
+  check('at least one checkpoint exists', ptFiles.length > 0)
+  let allLoadable = true
+  for (const n of ptFiles) {
+    const script = `import torch, sys\ntry:\n    ck = torch.load(sys.argv[1], map_location="cpu", weights_only=False)\n    print("OK", "model_state" in ck)\nexcept Exception as e:\n    print("CORRUPT", type(e).__name__)`
+    const r = spawnSync('python', ['-c', script, join(ckptDir, n)], { stdio: 'pipe' })
+    const out = r.stdout.toString().trim()
+    if (!out.startsWith('OK True')) { allLoadable = false; check(`checkpoint ${n} loadable`, false, out) }
+    else check(`checkpoint ${n} loadable`, true)
+  }
+  check('all checkpoints loadable after crash', allLoadable)
+  check('no .tmp leftover after crash', !existsSync(join(ckptDir, 'best.pt.tmp')) && !existsSync(join(ckptDir, 'last.pt.tmp')))
+  // restart: resume from whatever checkpoint exists → clean continuation
+  const resumePath = existsSync(join(ckptDir, 'last.pt'))
+    ? join(ckptDir, 'last.pt') : join(ckptDir, 'best.pt')
+  const dirG = makeRunDir('g', { resumeFrom: resumePath, epochs: 2 })
+  const r = run(dirG)
+  check('restart after crash resumes cleanly', r.ok, r.stderr ?? '')
+  if (r.ok) {
+    const events = readFileSync(join(dirG, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    check('run.resumed emitted after crash restart', events.some((e) => e.kind === 'run.resumed'))
+  }
+}
+
+// ── 6. corrupted checkpoint is rejected loudly, never silently accepted ──
+console.log('  [corrupted checkpoint rejected]')
+{
+  const dirE = makeRunDir('e', { resumeFrom: join(dirA, 'checkpoints', 'garbage.pt') })
+  writeFileSync(join(dirA, 'checkpoints', 'garbage.pt'), '\x00\x01garbage-not-a-torch-file')
+  const r = run(dirE)
+  check('resume from garbage fails', !r.ok, r.ok ? 'exit 0 on corrupt checkpoint!' : '')
+  const events = readFileSync(join(dirE, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  const failedEv = events.find((e) => e.kind === 'run.failed') as Record<string, unknown> | undefined
+  check('run.failed emitted (stage resume)', failedEv?.stage === 'resume', JSON.stringify(failedEv?.stage))
+  check('status = failed', readFileSync(join(dirE, 'status'), 'utf8').trim() === 'failed')
+}
+
 console.log(failures === 0 ? '\n✓ all checkpoint checks passed' : `\n✗ ${failures} check(s) failed`)
 process.exit(failures === 0 ? 0 : 1)
