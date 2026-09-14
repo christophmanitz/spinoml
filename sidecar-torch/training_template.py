@@ -149,6 +149,35 @@ def _restore_rng(state: dict) -> None:
             pass
 
 
+def _atomic_save(obj, path: Path) -> None:
+    """Phase 27 — atomic checkpoint writes: serialize to a temp file in the
+    SAME directory, fsync it, then os.replace() onto the final name. A crash
+    mid-write can never leave a truncated best.pt/last.pt — the previous
+    valid checkpoint survives until the replace is complete."""
+    import torch
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        with open(tmp, "wb") as f:
+            torch.save(obj, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        try:  # best-effort: fsync the directory so the rename itself survives a crash
+            dfd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(dfd)
+            finally:
+                os.close(dfd)
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 # ─── Dataset fingerprint verification (Phase 18) ──────────────────────────
 # The fingerprint is computed by the SIDECAR at inspect time
 # (dataset_handlers._fingerprint_for) and frozen into run.json. We recompute
@@ -1583,7 +1612,7 @@ def main() -> None:
                 # (last completed epoch) so stop → load → resume works.
                 last_done = max(start_epoch, epoch - 1)
                 try:
-                    torch.save(build_ckpt(last_done), CKPT_DIR / "last.pt")
+                    _atomic_save(build_ckpt(last_done), CKPT_DIR / "last.pt")
                 except Exception:  # noqa: BLE001
                     pass
                 emit("run.cancelled", epoch=epoch)
@@ -1675,7 +1704,7 @@ def main() -> None:
             # ── checkpoint best ──
             if monitor < best_val:
                 best_val = monitor
-                torch.save(build_ckpt(epoch, val_loss_v=val_loss), CKPT_DIR / "best.pt")
+                _atomic_save(build_ckpt(epoch, val_loss_v=val_loss), CKPT_DIR / "best.pt")
                 emit("checkpoint", epoch=epoch, path="checkpoints/best.pt",
                      val_loss=None if val_loss is None else round(val_loss, 6), is_best=True)
                 emit_eval(epoch, heads, head_names, multitask, head_classes, val_cat)
@@ -1694,7 +1723,7 @@ def main() -> None:
                             emit("run.earlystop", epoch=epoch, monitor=early["monitor"], best=round(es_best, 6))
                             break
 
-        torch.save(build_ckpt(end_epoch - 1, val_loss_v=val_loss), CKPT_DIR / "last.pt")
+        _atomic_save(build_ckpt(end_epoch - 1, val_loss_v=val_loss), CKPT_DIR / "last.pt")
     except Exception as e:  # noqa: BLE001
         fail("train", str(e), traceback.format_exc())
 

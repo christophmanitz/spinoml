@@ -191,5 +191,44 @@ console.log('  [cancelled run leaves resumable checkpoint]')
   check('cancel checkpoint epoch = 1 (last completed)', ep === 1, String(ep))
 }
 
+// ── 4. atomic write crash simulation (Phases 27+28) ──
+console.log('  [atomic write: crash mid-save leaves the previous valid checkpoint]')
+{
+  const script = [
+    'import sys, importlib.util, os, tempfile',
+    'from pathlib import Path',
+    'spec = importlib.util.spec_from_file_location("trainer", sys.argv[1])',
+    'trainer = importlib.util.module_from_spec(spec)',
+    'spec.loader.exec_module(trainer)',
+    'import torch',
+    'd = Path(tempfile.mkdtemp())',
+    'p = d / "best.pt"',
+    'obj = {"a": torch.tensor([1.0])}',
+    'trainer._atomic_save(obj, p)',
+    'print("FIRST_OK", p.exists())',
+    'orig = torch.save',
+    'def boom(o, f):',
+    '    f.write(b"\\x00garbage")  # partial bytes, then die',
+    '    raise RuntimeError("simulated crash")',
+    'torch.save = boom',
+    'try:',
+    '    trainer._atomic_save({"b": 2}, p)',
+    '    print("NO_EXCEPTION")',
+    'except RuntimeError as e:',
+    '    print("CRASHED", str(e))',
+    'finally:',
+    '    torch.save = orig',
+    'ck = torch.load(p, map_location="cpu", weights_only=False)',
+    'print("SURVIVED", "a" in ck and float(ck["a"][0]) == 1.0)',
+    'print("NO_TMP", not (d / "best.pt.tmp").exists())',
+  ].join('\n')
+  const r = spawnSync('python', ['-c', script, join(dirA, 'train.py')], { stdio: 'pipe' })
+  const out = (r.stdout.toString() + r.stderr.toString()).trim()
+  check('first atomic save ok', out.includes('FIRST_OK True'), out.slice(0, 300))
+  check('crash raised (partial write)', out.includes('CRASHED'), out.slice(0, 300))
+  check('previous valid checkpoint survived', out.includes('SURVIVED True'), out.slice(0, 300))
+  check('no .tmp leftover', out.includes('NO_TMP True'), out.slice(0, 300))
+}
+
 console.log(failures === 0 ? '\n✓ all checkpoint checks passed' : `\n✗ ${failures} check(s) failed`)
 process.exit(failures === 0 ? 0 : 1)
