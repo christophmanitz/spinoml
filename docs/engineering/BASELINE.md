@@ -50,6 +50,7 @@ Run: 2026-09-14, conda env `mlforge-dev` active for all Python-executing harness
 | Scientific smoke | `npm run verify:smoke` | **PASS** — 15 checks (synthetic data, 5 epochs, checkpoint + metrics) |
 | Training failures | `npm run verify:failures` | **PASS** — 9 failure modes (invalid ds/model/optimizer/lr, missing/unwritable out dir, NaN, NaN-loss→numeric, SIGKILL) all FAIL loudly |
 | Checkpoints | `npm run verify:checkpoint` | **PASS** — 45 checks (full state incl. rng + config, resume, cancel-saves, atomic-write crash sim, corrupted-ckpt rejection) |
+| Metrics | `npm run verify:metrics` | **PASS** — 11 checks (weighted aggregation vs Python reference, uneven batches) |
 | OpenCode provider | `npm run verify:opencode` | **PASS** — models list, /chat stream, bogus-model clean error |
 | Rust | `cargo check` in src-tauri | **SKIPPED** — Rust toolchain not installed on this machine |
 | Python tests | `python -m pytest` | **SKIPPED** — no Python test suite in repo, pytest not installed |

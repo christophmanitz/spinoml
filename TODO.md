@@ -2149,6 +2149,16 @@ Do not incorrectly average batch averages when weighted averaging is required.
 
 Create explicit tests.
 
+> **2026-09-14 — implemented.** The trainer was already weighted-correct
+> (train `running += loss.item() * bs` / `n_seen += bs`; val `vrun += … * bs` /
+> `vseen`; per-head loss/accuracy over LABELED rows) — Phase 29 makes it
+> provable: `npm run verify:metrics` trains a FROZEN model (lr=0) on 97 rows
+> with batch 32 (last batch = 1 sample) and compares every reported number
+> against an independent per-sample Python reference over the identical split:
+> epoch train loss, val loss, val accuracy all match within 1e-4, while the
+> naive mean-of-batch-means provably differs (>1e-3) — the test would CATCH
+> an unweighted regression.
+
 ---
 
 # 31. PHASE 30 – LOCAL JOB STATE MACHINE

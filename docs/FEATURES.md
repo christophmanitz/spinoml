@@ -302,6 +302,14 @@ chatbot knows about it — recipe in CLAUDE.md "Add a new LLM tool".
   `run.determinism` events emitted — a fast CI-compatible end-to-end sanity
   gate.
 
+- 2026-09-14 — **Metric correctness tests (Phase 29)**: new `npm run verify:metrics`
+  proves loss/metric aggregation is correctly batch-size-weighted: a frozen
+  model on a 97-row dataset with batch 32 (last batch = 1) is compared against
+  an independent per-sample Python reference over the identical split — epoch
+  train loss, val loss and accuracy match within 1e-4, while naive
+  mean-of-batch-means demonstrably differs (the test would catch an
+  unweighted-averaging regression).
+
 - 2026-09-14 — **Atomic + crash-safe checkpoints (Phases 27+28)**: `_atomic_save`
   writes checkpoints via tmp-file → fsync → `os.replace()` → dir-fsync, so a
   crash mid-save never truncates the previous valid checkpoint. verify:checkpoint

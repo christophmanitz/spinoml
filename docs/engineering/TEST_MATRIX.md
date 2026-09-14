@@ -46,6 +46,7 @@ Security (sidecars)    | none (known open: CORS `*`, no auth)           | auth +
 | `npm run verify:smoke`| scientific smoke test (synthetic data, 5 epochs, checkpoint + metrics) | PASS 15 checks |
 | `npm run verify:failures`| training failure tests (9 failure modes incl. NaN input + NaN-loss→`numeric` hardening) | PASS 37 checks |
 | `npm run verify:checkpoint`| checkpoint correctness (train/save/resume/cancel, full state incl. rng + config) + atomic-write crash sim + corrupted-ckpt rejection | PASS 45 checks |
+| `npm run verify:metrics`| metric correctness (batch-size-weighted loss/metric aggregation vs Python reference) | PASS 11 checks |
 | `npm run verify:sidecar`| torch sidecar (autostart)           | PASS 6/6+activations |
 | `npm run verify:opencode`| LLM sidecar opencode provider      | PASS         |
 | `cargo check` (src-tauri)| Rust                                | SKIPPED (no toolchain) |
