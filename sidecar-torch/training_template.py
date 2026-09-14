@@ -1118,7 +1118,57 @@ def main() -> None:
     except Exception as e:  # noqa: BLE001
         fail("import-torch", f"torch import failed: {e}", traceback.format_exc())
 
+    # ── seeding (Phase 22) — cover every known random source so a second run
+    #    with the same seed + same stack produces the same weights/metrics.
+    #    Full determinism is NOT possible with CUDA (atomicAdd nondeterminism)
+    #    and some third-party ops; we document this via the run.determinism
+    #    event instead of claiming "fully reproducible". ──
+    import random as _random
+    try:
+        import numpy as _np
+        _np.random.seed(seed)
+    except ImportError:
+        _np = None  # type: ignore[assignment]
+    _random.seed(seed)
     torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    # flag nondeterministic CUDA ops as warnings (don't crash — document only)
+    try:
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    except (TypeError, AttributeError):
+        pass  # older torch without warn_only
+
+    def _seed_worker(worker_id: int) -> None:
+        """Seed Python stdlib + NumPy in each DataLoader worker so that
+        multi-worker shuffling is reproducible across runs with the same seed."""
+        _worker_seed = (seed + worker_id) % (2**32)
+        _random.seed(_worker_seed)
+        if _np is not None:
+            _np.random.seed(_worker_seed)
+        torch.manual_seed(_worker_seed)
+
+    # Determinism event: document what was set + caveats for the record.
+    _determinism: dict = {
+        "seed": seed,
+        "python_random": True,
+        "numpy_random": _np is not None,
+        "torch_cpu": True,
+        "torch_cuda_all": torch.cuda.is_available(),
+        "cudnn_deterministic": True,
+        "cudnn_benchmark": False,
+        "cudnn_enabled": torch.backends.cudnn.enabled,
+    }
+    if torch.cuda.is_available():
+        _determinism["cuda_nondeterministic_ops_possible"] = True
+        _determinism["cuda_nondeterministic_ops_note"] = (
+            "atomicAdd in float reductions and scatter_add are nondeterministic "
+            "on CUDA even with deterministic_algorithms=True; full GPU "
+            "determinism requires CPU execution or torch>=2.0 with use_deterministic_algorithms(True)."
+        )
+    emit("run.determinism", **_determinism)
 
     # ── snapshot (Phase 20) — fail-closed: the frozen model.spinoml + model.py
     #    in the RUN DIR must be byte-identical to the launch-time freeze, else
@@ -1228,8 +1278,18 @@ def main() -> None:
              f"(strategy={strategy}, seed={seed}); refusing to train on a leaking split")
 
     collate = make_collate(is_graph, head_names)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, drop_last=drop_last, collate_fn=collate)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, num_workers=num_workers, collate_fn=collate) if val_ds is not None else None
+    # DataLoader generator: separate from the model-seed torch.Generator so that
+    # shuffle order is independently reproducible.  worker_init_fn seeds Python
+    # stdlib + NumPy inside each forked worker (torch itself is seeded via the
+    # forked state, but random/numpy are not).
+    _dl_generator = torch.Generator().manual_seed(seed)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=shuffle,
+                             num_workers=num_workers, drop_last=drop_last,
+                             collate_fn=collate, generator=_dl_generator,
+                             worker_init_fn=_seed_worker if num_workers > 0 else None)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, num_workers=num_workers,
+                            collate_fn=collate, generator=_dl_generator,
+                            worker_init_fn=_seed_worker if num_workers > 0 else None) if val_ds is not None else None
 
     # ── model + optimizer ──
     try:
@@ -1350,7 +1410,9 @@ def main() -> None:
                 emit("validation.warning",
                      message=f"{n_missing} model tensors had no matching checkpoint weight "
                              f"(architecture mismatch) — they stayed at their init values.")
-            eval_loader = DataLoader(full, batch_size=batch_size, num_workers=num_workers, collate_fn=collate)
+            eval_loader = DataLoader(full, batch_size=batch_size, num_workers=num_workers, collate_fn=collate,
+                                   generator=_dl_generator,
+                                   worker_init_fn=_seed_worker if num_workers > 0 else None)
             val_loss, val_acc, extra, val_cat = evaluate(
                 model, eval_loader, heads, head_names, multitask, forward_loss, batch_len, metric_kinds, device)
             emit("epoch.end", epoch=0, train_loss=0.0,

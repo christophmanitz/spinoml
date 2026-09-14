@@ -155,6 +155,15 @@ if (!existsSync(template)) {
       && typeof (envEv as any).device === 'string'
       && typeof (envEv as any).dtype === 'string',
       JSON.stringify(envEv))
+    // Phase 22: every random source is seeded and documented in run.determinism.
+    const detEv = events.find((e) => e.kind === 'run.determinism')
+    check('run.determinism documents all seed states (Phase 22)',
+      !!detEv && (detEv as any).seed === 7
+      && (detEv as any).cudnn_deterministic === true
+      && (detEv as any).cudnn_benchmark === false
+      && (detEv as any).python_random === true
+      && (detEv as any).numpy_random === true,
+      JSON.stringify(detEv))
     // The provenance split.strategy must match what was frozen into run.json
     const provEv = events.find((e) => e.kind === 'run.provenance')
     check('split.strategy frozen into provenance (Phase 19)',

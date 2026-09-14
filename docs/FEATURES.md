@@ -106,6 +106,19 @@ workspace git commit when it's a repo. The same summary is written into
 `metrics.json` at the end, so a run's outcome can be attributed to the exact
 stack it executed on — not just the config the user set.
 
+### Seeds and determinism (Phase 22)
+
+The trainer seeds EVERY random source: Python `random`, NumPy, `torch.manual_seed`,
+`torch.cuda.manual_seed_all`, sets `cudnn.deterministic=True` + `cudnn.benchmark=False`,
+and calls `torch.use_deterministic_algorithms(True, warn_only=True)` so
+nondeterministic ops warn instead of silently diverging. DataLoader gets an
+independent seeded `torch.Generator` + `worker_init_fn` so multi-worker
+shuffling is reproducible too. All seed state is exposed in a `run.determinism`
+event (`seed`, which backends were seeded, cuDNN settings). **Caveat:** CUDA
+`atomicAdd`-based reductions remain nondeterministic even with these flags, so
+we explicitly do NOT claim bit-level reproducibility on GPU — the event records
+when that caveat applies (CPU runs are reproducible with the same seed + stack).
+
 ## 4. Datasets
 
 Kinds + handlers live in **`sidecar-torch/dataset_handlers.py`** (and the UI types in
@@ -272,6 +285,14 @@ chatbot knows about it — recipe in CLAUDE.md "Add a new LLM tool".
   `agent/`, run via `run_script`; write outputs under `datasets/`.
 
 ## Changelog (append one dated line per feature; newest first)
+
+- 2026-09-14 — **Seed + determinism record (Phase 22)**: `train.py` now seeds
+  every random source (Python `random`, NumPy, torch CPU + all CUDA devices),
+  enforces `cudnn.deterministic` + `benchmark=False`, enables
+  `use_deterministic_algorithms(warn_only=True)`, and gives DataLoaders a
+  seeded `torch.Generator` + `worker_init_fn`. Seed state is documented in a
+  `run.determinism` event; the CUDA `atomicAdd` caveat is recorded rather than
+  silently claiming bit-level reproducibility.
 
 - 2026-09-14 — **Training environment record (Phase 21)**: `train.py` emits a
   `config.env` event at launch recording the runtime stack (python/torch/cuda/

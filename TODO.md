@@ -1866,6 +1866,20 @@ Fully reproducible
 
 when the underlying operation is nondeterministic.
 
+> **2026-09-14 — implemented.** `train.py` seeds all four random sources the
+> auditor lists — Python `random`, NumPy, torch CPU (`torch.manual_seed`), and
+> all CUDA devices (`torch.cuda.manual_seed_all`) — plus cuDNN (
+> `deterministic=True`, `benchmark=False`) and `use_deterministic_algorithms(
+> True, warn_only=True)` so nondeterministic ops log instead of silently
+> diverging. DataLoader uses a seeded `torch.Generator` + `worker_init_fn`
+> (per-worker salted) so multi-worker shuffling is reproducible. A
+> `run.determinism` event records the seed + every backend state at runtime.
+> CAVEAT documented, not claimed away: CUDA `atomicAdd` reductions are
+> nondeterministic even with these flags → bit-level GPU reproducibility is NOT
+> claimed; CPU runs are reproducible for equal seed+stack+inputs.
+> verify:traingen asserts `run.determinism` (seed=7, cuDNN flags, python/numpy
+> seeds) in the e2e classification run.
+
 ---
 
 # 24. PHASE 23 – SCIENTIFIC SMOKE TEST
