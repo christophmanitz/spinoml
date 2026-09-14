@@ -1972,6 +1972,25 @@ Never leave the job indefinitely in:
 RUNNING
 ```
 
+> **2026-09-14 — implemented.** `npm run verify:failures`
+> (`scripts/verify-failures.ts`) deliberately causes EACH listed failure mode
+> against the REAL trainer and asserts FAILURE (exit≠0, `status`≠done,
+> `run.failed` event with a stage), never SUCCESS and never stuck in RUNNING:
+> - invalid dataset (deleted CSV) → `fail("dataset")`
+> - invalid model (syntax error) → `fail("model")`
+> - invalid optimizer (unknown kind) → `fail("model")`
+> - invalid learning rate (negative lr) → torch ValueError → `fail("model")`
+> - missing output dir (a FILE named `checkpoints`) → crash, no data
+> - unwritable output dir (chmod 555) → crash, no data
+> - NaN input → `fail("dataset")` (NEW hardening, below)
+> - mid-training SIGKILL → process dies, no `run.done`, status≠done
+>
+> Hardening added: `load_tabular` in training_template.py previously
+> `fillna(0.0)`'d non-finite feature cells SILENTLY — a NaN/inf dataset would
+> train on an imputed zero matrix and produce believable-but-garbage metrics.
+> It now raises a ValueError naming the affected columns, → `fail("dataset")`.
+> 9 cases × ~2s in CI.
+
 ---
 
 # 26. PHASE 25 – NUMERICAL FAILURE DETECTION

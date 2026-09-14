@@ -374,7 +374,20 @@ def load_tabular(cfg: dict, heads: list[dict], known_classes_by_head: dict | Non
     if not feature_cols:
         raise ValueError("no usable feature columns")
 
-    X_np = df[feature_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0).to_numpy(dtype="float32")
+    X_np_raw = df[feature_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype="float64")
+    # Phase 24 — invalid (NaN/inf) input must FAIL loudly, never be silently
+    # imputed or trivially passed through. garbage_in_failed lets the user fix
+    # the dataset instead of training on zeros and believing the metrics.
+    if not np.isfinite(X_np_raw).all():
+        bad = int(np.count_nonzero(~np.isfinite(X_np_raw)))
+        cols = [c for c in feature_cols
+                if not np.isfinite(df[c].apply(pd.to_numeric, errors="coerce").to_numpy(dtype="float64")).all()]
+        raise ValueError(
+            f"non-finite values found in the feature matrix ({bad} NaN/inf cells; "
+            f"columns affected: {cols[:8]}{'…' if len(cols) > 8 else ''}). "
+            "A dataset with NaN/inf inputs cannot be trained on — fix or drop the "
+            "affected samples/columns and re-inspect the dataset.")
+    X_np = X_np_raw.astype(np.float32)
     X = torch.from_numpy(np.ascontiguousarray(X_np))
 
     targets = {}

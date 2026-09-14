@@ -48,6 +48,7 @@ Run: 2026-09-14, conda env `mlforge-dev` active for all Python-executing harness
 | Torch sidecar | `npm run verify:sidecar` | **PASS** — 6/6 cases + activations |
 | Training codegen | `npm run verify:traingen` | **PASS** — compile + e2e multitask + e2e external validation |
 | Scientific smoke | `npm run verify:smoke` | **PASS** — 15 checks (synthetic data, 5 epochs, checkpoint + metrics) |
+| Training failures | `npm run verify:failures` | **PASS** — 8 failure modes (invalid ds/model/optimizer/lr, missing/unwritable out dir, NaN, SIGKILL) all FAIL loudly |
 | OpenCode provider | `npm run verify:opencode` | **PASS** — models list, /chat stream, bogus-model clean error |
 | Rust | `cargo check` in src-tauri | **SKIPPED** — Rust toolchain not installed on this machine |
 | Python tests | `python -m pytest` | **SKIPPED** — no Python test suite in repo, pytest not installed |

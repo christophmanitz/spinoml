@@ -302,6 +302,16 @@ chatbot knows about it — recipe in CLAUDE.md "Add a new LLM tool".
   `run.determinism` events emitted — a fast CI-compatible end-to-end sanity
   gate.
 
+- 2026-09-14 — **Training failure tests (Phase 24)**: new `npm run verify:failures`
+  harness deliberately causes each listed failure mode against the REAL trainer
+  and asserts FAILURE (exit≠0, `status`≠done, `run.failed` event), never
+  SUCCESS and never stuck in RUNNING: invalid dataset, invalid model, invalid
+  optimizer, invalid (negative) learning rate, missing output dir
+  (checkpoints-as-file), unwritable output dir (chmod 555), NaN input, and
+  mid-training SIGKILL. Also HARDENS the trainer: `load_tabular` now FAILS
+  LOUDLY on NaN/inf in the feature matrix instead of silently `fillna(0.0)` —
+  a NaN/inf dataset can never be trained on or produce believable metrics.
+
 - 2026-09-14 — **Training environment record (Phase 21)**: `train.py` emits a
   `config.env` event at launch recording the runtime stack (python/torch/cuda/
   numpy versions, device + GPU/VRAM, compute dtype, CPU count, RAM, workspace
