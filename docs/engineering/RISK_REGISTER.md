@@ -36,6 +36,7 @@
 | R026   | Training  | run.json immutability violated (post-launch mutation)                 | HIGH     | T004    | OPEN     | §42 training immutability |
 | R027   | LLM       | Model config scattered through code (provider drift)                  | MEDIUM   | L001    | OPEN     | §0.4 (Phase 0 addressed: providerStore centralized — VERIFY once) |
 | R028   | Training  | Training launched on a model never verified (shapes unknown/invalid) | HIGH     | S002    | ADDRESSED | §10 fail-closed (verifyModelForTraining gates NewRunModal submit 2026-09-14) |
+| R033   | Training  | Train/validation overlap or silent strategy change (data leakage)    | HIGH     | T005    | ADDRESSED | Phase 19 landed 2026-09-14: Split node strategy frozen into run.json (`training.split_strategy`); unimplemented strategy → loud fail in train.py (never silent random fallback); zero-overlap assertion emitted as `split.integrity` event at launch; `verify:traingen` now includes strategy-guard + integrity-check (PASS) |
 
 ## Notes on the live environment (2026-09-14)
 

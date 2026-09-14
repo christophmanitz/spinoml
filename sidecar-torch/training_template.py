@@ -1004,6 +1004,18 @@ def main() -> None:
     batch_size = int(train_cfg.get("batch_size", 32))
     val_split = float(train_cfg.get("val_split", 0.2))
     seed = int(train_cfg.get("seed", 42))
+    split_strategy = str(train_cfg.get("split_strategy", "random")).lower()
+
+    # Phase 19 — we NEVER silently change a user's split strategy. The trainer
+    # only implements 'random' today; any other strategy frozen into run.json is
+    # an explicit, loud failure instead of a silent random fallback.
+    IMPLEMENTED_SPLIT_STRATEGIES = ("random",)
+    if split_strategy not in IMPLEMENTED_SPLIT_STRATEGIES:
+        fail("split",
+             f"split_strategy={split_strategy!r} is not implemented by the trainer yet "
+             f"(implemented: {', '.join(IMPLEMENTED_SPLIT_STRATEGIES)}). The run's strategy "
+             f"was frozen into run.json at launch and is honored verbatim — it will NOT be "
+             f"silently changed to 'random'.")
     log_every = int(train_cfg.get("log_every_n_steps", 10))
     shuffle = bool(train_cfg.get("shuffle", True))
     num_workers = int(train_cfg.get("num_workers", 0))
@@ -1053,7 +1065,7 @@ def main() -> None:
          model=cfg.get("model_path"),
          ds_kind=ds_cfg.get("kind"),
          fingerprint_id=(f"{fp['alg']}:{fp['hash']}" if isinstance(fp, dict) and fp.get("hash") else None),
-         split={"val_split": val_split, "seed": seed})
+         split={"val_split": val_split, "seed": seed, "strategy": split_strategy})
     try:
         emit("dataset.fingerprint", **_verify_fingerprint(ds_cfg))
     except Exception as e:  # noqa: BLE001
@@ -1097,6 +1109,23 @@ def main() -> None:
         train_ds, val_ds = random_split(full, [n_train, n_val], generator=gen)
     else:
         train_ds, val_ds = full, None
+
+    # ── split integrity (Phase 19) — prove no overlap between partition classes ──
+    # random_split is structurally a permutation partition (disjoint), so
+    # overlap is provably 0 today; the check is a fail-closed assertion that
+    # stays live when grouped/stratified/predefined strategies are added later.
+    train_indices = list(getattr(train_ds, "indices", range(n_train)))
+    val_indices = list(getattr(val_ds, "indices", [])) if val_ds is not None else []
+    overlaps = sorted(set(train_indices) & set(val_indices))
+    emit("split.integrity",
+         train_size=len(train_indices), val_size=len(val_indices),
+         overlap=len(overlaps), overlaps=overlaps[:20],
+         strategy=split_strategy, seed=seed, val_split=val_split)
+    if overlaps:
+        fail("split",
+             f"train/val leakage — {len(overlaps)} sample(s) appear in BOTH partitions "
+             f"(strategy={strategy}, seed={seed}); refusing to train on a leaking split")
+
     collate = make_collate(is_graph, head_names)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, drop_last=drop_last, collate_fn=collate)
     val_loader = DataLoader(val_ds, batch_size=batch_size, num_workers=num_workers, collate_fn=collate) if val_ds is not None else None

@@ -31,11 +31,20 @@ export type Head = {
   label_smoothing?: number
 }
 
+export type SplitStrategy = 'random' | 'stratified' | 'grouped' | 'time-based' | 'predefined'
+
+export const SPLIT_STRATEGIES: SplitStrategy[] = ['random', 'stratified', 'grouped', 'time-based', 'predefined']
+
 export type TrainingConfig = {
   epochs: number
   batch_size: number
   val_split: number
   seed: number
+  /** Phase 19: WHICH splitting method the run uses. Only 'random' is
+   *  implemented by the trainer today; anything else is frozen into run.json
+   *  AND the trainer fails loudly rather than silently falling back to random
+   *  — we never silently change a user's chosen strategy. */
+  split_strategy: SplitStrategy
   log_every_n_steps: number
   /** DataLoader knobs (from the DataLoader node; sensible defaults otherwise). */
   shuffle?: boolean
@@ -220,6 +229,7 @@ export function defaultTrainingConfig(): TrainingConfig {
     epochs: 50,
     batch_size: 32,
     val_split: 0.2,
+    split_strategy: 'random',
     seed: 42,
     log_every_n_steps: 10,
     optimizer: { kind: 'Adam', lr: 1e-3, weight_decay: 0 },

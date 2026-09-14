@@ -70,6 +70,17 @@ model by `kind`:
 **Adding a layer = editing `registry.ts` only** (recipe in CLAUDE.md). Codegen is
 uniform; multi-input/branching layers need teaching `generator.ts`.
 
+## 3. Training Strategy & Integrity (Phase 19)
+
+The Split node's `strategy` (`random`/`stratified`/`grouped`/`time-based`/
+`predefined`) is frozen into `run.json` (`training.split_strategy`) at launch and
+**never silently changed**. The trainer only implements `random` today; any other
+strategy in run.json produces an immediate loud failure rather than a silent random
+fallback. After splitting, the trainer asserts zero overlap between train and
+validation sets (`split.integrity` event with `overlap=0`) and records the
+strategy used, so every run documents exactly HOW its splits were formed. A
+non-zero overlap (from a future custom split method) is a fail-closed refusal.
+
 ## 4. Datasets
 
 Kinds + handlers live in **`sidecar-torch/dataset_handlers.py`** (and the UI types in
@@ -236,6 +247,13 @@ chatbot knows about it — recipe in CLAUDE.md "Add a new LLM tool".
   `agent/`, run via `run_script`; write outputs under `datasets/`.
 
 ## Changelog (append one dated line per feature; newest first)
+
+- 2026-09-14 — **Split integrity + strategy guard (Phase 19)**: the Split node now
+  records a `strategy` (`random`/`stratified`/`grouped`/`time-based`/`predefined`),
+  frozen into `run.json` (`training.split_strategy`) and never silently changed —
+  an unimplemented strategy makes `train.py` fail loudly instead of falling back to
+  random. The trainer asserts zero train/val overlap (`split.integrity` event) and
+  fingerprints the strategy into `run.provenance`.
 
 - 2026-09-14 — **Dataset fingerprinting (Phase 18)**: every dataset `inspect` now
   returns a stable SHA-256 `fingerprint` (`content`/`structure`/`config+content`/

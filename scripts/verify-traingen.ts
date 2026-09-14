@@ -138,6 +138,18 @@ if (!existsSync(template)) {
     check('status done', stoppedEarlyOrDone, status)
     check('epoch.end carries accuracy+f1 metrics', hasMetrics)
     check('extras config event emitted', events.some((e) => e.kind === 'config.extras'))
+    // Phase 19: the split MUST be provably leak-free — disjoint subsets, strategy recorded.
+    const si = events.find((e) => e.kind === 'split.integrity')
+    check('split.integrity emitted (Phase 19)',
+      !!si && (si as any).overlap === 0 && (si as any).strategy === 'random'
+      && (si as any).train_size > 0 && typeof (si as any).val_size === 'number'
+      && (si as any).train_size + (si as any).val_size > 0,
+      JSON.stringify(si ?? 'no split.integrity event'))
+    // The provenance split.strategy must match what was frozen into run.json
+    const provEv = events.find((e) => e.kind === 'run.provenance')
+    check('split.strategy frozen into provenance (Phase 19)',
+      provEv !== undefined && provEv.split?.strategy === 'random',
+      JSON.stringify(provEv?.split ?? 'no split in run.provenance'))
     // eval.summary drives the Run-Detail diagrams: iris is classification → a
     // square confusion matrix over the full val set, with one label per class.
     const evalEv = [...events].reverse().find((e) => e.kind === 'eval.summary')
@@ -265,6 +277,39 @@ if (existsSync(template) && r.plan) {
   } catch (e) {
     const err = e as { stderr?: Buffer; stdout?: Buffer }
     check('eval-only trainer ran', false, (err.stderr?.toString() ?? '') + (err.stdout?.toString() ?? ''))
+  }
+}
+
+// ── 6. split_strategy guard (Phase 19) — an unimplemented strategy MUST fail
+//    loudly (exit ≠ 0) rather than silently falling back to random. ──
+console.log('split-strategy: unimplemented strategy must fail loudly')
+if (existsSync(template) && r.plan) {
+  const dir = mkdtempSync(join(tmpdir(), 'spinoml-strategy-'))
+  writeFileSync(join(dir, 'iris.csv'),
+    'sl,sw,pl,pw,species\n' +
+    '5.1,3.5,1.4,0.2,setosa\n4.9,3.0,1.4,0.2,setosa\n4.7,3.2,1.3,0.2,setosa\n5.0,3.4,1.5,0.2,setosa\n' +
+    '6.4,3.2,4.5,1.5,versicolor\n6.9,3.1,4.9,1.5,versicolor\n5.5,2.3,4.0,1.3,versicolor\n6.0,2.2,4.0,1.0,versicolor\n' +
+    '6.3,3.3,6.0,2.5,virginica\n5.8,2.7,5.1,1.9,virginica\n7.1,3.0,5.9,2.1,virginica\n6.5,3.0,5.8,2.2,virginica\n')
+  writeFileSync(join(dir, 'model.py'),
+    'import torch\nimport torch.nn as nn\n\nclass Model(nn.Module):\n' +
+    '    def __init__(self):\n        super().__init__()\n        self.fc1 = nn.Linear(4, 16)\n        self.act = nn.ReLU()\n        self.fc2 = nn.Linear(16, 3)\n' +
+    '    def forward(self, x):\n        return self.fc2(self.act(self.fc1(x)))\n')
+  writeFileSync(join(dir, 'run.json'), JSON.stringify({
+    run_id: 'strategy', run_label: 'strategy', created_at: '2026-01-01T00:00:00Z', status: 'queued',
+    model_path: 'm', backend: { kind: 'local' },
+    dataset: { path: join(dir, 'iris.csv'), relpath: 'iris.csv', kind: 'tabular',
+      feature_columns: ['sl', 'sw', 'pl', 'pw'], target_column: 'species' },
+    training: { ...r.plan.training, split_strategy: 'grouped', val_split: 0.25 },
+  }, null, 2))
+  copyFileSync(template, join(dir, 'train.py'))
+  try {
+    execSync('python -u train.py', { cwd: dir, stdio: 'pipe' })
+    check('grouped strategy failed loudly', false, 'exit code 0 — silent fallback detected')
+  } catch (e) {
+    const stderr = (e as { stderr?: Buffer }).stderr?.toString() ?? ''
+    check('grouped strategy failed loudly', stderr.includes('split_strategy')
+      && stderr.includes('grouped'),
+      stderr.slice(0, 200))
   }
 }
 

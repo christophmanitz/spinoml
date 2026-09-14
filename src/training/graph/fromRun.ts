@@ -29,7 +29,7 @@ export function runConfigToTrainingSnapshot(config: RunConfig): TrainingGraphSna
     target: ds.target_column,
     features: ds.feature_columns ?? [],
   })
-  const splitId = add('Split', { val_ratio: t.val_split, seed: t.seed })
+  const splitId = add('Split', { strategy: t.split_strategy, val_ratio: t.val_split, seed: t.seed })
   const loaderId = add('DataLoader', { batch_size: t.batch_size })
   const modelId = add('ModelSource', { model: config.model_path })
   // Multitask: one Head node per output. Single-task: the legacy Loss node.

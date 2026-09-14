@@ -64,10 +64,15 @@ export const TRAINING_NODES: Record<string, TrainingNodeSpec> = {
   Split: {
     type: 'Split', category: 'Data',
     fields: [
+      f.select('strategy', ['random', 'stratified', 'grouped', 'time-based', 'predefined'], 'random'),
       f.float('val_ratio', 0.2, { min: 0, max: 0.9, step: 0.05 }),
       f.int('seed', 42, { min: 0 }),
     ],
-    summary: (p) => `val ${Math.round(get(p, 'val_ratio', 0.2) * 100)}% · seed ${get(p, 'seed', 42)}`,
+    summary: (p) => {
+      const s = String(get(p, 'strategy', 'random'))
+      const v = Math.round(get(p, 'val_ratio', 0.2) * 100)
+      return `${s} · val ${v}% · seed ${get(p, 'seed', 42)}`
+    },
   },
   DataLoader: {
     type: 'DataLoader', category: 'Data',

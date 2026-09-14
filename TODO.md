@@ -1755,6 +1755,17 @@ Predefined
 
 Do not silently change a user's split strategy.
 
+> **2026-09-14 — implemented.** Split node gains `strategy` (random/stratified/
+> grouped/time-based/predefined), compiled → `TrainingConfig.split_strategy`,
+> frozen into run.json at launch. `train.py` validates it up front: only 'random'
+> is implemented; any other strategy fails loudly with an explicit "will NOT be
+> silently changed to random" message (no silent fallback). After the split the
+> trainer asserts disjoint train/val subsets (`split.integrity` event with
+> overlap=0, `overlaps` preview, strategy/seed/val_split) and refuses to train
+> on a leaking split (fail-closed gate for future custom split methods). Strategy
+> is also recorded in `run.provenance.split.strategy`. verify:traingen covers
+> integrity + a negative strategy-guard case.
+
 ---
 
 # 21. PHASE 20 – TRAINING SNAPSHOT
