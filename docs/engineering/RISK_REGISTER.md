@@ -25,7 +25,7 @@
 | R016   | Security  | Missing sidecar path scoping — arbitrary file read/write/exec         | CRITICAL | SEC005  | OPEN     | AUDIT §1.5 |
 | R017   | Quality   | Lint debt (49e/4w) hides real defects; eslint exits 0 (gate no-op)    | MEDIUM   | Q001    | OPEN     | AUDIT §3.1 |
 | R018   | Quality   | No unit tests for state stores (GraphStore/history/workspace)         | HIGH     | Q002    | OPEN     | §4.2 graph mutations |
-| R019   | Remote    | SSH alias `leipzig-hpc` broken in `~/.ssh/config` (CLI/terminal only)  | MEDIUM   | R003    | OPEN     | ops fix, not code |
+| R019   | Remote    | SSH alias `leipzig-hpc` broken in `~/.ssh/config` (CLI/terminal only)  | MEDIUM   | R003    | VERIFIED | fixed 2026-09-14 (`~/.ssh/config` consolidated) |
 | R020   | Remote    | Remote smoke blocked until Phase 12b (abspath not sidecar-addressable)| MEDIUM   | R004    | OPEN     | §12b |
 | R021   | Remote    | Cluster scratch path unknown; `/scratch/<user>` absent (network home) | MEDIUM   | R005    | OPEN     | Phase 12b site prep |
 | R022   | Remote    | `python: not found` on bare shell breaks verify harnesses (env gap)   | MEDIUM   | R006    | OPEN     | ops: activate `mlforge-dev` |

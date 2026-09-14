@@ -253,10 +253,12 @@ chatbot.
 - Discovery: remote workspace `~/spinoml_gnn` verified live — sees
   affbind v1–v5 + catpred models, `agent/`, `datasets/` (17 entries),
   8 finished runs, remote venv `<root>/.spinoml/venv/bin/python` present.
-- Known local defect: `~/.ssh/config` has THREE `Host leipzig-hpc` blocks; ssh
-  honours only the first (`HostName leipzig-hpc` self-reference) → `ssh leipzig-hpc`
-  fails DNS. The app is unaffected (uses full hostname + explicit user). Fixing
-  the config would restore the alias for CLI/terminal use. Not yet fixed.
+- Known local defect: `~/.ssh/config` had THREE `Host leipzig-hpc` blocks; ssh
+  honoured only the first (`HostName leipzig-hpc` self-reference) → `ssh leipzig-hpc`
+  failed DNS. The app was unaffected (used full hostname + explicit user).
+  **Fixed 2026-09-14** — consolidated into one canonical block
+  (`Host leipzig-hpc login01.sc.uni-leipzig.de`, User zw93onug, id_ed25519) and
+  verified: `ssh leipzig-hpc` now connects (backup at `~/.ssh/config.bak-20260914`).
 - Tests: none automated for SSH; `verify:opencode`/manual remote scaffold.
 
 ### 16. SFTP
