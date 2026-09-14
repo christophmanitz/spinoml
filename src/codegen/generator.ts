@@ -119,9 +119,17 @@ type BuildCtx = {
 }
 
 export function generate(nodes: LayerNode[], edges: Edge[]): CodegenResult {
-  const gnodes: GNode[] = nodes.map((n) => ({ id: n.id, layerType: n.data.layerType, params: n.data.params }))
+  // Determinism: canonicalize input order so the same graph always produces
+  // identical code regardless of React Flow array order (ensures stable names
+  // and attrMap for golden tests + replay). Node sort is a cheap tiebreak on
+  // (layerType, id); edge sort is (source, target). Both are stable ties only.
+  const canonNodes = [...nodes].sort((a, b) =>
+    a.data.layerType.localeCompare(b.data.layerType) || a.id.localeCompare(b.id))
+  const canonEdges = [...edges].sort((a, b) =>
+    a.source.localeCompare(b.source) || a.target.localeCompare(b.target))
+  const gnodes: GNode[] = canonNodes.map((n) => ({ id: n.id, layerType: n.data.layerType, params: n.data.params }))
   const ctx: BuildCtx = { defs: new Map(), tg: new Set(), hasCustom: { v: false } }
-  const built = buildClass(gnodes, edges, 'Model', ctx, 0)
+  const built = buildClass(gnodes, canonEdges, 'Model', ctx, 0)
 
   const extraImports: string[] = []
   if (ctx.hasCustom.v) extraImports.push('import torch.nn.functional as F')

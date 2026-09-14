@@ -17,6 +17,7 @@
     "verify:opencode": "tsx scripts/verify-opencode.ts",
     "test:graphstore": "tsx scripts/test-graphstore.ts",
     "test:persistence": "tsx scripts/test-persistence.ts",
+    "test:determinism": "tsx scripts/test-determinism.ts",
     "sidecar:torch": "python sidecar-torch/main.py",
     "sidecar:llm": "node sidecar-llm/main.mjs"
   },
