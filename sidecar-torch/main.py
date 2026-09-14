@@ -39,6 +39,97 @@ import dataset_handlers as ds_mod
 # without colliding with another user's sidecar.
 PORT = int(os.environ.get("SPINOML_TORCH_PORT", "7421"))
 
+# ── Structured error codes ───────────────────────────────────────────────
+# Every error response carries `error_code` (machine-readable, stable for the
+# frontend) next to the human `error` string. Codes are the contract between
+# the sidecar and src/inference/client.ts + the robustness harness; extend
+# here, not ad hoc per endpoint.
+CODE_VALIDATION = "VALIDATION"
+CODE_COMPILE = "COMPILE"
+CODE_CONSTRUCT = "CONSTRUCT"
+CODE_INPUT = "INPUT"
+CODE_FORWARD = "FORWARD"
+CODE_INTERNAL = "INTERNAL"
+CODE_TIMEOUT = "TIMEOUT"
+CODE_UNKNOWN_ENDPOINT = "UNKNOWN_ENDPOINT"
+
+# Accepted input_dtypes; everything else is a VALIDATION error (fail-closed,
+# not silently reinterpreted as float32).
+KNOWN_DTYPES = frozenset({"float16", "bfloat16", "float32", "float64",
+                            "int8", "int16", "int32", "int64", "long", "uint8",
+                            "bool", "graph"})
+
+# Synthetic-input guards: a tiny local HTTP server must NOT hand the frontend
+# an OOM kill over a fat-fingered or hostile shape. Dimensions and total
+# element count are capped; violating shapes are VALIDATION errors instead.
+MAX_INPUT_DIMS = 16
+MAX_INPUT_DIM = 1_000_000
+MAX_INPUT_ELEMS = 1 << 30  # 1G elems ≈ 4–8 GB fp32 — already too big for a preview
+
+# Per-connection socket inactivity cap (seconds). Bounds the thread pool
+# against connections that open a socket and never finish the body; a hung
+# forward pass itself is handled by the outer process watchdog + restart
+# (Phase 13). Overridable so the robustness harness can test the cap quickly.
+REQUEST_TIMEOUT = float(os.environ.get("SPINOML_TORCH_TIMEOUT", "30"))
+
+
+def _err(code: str, message: str, stage: str | None = None,
+         trace: str | None = None, **extra) -> dict:
+    """One shape for every error: human `error` + machine `error_code` + the
+    existing `stage`/`trace`/… fields consumers already rely on."""
+    out: dict = {"ok": False, "error": message, "error_code": code}
+    if stage:
+        out["stage"] = stage
+    if trace:
+        out["trace"] = trace
+    out.update(extra)
+    return out
+
+
+def _normalize_shapes(shapes_in, dtypes_in=None) -> tuple[list[list[int]], list[str] | None] | dict:
+    """Strictly validate the shape/dtype payload.
+
+    Returns (shapes, dtypes) on success, or a structured VALIDATION error dict.
+    Never lets a non-int dimension (string, float, None, …) or a pathological
+    size turn into a crash or an OOM inside this process."""
+    if not isinstance(shapes_in, list) or not all(isinstance(s, list) for s in shapes_in):
+        return _err(CODE_VALIDATION, "input_shapes must be a list of int[]")
+    dtypes: list[str] | None = None
+    if dtypes_in is not None:
+        if not isinstance(dtypes_in, list) or not all(isinstance(d, str) for d in dtypes_in):
+            return _err(CODE_VALIDATION, "input_dtypes must be a list of str")
+        if len(dtypes_in) != len(shapes_in):
+            return _err(CODE_VALIDATION,
+                        f"input_dtypes has {len(dtypes_in)} entries but input_shapes has {len(shapes_in)}")
+        dtypes = [d for d in dtypes_in]  # .copy()
+        for d in dtypes:
+            if d not in KNOWN_DTYPES:
+                return _err(CODE_VALIDATION, f"unknown dtype {d!r} (known: {sorted(KNOWN_DTYPES)})")
+    shapes: list[list[int]] = []
+    for s in shapes_in:
+        if not s:
+            return _err(CODE_VALIDATION, "input_shapes contains an empty shape")
+        if len(s) > MAX_INPUT_DIMS:
+            return _err(CODE_VALIDATION,
+                        f"shape has {len(s)} dims, max {MAX_INPUT_DIMS}")
+        row: list[int] = []
+        for v in s:
+            if isinstance(v, bool) or not isinstance(v, int):
+                return _err(CODE_VALIDATION, f"shape dimensions must be ints, got {v!r}")
+            if v < 0:
+                return _err(CODE_VALIDATION, f"shape dimensions must be >= 0, got {v}")
+            if v > MAX_INPUT_DIM:
+                return _err(CODE_VALIDATION, f"shape dimension {v} exceeds max {MAX_INPUT_DIM}")
+            row.append(v)
+        elems = 1
+        for v in row:
+            elems *= v
+            if elems > MAX_INPUT_ELEMS:
+                return _err(CODE_VALIDATION,
+                            f"shape {row} would allocate > {MAX_INPUT_ELEMS} elements")
+        shapes.append(row)
+    return (shapes, dtypes)
+
 
 # ── Graph (PyG Data) inputs ───────────────────────────────────────────────
 # A `Graph` model input is a whole PyG Data object, not a bare tensor. These
@@ -131,6 +222,7 @@ def infer(
         return {
             "ok": False,
             "stage": "compile",
+            "error_code": CODE_COMPILE,
             "error": msg,
             "trace": traceback.format_exc(limit=4),
             "shapes": shapes,
@@ -138,7 +230,8 @@ def infer(
 
     Model = ns.get("Model")
     if Model is None:
-        return {"ok": False, "stage": "compile", "error": "no Model class in generated code", "shapes": shapes}
+        return {"ok": False, "stage": "compile", "error_code": CODE_COMPILE,
+                "error": "no Model class in generated code", "shapes": shapes}
 
     try:
         model = Model()
@@ -147,6 +240,7 @@ def infer(
         return {
             "ok": False,
             "stage": "construct",
+            "error_code": CODE_CONSTRUCT,
             "error": f"{type(e).__name__}: {e}",
             "trace": traceback.format_exc(limit=6),
             "shapes": shapes,
@@ -189,6 +283,7 @@ def infer(
         return {
             "ok": False,
             "stage": "input",
+            "error_code": CODE_INPUT,
             "error": f"could not build zero tensor of shape {input_shapes}: {e}",
             "shapes": shapes,
             "n_params": n_params,
@@ -201,6 +296,7 @@ def infer(
         return {
             "ok": False,
             "stage": "forward",
+            "error_code": CODE_FORWARD,
             "error": f"{type(e).__name__}: {e}",
             "trace": traceback.format_exc(limit=6),
             "shapes": shapes,
@@ -285,20 +381,21 @@ def smoke_test(
         exec(compile(code, "<spinoml-model>", "exec"), ns)
     except Exception as e:
         return {
-            "ok": False, "stage": "compile",
+            "ok": False, "stage": "compile", "error_code": CODE_COMPILE,
             "error": f"{type(e).__name__}: {e}",
             "trace": traceback.format_exc(limit=4),
         }
     Model = ns.get("Model")
     if Model is None:
-        return {"ok": False, "stage": "compile", "error": "no Model class in generated code"}
+        return {"ok": False, "stage": "compile", "error_code": CODE_COMPILE,
+                "error": "no Model class in generated code"}
 
     try:
         model = Model()
         model.eval()
     except Exception as e:
         return {
-            "ok": False, "stage": "construct",
+            "ok": False, "stage": "construct", "error_code": CODE_CONSTRUCT,
             "error": f"{type(e).__name__}: {e}",
             "trace": traceback.format_exc(limit=4),
         }
@@ -322,7 +419,7 @@ def smoke_test(
             out = model(*xs)
     except Exception as e:
         return {
-            "ok": False, "stage": "forward",
+            "ok": False, "stage": "forward", "error_code": CODE_FORWARD,
             "error": f"{type(e).__name__}: {e}",
             "trace": traceback.format_exc(limit=6),
             "input_shape": [_shape_of(t) for t in xs],
@@ -481,16 +578,17 @@ def activations(
     try:
         exec(compile(code, "<spinoml-model>", "exec"), ns)
     except Exception as e:
-        return {"ok": False, "stage": "compile", "error": f"{type(e).__name__}: {e}",
-                "trace": traceback.format_exc(limit=4)}
+        return {"ok": False, "stage": "compile", "error_code": CODE_COMPILE,
+                "error": f"{type(e).__name__}: {e}", "trace": traceback.format_exc(limit=4)}
     Model = ns.get("Model")
     if Model is None:
-        return {"ok": False, "stage": "compile", "error": "no Model class in generated code"}
+        return {"ok": False, "stage": "compile", "error_code": CODE_COMPILE,
+                "error": "no Model class in generated code"}
     try:
         model = Model()
     except Exception as e:
-        return {"ok": False, "stage": "construct", "error": f"{type(e).__name__}: {e}",
-                "trace": traceback.format_exc(limit=6)}
+        return {"ok": False, "stage": "construct", "error_code": CODE_CONSTRUCT,
+                "error": f"{type(e).__name__}: {e}", "trace": traceback.format_exc(limit=6)}
 
     # Trained weights from a checkpoint are loaded LATER (after inputs are built
     # and lazy params materialized) — see the load block below.
@@ -552,8 +650,8 @@ def activations(
                         n *= int(d)
                     xs.append(torch.linspace(-2.0, 2.0, n).reshape(s) if n > 0 else torch.zeros(s))
     except Exception as e:
-        return {"ok": False, "stage": "input", "error": f"{type(e).__name__}: {e}",
-                "trace": traceback.format_exc(limit=4)}
+        return {"ok": False, "stage": "input", "error_code": CODE_INPUT,
+                "error": f"{type(e).__name__}: {e}", "trace": traceback.format_exc(limit=4)}
 
     # Materialize lazy (in_channels=-1) params from the ACTUAL inputs, THEN load
     # the checkpoint — only shape-COMPATIBLE tensors, so a checkpoint whose dims
@@ -619,7 +717,8 @@ def activations(
     except Exception as e:
         for h in handles:
             h.remove()
-        return {"ok": False, "stage": "forward", "error": f"{type(e).__name__}: {e}",
+        return {"ok": False, "stage": "forward", "error_code": CODE_FORWARD,
+                "error": f"{type(e).__name__}: {e}",
                 "trace": traceback.format_exc(limit=6), "n_params": n_params}
     for h in handles:
         h.remove()
@@ -789,6 +888,12 @@ def run_workspace_script(payload: dict) -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
+    # Socket inactivity cap: a client that opens a connection and stalls the
+    # request body must not pin a worker thread forever. A hung forward pass
+    # is NOT interrupted here (that needs process isolation — Phase 13); the
+    # outer watchdog + restart covers it.
+    timeout = REQUEST_TIMEOUT
+
     def _cors(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
@@ -803,16 +908,14 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._json(200, {"ok": True, "torch": torch.__version__})
             return
-        self.send_response(404)
-        self._cors()
-        self.end_headers()
+        self._json(404, _err(CODE_UNKNOWN_ENDPOINT, f"unknown endpoint: {self.path}"))
 
     def do_POST(self) -> None:  # noqa: N802
         length = int(self.headers.get("Content-Length", "0") or "0")
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError as e:
-            self._json(400, {"ok": False, "error": f"invalid json: {e}"})
+            self._json(400, _err(CODE_VALIDATION, f"invalid json: {e}"))
             return
 
         try:
@@ -822,14 +925,14 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/dataset/inspect":
                 abspath = payload.get("abspath")
                 if not isinstance(abspath, str):
-                    self._json(400, {"ok": False, "error": "expected {abspath: str}"})
+                    self._json(400, _err(CODE_VALIDATION, "expected {abspath: str}"))
                     return
                 self._json(200, ds_mod.inspect(abspath))
                 return
             if self.path == "/dataset/stats":
                 abspath = payload.get("abspath")
                 if not isinstance(abspath, str):
-                    self._json(400, {"ok": False, "error": "expected {abspath: str}"})
+                    self._json(400, _err(CODE_VALIDATION, "expected {abspath: str}"))
                     return
                 self._json(200, ds_mod.stats(abspath))
                 return
@@ -848,14 +951,17 @@ class Handler(BaseHTTPRequestHandler):
                     if isinstance(single_shape, list):
                         shapes_in = [single_shape]
                 if not isinstance(code, str) or not isinstance(abspaths_in, list) or not abspaths_in:
-                    self._json(400, {"ok": False, "error": "expected {code, abspaths: str[] | abspath: str, input_shapes?: int[][]}"})
+                    self._json(400, _err(CODE_VALIDATION,
+                                         "expected {code, abspaths: str[] | abspath: str, input_shapes?: int[][]}"))
                     return
                 abspaths = [str(p) for p in abspaths_in if isinstance(p, str)]
                 shapes: list[list[int]] | None = None
-                if isinstance(shapes_in, list):
-                    shapes = [[int(v) for v in s] for s in shapes_in if isinstance(s, list)]
-                    if not shapes:
-                        shapes = None
+                if shapes_in is not None:
+                    norm = _normalize_shapes(shapes_in, None)
+                    if isinstance(norm, dict):
+                        self._json(400, norm)
+                        return
+                    shapes = norm[0] or None
                 opts_in = payload.get("input_options")
                 opts = opts_in if isinstance(opts_in, list) else None
                 self._json(200, smoke_test(code, abspaths, shapes, opts))
@@ -867,12 +973,14 @@ class Handler(BaseHTTPRequestHandler):
                     single_shape = payload.get("input_shape")
                     if isinstance(single_shape, list):
                         shapes_in = [single_shape]
-                if not isinstance(code, str) or not isinstance(shapes_in, list) or not all(isinstance(s, list) for s in shapes_in):
-                    self._json(400, {"ok": False, "error": "expected {code: str, input_shapes: int[][]}"})
+                if not isinstance(code, str):
+                    self._json(400, _err(CODE_VALIDATION, "expected {code: str}"))
                     return
-                normalized = [[int(v) for v in s] for s in shapes_in]
-                dtypes_in = payload.get("input_dtypes")
-                dtypes = [str(d) for d in dtypes_in] if isinstance(dtypes_in, list) else None
+                norm = _normalize_shapes(shapes_in, payload.get("input_dtypes"))
+                if isinstance(norm, dict):
+                    self._json(400, norm)
+                    return
+                normalized, dtypes = norm
                 abspaths_in = payload.get("abspaths")
                 if abspaths_in is None:
                     single = payload.get("abspath")
@@ -890,14 +998,14 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/deps/check":
                 specs = payload.get("specs")
                 if not isinstance(specs, list):
-                    self._json(400, {"ok": False, "error": "expected {specs: str[]}"})
+                    self._json(400, _err(CODE_VALIDATION, "expected {specs: str[]}"))
                     return
                 self._json(200, deps_check([str(s) for s in specs]))
                 return
             if self.path == "/deps/install":
                 specs = payload.get("specs")
                 if not isinstance(specs, list):
-                    self._json(400, {"ok": False, "error": "expected {specs: str[]}"})
+                    self._json(400, _err(CODE_VALIDATION, "expected {specs: str[]}"))
                     return
                 self._json(200, deps_install([str(s) for s in specs]))
                 return
@@ -905,40 +1013,40 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, run_workspace_script(payload))
                 return
         except Exception as e:
-            self._json(500, {
-                "ok": False, "stage": "sidecar",
-                "error": f"sidecar crash: {type(e).__name__}: {e}",
-                "trace": traceback.format_exc(limit=4),
-            })
+            self._json(500, _err(CODE_INTERNAL,
+                                 f"sidecar crash: {type(e).__name__}: {e}",
+                                 stage="sidecar", trace=traceback.format_exc(limit=4)))
             return
 
-        self.send_response(404)
-        self._cors()
-        self.end_headers()
+        self._json(404, _err(CODE_UNKNOWN_ENDPOINT, f"unknown endpoint: {self.path}"))
 
     def _handle_infer(self, payload: dict) -> None:
         code = payload.get("code")
-        # Accept either input_shapes (multi-input list[list[int]]) or legacy input_shape (list[int]).
+        if not isinstance(code, str):
+            self._json(400, _err(CODE_VALIDATION, "missing or non-string code"))
+            return
+        # Accept either input_shapes (multi-input list[list[int]]) or legacy
+        # input_shape (list[int]). Shape/dtype content is validated against the
+        # shared guards (OOM cap, non-int dims, unknown dtypes) BEFORE exec.
         shapes_in = payload.get("input_shapes")
         if shapes_in is None:
             single = payload.get("input_shape")
             if isinstance(single, list):
                 shapes_in = [single]
-        if not isinstance(code, str) or not isinstance(shapes_in, list) or not all(isinstance(s, list) for s in shapes_in):
-            self._json(400, {"ok": False, "error": "expected {code: str, input_shapes: int[][]} or {input_shape: int[]}"})
+        if not isinstance(shapes_in, list) or not all(isinstance(s, list) for s in shapes_in):
+            self._json(400, _err(CODE_VALIDATION,
+                                 "expected {code: str, input_shapes: int[][]} or {input_shape: int[]}"))
             return
-        dtypes_in = payload.get("input_dtypes")
-        dtypes = [str(d) for d in dtypes_in] if isinstance(dtypes_in, list) else None
+        norm = _normalize_shapes(shapes_in, payload.get("input_dtypes"))
+        if isinstance(norm, dict):
+            self._json(400, norm)
+            return
+        normalized, dtypes = norm
         try:
-            normalized = [[int(v) for v in s] for s in shapes_in]
             result = infer(code, normalized, dtypes)
         except Exception as e:
-            result = {
-                "ok": False, "stage": "sidecar",
-                "error": f"sidecar crash: {type(e).__name__}: {e}",
-                "trace": traceback.format_exc(limit=4),
-                "shapes": {},
-            }
+            result = _err(CODE_INTERNAL, f"sidecar crash: {type(e).__name__}: {e}",
+                          stage="sidecar", trace=traceback.format_exc(limit=4), shapes={})
         self._json(200, result)
 
     def _json(self, status: int, obj: dict) -> None:

@@ -14,7 +14,7 @@
 | R005   | Checkpoint| Corrupted checkpoint accepted                                        | CRITICAL | T002    | OPEN     | §26/27/28 checkpoint correctness/atomicity/crash |
 | R006   | Dataset   | Split leakage (train/val/test)                                       | CRITICAL | D001    | OPEN     | §19 train/val/test integrity |
 | R007   | Async     | Stale inference/response overwrites state                            | HIGH     | A001    | ADDRESSED | §10 async races (staleness guard + abort verified by test:races 2026-09-14) |
-| R008   | Sidecar   | Sidecar crash leaves application inconsistent                        | HIGH     | P001    | OPEN     | §11/12/13 sidecar robustness/crash/ports |
+| R008   | Sidecar   | Sidecar crash leaves application inconsistent                        | HIGH     | S003    | ADDRESSED | §11/12/13 sidecar robustness/crash/ports (structured `error_code` on every path, stall cap, abort, kill→restart verified by test:robustness 2026-09-14; §13 port supervision = Rust/managed.ts remainder) |
 | R009   | SSH       | Connection failure produces wrong state (silent local fallback)      | HIGH     | R001    | OPEN     | §34/35 SSH reliability & credential safety |
 | R010   | SLURM     | Wrong remote job state reported                                       | HIGH     | R002    | OPEN     | §36/37 SLURM reliability & job recovery |
 | R011   | Persistence| Graph corruption on save/autosave                                    | CRITICAL | P001    | ADDRESSED | §4.3/5 persistence + schema versioning (round-trip + fail-closed tests landed 2026-09-14) |

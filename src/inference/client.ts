@@ -8,6 +8,7 @@ export type InferErr = {
   ok: false
   stage?: 'compile' | 'construct' | 'input' | 'forward' | 'sidecar'
   error: string
+  error_code?: string
   trace?: string
   shapes: Record<string, number[]>
   n_params?: number

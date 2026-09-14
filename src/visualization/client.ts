@@ -37,6 +37,7 @@ export type ActivationsErr = {
   ok: false
   stage?: string
   error: string
+  error_code?: string
   trace?: string
   details?: unknown
 }

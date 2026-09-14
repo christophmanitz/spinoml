@@ -16,7 +16,7 @@ Dataset handling       | `verify-sidecar` (inspect/stats/smoke) ✓       | per-
 Training runs (local)  | `verify-traingen` e2e (2-head, external-val) ✓ | local job state machine     | §30/31/32/33
 Training runs (remote) | none                                          | ssh + slurm run tests        | §34/35/36/37
 Persistence            | `npm run test:persistence` ✓ (P001/P011: round-trip, malformed-file matrix, schema versions, fail-closed) | autosave (localStorage) browser smoke | §4.3, §5
-Torch sidecar          | `verify-sidecar` 6/6+activations ✓             | auth/path-scope tests        | §77/78 security
+Torch sidecar          | `verify-sidecar` 6/6+activations ✓ + `test:robustness` ✓ (11-case matrix: startup, structured errors with `error_code` on every path, slow-client stall cap, abort resistance, kill→restart recovery) | auth/path-scope tests        | §77/78 security
 LLM sidecar            | `verify-opencode` ✓ (+manual ask/confirm)      | `/respond`/auto-approve auth | §14/15, §77
 MCP                    | `verify-opencode` (via opencode bridge) ✓      | spec-parity across providers | §16 MCP validation
 Tauri/Rust             | none (rust toolchain absent locally)           | cargo check + command tests  | §1.6 (env), §48 Rust errors
@@ -38,6 +38,7 @@ Security (sidecars)    | none (known open: CORS `*`, no auth)           | auth +
 | `npm run test:determinism` | codegen determinism (repeat + shuffled arrays)  | PASS         |
 | `npm run test:verifier` | fail-closed model gate (decision matrix + e2e) | PASS         |
 | `npm run test:races`  | async inference staleness guard (fetch mock) | PASS         |
+| `npm run test:robustness` | torch sidecar robustness + crash recovery (isolated instance) | PASS         |
 | `npm run lint`          | all TS (eslint)                     | FAIL 49e/4w (gate no-op) |
 | `npm run verify:codegen`| generator (13 graphs, exec-ed)      | PASS 13/13  |
 | `npm run verify:traingen`| training codegen (compile + 2 e2e) | PASS         |
@@ -57,6 +58,7 @@ Planned mutation/unit tests referenced by RISK_REGISTER.md:
 - G001 — graph invariants + mutation tests (§4.1/4.2)
 - C001 — codegen golden tests (§6), D001/… data-canvas twin
 - S001 — shape-inference contract tests (§8/9); S002 — fail-closed training-launch gate (§10, test:verifier)
+- S003 — sidecar HTTP robustness matrix (§11/12, test:robustness: malformed/missing/invalid-payload → 400 `error_code`, business errors → 200 `ok:false`+code, stall cap, abort, kill→restart)
 - T001–T004 — training: job state machine (§30), metric correctness (§29),
   event ordering (§31), immutability (§42)
 - D001 — split leakage (§19); D002 — dataset fingerprinting (§18)

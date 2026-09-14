@@ -20,6 +20,7 @@
     "test:determinism": "tsx scripts/test-determinism.ts",
     "test:verifier": "tsx scripts/test-verifier.ts",
     "test:races": "tsx scripts/test-races.ts",
+    "test:robustness": "tsx scripts/test-sidecar-robustness.ts",
     "sidecar:torch": "python sidecar-torch/main.py",
     "sidecar:llm": "node sidecar-llm/main.mjs"
   },
