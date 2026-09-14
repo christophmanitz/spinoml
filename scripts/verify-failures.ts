@@ -187,7 +187,31 @@ const nanCsv = (() => {
 })()
 runCase('NaN input', makeDir('nan-input', { csv: nanCsv }), { expectStage: 'dataset' })
 
-// ── 8. Training process termination — kill -9 mid-training ──
+// ── 8. Numerical failure during training — model turns NaN after N forwards ──
+// Phase 25: a NaN loss produced mid-training must fail with stage 'numeric',
+// never be reported as success.
+runCase('numerical failure (NaN loss mid-training)',
+  makeDir('nan-loss', {
+    modelPy:
+      'import torch\nimport torch.nn as nn\n\n' +
+      'class Model(nn.Module):\n' +
+      '    def __init__(self):\n' +
+      '        super().__init__()\n' +
+      '        self.fc1 = nn.Linear(10, 64)\n' +
+      '        self.act = nn.ReLU()\n' +
+      '        self.fc2 = nn.Linear(64, 2)\n' +
+      '        self.calls = 0\n' +
+      '    def forward(self, x):\n' +
+      '        self.calls += 1\n' +
+      '        out = self.fc2(self.act(self.fc1(x)))\n' +
+      '        if self.calls > 8:\n' +
+      '            out = out * float("nan")\n' +
+      '        return out\n',
+    runJsonOverride: { training: { ...makeRunJson().training, epochs: 4 } },
+  }),
+  { expectStage: 'numeric' })
+
+// ── 9. Training process termination — kill -9 mid-training ──
 console.log('  [process termination]')
 {
   // 20k rows so ≥3 epochs take long enough on CPU to observe a mid-training kill.

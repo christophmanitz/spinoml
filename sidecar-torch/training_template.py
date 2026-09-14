@@ -77,6 +77,27 @@ def fail(stage: str, msg: str, tb: str | None = None) -> None:
     sys.exit(1)
 
 
+def _is_finite(v) -> bool:
+    """Scalar/tensor finiteness (NaN or ±Inf → False)."""
+    import math
+    if hasattr(v, "isfinite") and hasattr(v, "all"):
+        return bool(v.isfinite().all())
+    return math.isfinite(float(v))
+
+
+def require_finite(name: str, value, where: str) -> None:
+    """Phase 25 — numerical failure detection. If a monitored training value
+    (loss, metric, or gradient) is NaN/inf the result is unusable: the run
+    must NOT be reported as successful. Fails loudly with an explicit reason."""
+    try:
+        finite = _is_finite(value)
+    except (TypeError, ValueError):
+        finite = True  # non-numeric (None, dict, …) isn't a numerical failure
+    if not finite:
+        fail("numeric", f"non-finite {name} at {where}: {value!r} — "
+                        "result is unusable; not reporting success.")
+
+
 # ─── Dataset fingerprint verification (Phase 18) ──────────────────────────
 # The fingerprint is computed by the SIDECAR at inspect time
 # (dataset_handlers._fingerprint_for) and frozen into run.json. We recompute
@@ -1428,6 +1449,13 @@ def main() -> None:
                                    worker_init_fn=_seed_worker if num_workers > 0 else None)
             val_loss, val_acc, extra, val_cat = evaluate(
                 model, eval_loader, heads, head_names, multitask, forward_loss, batch_len, metric_kinds, device)
+            # Phase 25 — external validation on a NaN/inf signal must not be
+            # reported as success either.
+            require_finite("val loss", val_loss, "eval-only")
+            if val_acc is not None:
+                require_finite("val accuracy", val_acc, "eval-only")
+            for mn, mv in (extra or {}).items():
+                require_finite(f"val metric {mn}", mv, "eval-only")
             emit("epoch.end", epoch=0, train_loss=0.0,
                  val_loss=round(val_loss, 6), val_acc=None if val_acc is None else round(val_acc, 6),
                  metrics=extra or None,
@@ -1488,10 +1516,23 @@ def main() -> None:
                 xb, yb = to_device(xb, device), to_device(yb, device)
                 with torch.autocast(device_type=device_type, dtype=amp_dtype, enabled=use_amp):
                     _, loss = forward_loss(xb, yb)
+                # Phase 25 — a NaN/inf loss poisons everything that follows:
+                # stop immediately with an explicit reason, never report success.
+                require_finite("train loss", loss, f"epoch={epoch} step={step}")
                 # Accumulate over accum_steps batches → larger effective batch on
                 # limited memory; step (and zero) only at the window boundary.
                 (loss / accum_steps).backward()
                 if (step + 1) % accum_steps == 0:
+                    # Phase 25 — NaN/inf gradients (e.g. exploding/vanishing)
+                    # make the update garbage; fail loudly rather than stepping.
+                    bad_grads = [(n, float(p.grad.abs().max())) for n, p in model.named_parameters()
+                                 if p.grad is not None and not _is_finite(p.grad)]
+                    if bad_grads:
+                        n0, _ = bad_grads[0]
+                        fail("numeric", f"non-finite gradient after backward for '{n0}' "
+                                        f"at epoch={epoch} step={step}. Non-finite params: "
+                                        f"{[n for n, _ in bad_grads[:8]]}. "
+                                        "Result is unusable; not reporting success.")
                     if grad_clip:
                         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                     optimizer.step()
@@ -1522,6 +1563,16 @@ def main() -> None:
             if val_loader is not None and do_val:
                 val_loss, val_acc, extra, val_cat = evaluate(
                     model, val_loader, heads, head_names, multitask, forward_loss, batch_len, metric_kinds, device)
+                # Phase 25 — a NaN/inf VAL metric makes the monitored curve (and
+                # anything derived from it: early stop, best-val, checkpointing)
+                # garbage. Fail loudly instead of reporting success on a broken
+                # validation signal.
+                if do_val:
+                    require_finite("val loss", val_loss, f"epoch={epoch}")
+                    if val_acc is not None:
+                        require_finite("val accuracy", val_acc, f"epoch={epoch}")
+                    for mn, mv in (extra or {}).items():
+                        require_finite(f"val metric {mn}", mv, f"epoch={epoch}")
 
             monitor = val_loss if val_loss is not None else train_loss
             if scheduler is not None:

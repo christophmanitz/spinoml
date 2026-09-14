@@ -302,6 +302,14 @@ chatbot knows about it — recipe in CLAUDE.md "Add a new LLM tool".
   `run.determinism` events emitted — a fast CI-compatible end-to-end sanity
   gate.
 
+- 2026-09-14 — **Numerical failure detection (Phase 25)**: the trainer monitors
+  train loss (per batch), parameter gradients (before every optimizer step),
+  and val loss/accuracy/metrics (after every evaluate pass, incl. eval-only)
+  for NaN/inf. First non-finite value → `run.failed` with stage `numeric` and
+  an explicit reason naming the offending value/parameter — a numerically
+  unstable run is NEVER reported as success. verify:failures gained a
+  NaN-mid-training model case asserting stage `numeric`.
+
 - 2026-09-14 — **Training failure tests (Phase 24)**: new `npm run verify:failures`
   harness deliberately causes each listed failure mode against the REAL trainer
   and asserts FAILURE (exit≠0, `status`≠done, `run.failed` event), never

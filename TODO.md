@@ -2014,6 +2014,19 @@ If numerical instability makes the result unusable, the run must not be reported
 
 Use an explicit failure reason where appropriate.
 
+> **2026-09-14 — implemented.** The trainer monitors the values this phase
+> lists and fails with the explicit stage `numeric` (run.failed + status
+> failed, never success) on the first non-finite hit:
+> - **train loss** — `require_finite("train loss", …)` per batch, before backward
+> - **gradients** — every param's `.grad` checked before each optimizer step;
+>   the failure names the first non-finite parameter
+> - **val loss / val accuracy / per-head metrics** — checked after each
+>   `evaluate()` pass, and on the eval-only path too
+> - `_is_finite` handles scalars and tensors (`.isfinite().all()`)
+>
+> verify:failures gained a new case: a model that turns its output NaN after N
+> forwards → `run.failed` with stage `numeric`, status failed, exit ≠ 0.
+
 ---
 
 # 27. PHASE 26 – CHECKPOINT CORRECTNESS
