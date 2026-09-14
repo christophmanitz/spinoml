@@ -31,7 +31,7 @@ export default function LayerExplain() {
   return (
     <div className="flex h-full min-h-0 flex-col p-3 text-sm">
       <div className="mb-2 flex items-center justify-between">
-        <div className="text-xs uppercase tracking-wide text-[#7a8088]">Explain · Datenfluss</div>
+        <div className="text-xs uppercase tracking-wide text-[#6f767e]">Explain · Datenfluss</div>
         {source && (
           <span className="text-[10px] text-[#5b6168]">
             {source === 'dataset' ? `Sample: ${sampleNote ?? 'Dataset'}` : 'synthetische Eingabe'}
@@ -45,7 +45,7 @@ export default function LayerExplain() {
       {!ran && !error && (
         <div className="flex flex-col gap-2 text-xs text-[#9aa1a8]">
           {running ? (
-            <div className="text-[#7a8088]">schicke ein Beispiel durch…</div>
+            <div className="text-[#6f767e]">schicke ein Beispiel durch…</div>
           ) : (
             <>
               <p className="text-[#e6e8eb]">Was passiert eigentlich im Modell?</p>
@@ -63,7 +63,7 @@ export default function LayerExplain() {
         </div>
       )}
 
-      {ran && !node && <div className="text-xs text-[#7a8088]">Wähle einen Node, um zu sehen, was dort passiert.</div>}
+      {ran && !node && <div className="text-xs text-[#6f767e]">Wähle einen Node, um zu sehen, was dort passiert.</div>}
 
       {ran && node && (() => {
         const act = byNode[node.id]
@@ -105,7 +105,7 @@ export default function LayerExplain() {
               <p className="mt-1.5 text-[11px] leading-snug text-[#cbd2d9]">{ex.does}</p>
             </div>
 
-            {!act && <div className="text-xs text-[#7a8088]">Für diesen Node liegen keine Aktivierungen vor.</div>}
+            {!act && <div className="text-xs text-[#6f767e]">Für diesen Node liegen keine Aktivierungen vor.</div>}
 
             {act && (inShape || outShape) && (
               <div className="flex flex-col gap-1.5 rounded border border-[#1f2429] bg-[#0e1216] px-2 py-2">
@@ -118,7 +118,7 @@ export default function LayerExplain() {
                 ) : (
                   <div className="flex flex-wrap items-end gap-3">
                     <div className="flex flex-col items-center gap-0.5">
-                      <TensorShape shape={inShape ?? []} face={faceOf(predAct)} hex="#7a8088" />
+                      <TensorShape shape={inShape ?? []} face={faceOf(predAct)} hex="#6f767e" />
                       <span className="font-mono text-[9px] text-[#5b6168]">[{(inShape ?? []).join(', ')}]</span>
                     </div>
                     <span className="pb-3 text-base" style={{ color: hex }}>→</span>
@@ -142,8 +142,8 @@ export default function LayerExplain() {
                         }
                       </p>
                       {cat === 'Graph'
-                        ? <p className="text-[10px] leading-snug text-[#7a8088]">Keine Batch-Dimension: die erste Zahl zählt Knoten, nicht Beispiele.</p>
-                        : bn && <p className="text-[10px] leading-snug text-[#7a8088]">{bn}</p>}
+                        ? <p className="text-[10px] leading-snug text-[#6f767e]">Keine Batch-Dimension: die erste Zahl zählt Knoten, nicht Beispiele.</p>
+                        : bn && <p className="text-[10px] leading-snug text-[#6f767e]">{bn}</p>}
                     </div>
                   )
                 })()}
@@ -211,10 +211,10 @@ function WeightsBar() {
     <div className="mb-2 flex flex-wrap items-center gap-2 rounded border border-[#1f2429] bg-[#0e1216] px-2 py-1.5">
       <span className="text-[10px] uppercase tracking-wide text-[#5b6168]">Gewichte</span>
       {runs.length === 0 ? (
-        <span className="text-[10px] text-[#7a8088]">zufällig — noch kein trainierter Run mit Checkpoint</span>
+        <span className="text-[10px] text-[#6f767e]">zufällig — noch kein trainierter Run mit Checkpoint</span>
       ) : (
         <select
-          className="rounded border border-[#1f2429] bg-[#0b0e11] px-1.5 py-0.5 text-[11px] text-[#e6e8eb] outline-none focus:border-[#6ab7ff]"
+          className="rounded border border-[#1f2429] bg-[#0b0e11] px-1.5 py-0.5 text-[11px] text-[#e6e8eb] outline-none focus:border-[var(--accent)]"
           value={weightsRunId ?? ''}
           onChange={(e) => setWeightsRun(e.target.value || null)}
         >
@@ -226,7 +226,7 @@ function WeightsBar() {
       )}
       {weightsSource && (
         <span
-          className={`rounded px-1.5 py-0.5 text-[10px] ${weightsSource === 'trained' ? 'bg-emerald-900/40 text-emerald-300' : 'bg-[#1f2429] text-[#7a8088]'}`}
+          className={`rounded px-1.5 py-0.5 text-[10px] ${weightsSource === 'trained' ? 'bg-emerald-900/40 text-emerald-300' : 'bg-[#1f2429] text-[#6f767e]'}`}
           title={weightsNote ?? undefined}
         >
           {weightsSource === 'trained' ? '✓ trainiert' : 'zufällig'}
@@ -242,7 +242,7 @@ function WeightsBar() {
 function StatsLine({ act }: { act: NodeActivation }) {
   const s = act.stats
   return (
-    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[10px] text-[#7a8088]">
+    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[10px] text-[#6f767e]">
       <span>min {s.min}</span>
       <span>max {s.max}</span>
       <span>μ {s.mean}</span>
@@ -262,7 +262,18 @@ function PreviewView({ act, hex, title }: { act: NodeActivation; hex: string; ti
       {p.kind === 'vector' && <VectorBars values={p.values} width={260} height={70} hex={hex} />}
       {p.kind === 'matrix' && <Heatmap grid={p.grid} cell={8} mode="diverging" maxW={260} />}
       {p.kind === 'tokens' && (
-        <div className="font-mono text-[11px] text-[#9aa1a8]">{p.values.join(' · ')}</div>
+        p.labels && p.labels.length ? (
+          <div className="flex flex-wrap gap-1">
+            {p.labels.map((lab, i) => (
+              lab === '<pad>' ? null : (
+                <span key={i} className="rounded bg-[#161b22] px-1 py-0.5 font-mono text-[10px] text-[#c9d1d9] ring-1 ring-[#1f2429]"
+                      title={`token ${p.values[i]}`}>{lab === '<unk>' ? '∅' : lab}</span>
+              )
+            ))}
+          </div>
+        ) : (
+          <div className="font-mono text-[11px] text-[#9aa1a8]">{p.values.join(' · ')}</div>
+        )
       )}
       {p.kind === 'scalar' && <div className="font-mono text-sm" style={{ color: hex }}>{p.value}</div>}
       {p.kind === 'maps' && (
@@ -295,7 +306,7 @@ function GraphView({ act, edges, hex }: { act: NodeActivation; edges?: EdgesPrev
           <div className="text-[10px] text-[#5b6168]">{edges.n_nodes} Knoten · {edges.n_edges} Kanten</div>
         </>
       ) : (
-        <div className="text-[11px] text-[#7a8088]">Kein edge_index-Input gefunden — die Graphstruktur ist unbekannt.</div>
+        <div className="text-[11px] text-[#6f767e]">Kein edge_index-Input gefunden — die Graphstruktur ist unbekannt.</div>
       )}
       {grid && (
         <div>
@@ -349,7 +360,7 @@ function LinearView({
               <line
                 key={`${i}-${j}`}
                 x1={xIn} y1={yFor(i, NIN)} x2={xOut} y2={yFor(j, NOUT)}
-                stroke={w < 0 ? '#6ab7ff' : '#ff6b6b'}
+                stroke={w < 0 ? 'var(--accent)' : '#ff6b6b'}
                 strokeWidth={0.5 + 2 * t}
                 strokeOpacity={(0.1 + 0.6 * t).toFixed(2)}
               />
@@ -510,7 +521,7 @@ function ProbBars({ act, hex }: { act: NodeActivation; hex: string }) {
       {!isProb && <div className="text-[10px] text-[#5b6168]">Roh-Scores (noch keine Wahrscheinlichkeiten)</div>}
       {vals.map((v, i) => (
         <div key={i} className="flex items-center gap-2 text-[10px]">
-          <span className="w-5 text-right text-[#7a8088]">{i}</span>
+          <span className="w-5 text-right text-[#6f767e]">{i}</span>
           <div className="h-3 flex-1 overflow-hidden rounded bg-[#0b0e11]">
             <div className="h-full rounded" style={{ width: `${(Math.abs(v) / maxAbs) * 100}%`, background: i === maxI ? hex : '#3a4148' }} />
           </div>
@@ -527,7 +538,7 @@ function PoolView({ before, after, hex }: { before?: NodeActivation; after: Node
     <div className="flex flex-col gap-2">
       <div className="text-[10px] text-[#5b6168]">vorher</div>
       <SmallPreview act={before} hex={hex} />
-      <div className="text-center text-[11px] text-[#7a8088]">↓ zusammengefasst &amp; verkleinert</div>
+      <div className="text-center text-[11px] text-[#6f767e]">↓ zusammengefasst &amp; verkleinert</div>
       <div className="text-[10px] text-[#5b6168]">nachher</div>
       <SmallPreview act={after} hex={hex} />
     </div>
@@ -560,7 +571,7 @@ function ReshapeView({
     <div className="flex flex-col gap-2">
       <div className="font-mono text-[10px] text-[#5b6168]">vorher [{inShape?.join(', ') ?? '?'}]</div>
       <SmallPreview act={before} hex={hex} />
-      <div className="text-center text-[11px] text-[#7a8088]">↓ nur umsortiert — gleiche Zahlen</div>
+      <div className="text-center text-[11px] text-[#6f767e]">↓ nur umsortiert — gleiche Zahlen</div>
       <div className="font-mono text-[10px] text-[#5b6168]">nachher [{outShape?.join(', ') ?? '?'}]</div>
       <SmallPreview act={after} hex={hex} />
     </div>
@@ -580,7 +591,7 @@ function MergeView({ inputs, after, type, hex }: { inputs: NodeActivation[]; aft
           <SmallPreview act={a} hex={hex} />
         </div>
       ))}
-      <div className="text-center text-[11px] text-[#7a8088]">= Ergebnis</div>
+      <div className="text-center text-[11px] text-[#6f767e]">= Ergebnis</div>
       <SmallPreview act={after} hex={hex} />
     </div>
   )

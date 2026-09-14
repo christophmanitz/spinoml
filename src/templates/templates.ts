@@ -263,8 +263,12 @@ export function buildDualEncoderGnn(): GraphSnapshot {
   const LIG_IN = 9, PROT_IN = 20, HID = 64, EMB = 128
   return {
     nodes: [
-      { id: 'ligand', layerType: 'Graph', params: { name: 'ligand', shape: [32, LIG_IN], n_edges: 64 }, position: { x: 0, y: 80 } },
-      { id: 'protein', layerType: 'Graph', params: { name: 'protein', shape: [128, PROT_IN], n_edges: 256 }, position: { x: 0, y: 460 } },
+      // The Manifest node declares the pairing (.manifest) and feeds each branch
+      // to its Graph input via an edge — bind it to your .manifest; the branches
+      // (ligand/protein) are already wired below.
+      { id: 'manifest', layerType: 'Manifest', params: { dataset: '' }, position: { x: -340, y: 270 } },
+      { id: 'ligand', layerType: 'Graph', params: { name: 'ligand', shape: [32, LIG_IN], n_edges: 64, branch: 'ligand' }, position: { x: 0, y: 80 } },
+      { id: 'protein', layerType: 'Graph', params: { name: 'protein', shape: [128, PROT_IN], n_edges: 256, branch: 'protein' }, position: { x: 0, y: 460 } },
       { id: 'lig_enc', layerType: 'Subgraph', params: { class_name: 'LigandEncoder', subgraph: gnnEncoderSubgraph(LIG_IN, HID, EMB) }, position: { x: 320, y: 80 } },
       { id: 'prot_enc', layerType: 'Subgraph', params: { class_name: 'ProteinEncoder', subgraph: gnnEncoderSubgraph(PROT_IN, HID, EMB) }, position: { x: 320, y: 460 } },
       { id: 'merge', layerType: 'Concat', params: { dim: -1 }, position: { x: 620, y: 270 } },
@@ -274,6 +278,8 @@ export function buildDualEncoderGnn(): GraphSnapshot {
       { id: 'out', layerType: 'Output', params: { name: 'affinity' }, position: { x: 1480, y: 270 } },
     ],
     edges: [
+      { source: 'manifest', target: 'ligand' },
+      { source: 'manifest', target: 'protein' },
       { source: 'ligand', target: 'lig_enc' },
       { source: 'protein', target: 'prot_enc' },
       { source: 'lig_enc', target: 'merge' },

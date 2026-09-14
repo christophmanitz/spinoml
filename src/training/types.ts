@@ -15,14 +15,40 @@ export type OptimizerConfig = {
 
 export type CallbackConfig = { kind: string } & Record<string, unknown>
 
+/** One output head of a multitask model. `output` matches a model `Output`
+ *  node's name (the key the generated forward() returns in its dict); '' means
+ *  the model's sole/default output. Each head has its own target column + loss,
+ *  and contributes `weight * loss` to the combined objective. When
+ *  TrainingConfig.heads is set the trainer runs multitask; otherwise it falls
+ *  back to the single `loss` + dataset.target_column path. */
+export type Head = {
+  output: string
+  target: string
+  loss: LossKind
+  weight: number
+  label_smoothing?: number
+}
+
 export type TrainingConfig = {
   epochs: number
   batch_size: number
   val_split: number
   seed: number
   log_every_n_steps: number
+  /** DataLoader knobs (from the DataLoader node; sensible defaults otherwise). */
+  shuffle?: boolean
+  num_workers?: number
+  drop_last?: boolean
+  /** Run validation every N epochs (TrainLoop node; default 1 = every epoch). */
+  val_every_n_epochs?: number
+  /** Accumulate grads over N batches before optimizer.step (TrainLoop node; default 1). */
+  gradient_accumulation_steps?: number
   optimizer: OptimizerConfig
-  loss: { kind: LossKind }
+  loss: { kind: LossKind; label_smoothing?: number }
+  /** Multitask: one entry per output head. When present (≥1) the trainer routes
+   *  each model output to its own target + loss and optimizes their weighted sum;
+   *  `loss` above is then only the single-task fallback. */
+  heads?: Head[]
   scheduler: { kind: SchedulerKind } & Record<string, unknown>
   /** Phase 14: extra metrics computed each val pass (accuracy/f1/mse/…). */
   metrics?: string[]
@@ -80,6 +106,39 @@ export type RunConfig = {
    *  workspace-relative path (e.g. experiments/runs/<id>/checkpoints/best.pt)
    *  resolved on the executor host, or an absolute path. */
   resume_from?: string
+  /** External validation: when true, train.py loads `validate.checkpoint_from`
+   *  and evaluates the WHOLE `dataset` once (no training) → eval.summary metrics. */
+  eval_only?: boolean
+  validate?: ValidateConfig
+}
+
+/** External-validation config carried in an eval run's run.json. */
+export type ValidateConfig = {
+  /** Workspace-relative path to the trained checkpoint to validate (best.pt). */
+  checkpoint_from: string
+  /** The source run this checkpoint came from (for the UI banner). */
+  source_run?: string
+  /** How the external dataset was adapted to the model (for the UI summary). */
+  adapter?: AdapterSpec
+}
+
+/** Maps an external dataset's columns/branches onto the model's trained schema.
+ *  `feature_columns`/`target_column` (on the eval run's DatasetConfig) hold the
+ *  EXTERNAL column names chosen here; the eval loader consumes them directly so a
+ *  rename/select/reorder needs no materialization. `column_map` + `branch_map` are
+ *  for display + the Data-canvas escalation. `unmatched` lists model roles with no
+ *  external column (the user must map them or validation can't run). */
+export type AdapterSpec = {
+  /** model role (feature name / 'target' / branch) → chosen external column */
+  column_map: Record<string, string>
+  /** for manifest models: model branch → external manifest branch */
+  branch_map?: Record<string, string>
+  /** model roles with no external match yet */
+  unmatched: string[]
+  /** how the mapping was produced, for provenance */
+  mode: 'auto' | 'manual' | 'hybrid' | 'pipeline'
+  /** if the user escalated to a Data-canvas pipeline, the adapted dataset relpath */
+  adapted_from?: string
 }
 
 export function defaultSlurmConfig(): SlurmConfig {
@@ -110,6 +169,8 @@ export type RunSummary = {
   alive: boolean
   /** Phase 17 — whether checkpoints/best.pt exists (→ resumable / promotable). */
   has_checkpoint: boolean
+  /** External-validation run (run.json eval_only) — badged distinctly in the list. */
+  eval_only?: boolean
 }
 
 /** A snapshot from nvidia-smi on the executor host (hardware strip). */

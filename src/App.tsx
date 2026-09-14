@@ -22,6 +22,7 @@ import { useDatasetsStore } from './datasets/store'
 import DatasetDetail from './datasets/DatasetDetail'
 import { useTrainingStore } from './training/store'
 import NewRunModal from './training/NewRunModal'
+import EvalRunModal from './training/EvalRunModal'
 import RunDetailModal from './training/RunDetailModal'
 import CompareModal from './training/CompareModal'
 import { useViewModeStore } from './training/graph/viewMode'
@@ -29,6 +30,11 @@ import ModeToggle from './training/graph/ModeToggle'
 import TrainingPalette from './training/graph/TrainingPalette'
 import TrainingCanvas from './training/graph/TrainingCanvas'
 import TrainingInspector from './training/graph/TrainingInspector'
+import TrainingCodePanel from './training/graph/TrainingCodePanel'
+import DataPalette from './data/graph/DataPalette'
+import DataCanvas from './data/graph/DataCanvas'
+import DataInspector from './data/graph/DataInspector'
+import DataCodePanel from './data/graph/DataCodePanel'
 import { useConnectionsStore, getCurrentConnection, sshTarget } from './connections/store'
 import { useRemoteSidecarStore } from './sidecars/remoteSidecar'
 
@@ -48,10 +54,10 @@ function InferenceBadge() {
 
   const color =
     status === 'ok' ? 'bg-emerald-900/40 text-emerald-300'
-    : status === 'inferring' ? 'bg-[#1f2429] text-[#7a8088]'
-    : status === 'offline' ? 'bg-[#1f2429] text-[#7a8088]'
+    : status === 'inferring' ? 'bg-[#1f2429] text-[#6f767e]'
+    : status === 'offline' ? 'bg-[#1f2429] text-[#6f767e]'
     : status === 'error' ? 'bg-rose-900/40 text-rose-300'
-    : 'bg-[#1f2429] text-[#7a8088]'
+    : 'bg-[#1f2429] text-[#6f767e]'
 
   return <span className={`rounded px-2 py-0.5 ${color}`} title={error ?? ''}>{label}</span>
 }
@@ -62,7 +68,7 @@ function RemoteSidecarBadge() {
   const conn = useConnectionsStore((s) => s.saved.find((c) => c.id === s.currentId))
   if (!conn) return null  // only meaningful for remote workspaces
   let label = ''
-  let color = 'bg-[#1f2429] text-[#7a8088]'
+  let color = 'bg-[#1f2429] text-[#6f767e]'
   let title = ''
   switch (status.kind) {
     case 'idle':       label = 'hpc: idle'; break
@@ -95,7 +101,7 @@ function ExplainControls() {
   const toggle = useVizStore((s) => s.toggleExplain)
   const run = useVizStore((s) => s.run)
   const playFlow = useVizStore((s) => s.playFlow)
-  if (viewMode === 'training') return null
+  if (viewMode !== 'architecture') return null
   return (
     <div className="flex items-center gap-1">
       <button
@@ -135,12 +141,13 @@ function LLMBadge() {
     : online === false ? 'offline'
     : status === 'streaming' ? 'thinking'
     : 'ready'
-  const label = `${prefix} · ${provider.label}: ${state}`
+  const model = useProviderStore((s) => s.configs[currentId]?.model?.trim()) || provider.defaultModel
+  const label = `${prefix} · ${provider.label}${model && provider.kind !== 'subscription' ? ` · ${model}` : ''}: ${state}`
   const color =
-    online === false ? 'bg-[#1f2429] text-[#7a8088]'
+    online === false ? 'bg-[#1f2429] text-[#6f767e]'
     : status === 'streaming' ? 'bg-violet-900/40 text-violet-300'
     : online ? 'bg-emerald-900/40 text-emerald-300'
-    : 'bg-[#1f2429] text-[#7a8088]'
+    : 'bg-[#1f2429] text-[#6f767e]'
   return <span className={`rounded px-2 py-0.5 ${color}`}>{label}</span>
 }
 
@@ -161,7 +168,7 @@ function ProjectHeader() {
     <div className="flex items-center gap-2">
       <img src="/favicon.svg" alt="" className="h-5 w-5" />
       <span className="font-semibold tracking-tight">SpinoML</span>
-      <span className="text-[#7a8088]">·</span>
+      <span className="text-[#6f767e]">·</span>
       <span className="text-[#e6e8eb]" title={status.meta.goal || status.meta.description}>
         {status.meta.name}
       </span>
@@ -189,15 +196,21 @@ type BottomTab = 'code' | 'terminal'
 
 function BottomTabs() {
   const [tab, setTab] = useState<BottomTab>('code')
+  // The Code tab follows the ACTIVE canvas: architecture → nn.Module, training →
+  // training script, data → pipeline script. One unified, always-visible panel.
+  const viewMode = useViewModeStore((s) => s.mode)
+  const codeView = viewMode === 'training' ? <TrainingCodePanel />
+    : viewMode === 'data' ? <DataCodePanel />
+    : <CodePreview />
   return (
-    <div className="flex h-full flex-col bg-[#0b0d10]">
-      <div className="flex shrink-0 border-b border-[#1f2429] bg-[#0e1115]">
+    <div className="flex h-full flex-col bg-[#0a0c0f]">
+      <div className="flex shrink-0 border-b border-[#1f2429] bg-[#0e1216]">
         <TabBtn active={tab === 'code'} onClick={() => setTab('code')}>Code</TabBtn>
         <TabBtn active={tab === 'terminal'} onClick={() => setTab('terminal')}>Terminal</TabBtn>
       </div>
       <div className="relative min-h-0 flex-1">
         <div style={{ display: tab === 'code' ? 'block' : 'none' }} className="h-full">
-          <CodePreview />
+          {codeView}
         </div>
         <div style={{ display: tab === 'terminal' ? 'block' : 'none' }} className="h-full">
           <Terminal />
@@ -210,16 +223,16 @@ function BottomTabs() {
 function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   const base = 'px-3 py-1 text-xs transition-colors border-b-2'
   const cls = active
-    ? 'border-[#6ab7ff] text-[#e6e8eb]'
-    : 'border-transparent text-[#7a8088] hover:text-[#e6e8eb]'
+    ? 'border-[var(--accent)] text-[#e6e8eb]'
+    : 'border-transparent text-[#6f767e] hover:text-[#e6e8eb]'
   return <button onClick={onClick} className={`${base} ${cls}`}>{children}</button>
 }
 
 const storage = typeof window !== 'undefined' ? window.localStorage : undefined
 const HBAR =
-  'w-px bg-[#1f2429] hover:w-[3px] hover:bg-[#3a4148] data-[separator-active]:w-[3px] data-[separator-active]:bg-[#6ab7ff] transition-colors cursor-col-resize'
+  'w-px bg-[#1f2429] hover:w-[3px] hover:bg-[#3a4148] data-[separator-active]:w-[3px] data-[separator-active]:bg-[var(--accent)] transition-colors cursor-col-resize'
 const VBAR =
-  'h-px bg-[#1f2429] hover:h-[3px] hover:bg-[#3a4148] data-[separator-active]:h-[3px] data-[separator-active]:bg-[#6ab7ff] transition-colors cursor-row-resize'
+  'h-px bg-[#1f2429] hover:h-[3px] hover:bg-[#3a4148] data-[separator-active]:h-[3px] data-[separator-active]:bg-[var(--accent)] transition-colors cursor-row-resize'
 
 function useSaved(id: string) {
   const ctx = useDefaultLayout({ id, storage })
@@ -255,19 +268,20 @@ export default function App() {
   const selectedDataset = useDatasetsStore((s) => s.selectedRel)
   const selectedRun = useTrainingStore((s) => s.selectedRunId)
   const newRunOpen = useTrainingStore((s) => s.newRunOpen)
+  const evalSourceId = useTrainingStore((s) => s.evalSourceId)
   const compareOpen = useTrainingStore((s) => s.compareOpen)
   const viewMode = useViewModeStore((s) => s.mode)
   const explainMode = useVizStore((s) => s.explainMode)
 
   return (
-    <div className="flex h-screen w-screen flex-col bg-[#0b0d10] text-[#e6e8eb]">
+    <div className="flex h-screen w-screen flex-col bg-[#0a0c0f] text-[#e6e8eb]">
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-[#1f2429] pl-4 pr-3">
         <div className="flex items-center gap-4">
           <ProjectHeader />
           <Toolbar />
           <ModeToggle />
         </div>
-        <div className="flex items-center gap-2 text-xs text-[#7a8088]">
+        <div className="flex items-center gap-2 text-xs text-[#6f767e]">
           <ExplainControls />
           <RemoteSidecarBadge />
           <InferenceBadge />
@@ -290,7 +304,7 @@ export default function App() {
               defaultLayout={left.defaultLayout}
               onLayoutChanged={left.onLayoutChanged}
             >
-              <Panel defaultSize="50%" minSize="100px">{viewMode === 'training' ? <TrainingPalette /> : <Palette />}</Panel>
+              <Panel defaultSize="50%" minSize="100px">{viewMode === 'training' ? <TrainingPalette /> : viewMode === 'data' ? <DataPalette /> : <Palette />}</Panel>
               <Separator className={VBAR} />
               <Panel defaultSize="50%" minSize="120px"><LeftSidebar /></Panel>
             </Group>
@@ -303,7 +317,7 @@ export default function App() {
               defaultLayout={center.defaultLayout}
               onLayoutChanged={center.onLayoutChanged}
             >
-              <Panel defaultSize="70%" minSize="120px">{viewMode === 'training' ? <TrainingCanvas /> : <Canvas />}</Panel>
+              <Panel defaultSize="70%" minSize="120px">{viewMode === 'training' ? <TrainingCanvas /> : viewMode === 'data' ? <DataCanvas /> : <Canvas />}</Panel>
               <Separator className={VBAR} />
               <Panel defaultSize="30%" minSize="80px"><BottomTabs /></Panel>
             </Group>
@@ -316,7 +330,7 @@ export default function App() {
               defaultLayout={right.defaultLayout}
               onLayoutChanged={right.onLayoutChanged}
             >
-              <Panel defaultSize="50%" minSize="100px">{viewMode === 'training' ? <TrainingInspector /> : (explainMode ? <LayerExplain /> : <Inspector />)}</Panel>
+              <Panel defaultSize="50%" minSize="100px">{viewMode === 'training' ? <TrainingInspector /> : viewMode === 'data' ? <DataInspector /> : (explainMode ? <LayerExplain /> : <Inspector />)}</Panel>
               <Separator className={VBAR} />
               <Panel defaultSize="50%" minSize="100px"><ChatPanel /></Panel>
             </Group>
@@ -326,6 +340,7 @@ export default function App() {
 
       {selectedDataset && <DatasetDetail relpath={selectedDataset} />}
       {newRunOpen && <NewRunModal />}
+      {evalSourceId && <EvalRunModal />}
       {selectedRun && <RunDetailModal runId={selectedRun} />}
       {compareOpen && <CompareModal />}
     </div>

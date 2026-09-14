@@ -32,9 +32,11 @@ function ext(name: string): string {
 export function classifyFile(name: string): FileKind {
   const e = ext(name)
   if (e === '.spinoml')
-    return { section: 'models', icon: '▦', label: 'Modell', color: 'text-[#6ab7ff]', dim: false }
+    return { section: 'models', icon: '▦', label: 'Modell', color: 'text-[var(--accent)]', dim: false }
   if (e === '.spinotrain')
     return { section: 'training', icon: '⚙', label: 'Training', color: 'text-[#b98bff]', dim: false }
+  if (e === '.spinodata')
+    return { section: 'training', icon: '∿', label: 'Daten', color: 'text-[#5fd39a]', dim: false }
   if (e === '.py')
     return { section: 'models', icon: '🐍', label: 'generiert', color: 'text-[#5fd39a]', dim: true }
   if (e === '.pt' || e === '.pth' || e === '.ckpt')

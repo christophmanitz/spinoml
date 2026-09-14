@@ -189,7 +189,7 @@ export default function Welcome() {
                 >
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm text-[#e6e8eb]">{c.label}</div>
-                    <div className="truncate text-[10px] text-[#7a8088]">
+                    <div className="truncate text-[10px] text-[#6f767e]">
                       {c.user ? `${c.user}@${c.alias}` : c.alias}:<span className="text-[#9aa1a8]">{c.root}</span>
                     </div>
                   </div>
@@ -208,7 +208,7 @@ export default function Welcome() {
                       setView('remote-form')
                     }}
                     title="Verbindung bearbeiten"
-                    className="rounded px-1.5 py-1 text-[#7a8088] hover:bg-[#2a3038] hover:text-[#6ab7ff]"
+                    className="rounded px-1.5 py-1 text-[#6f767e] hover:bg-[#2a3038] hover:text-[var(--accent)]"
                   >
                     ✎
                   </button>
@@ -217,7 +217,7 @@ export default function Welcome() {
                       if (await confirmDialog(`Verbindung „${c.label}" entfernen?`)) removeRemote(c.id)
                     }}
                     title="Verbindung löschen"
-                    className="rounded px-1.5 py-1 text-[#7a8088] hover:bg-[#2a3038] hover:text-rose-300"
+                    className="rounded px-1.5 py-1 text-[#6f767e] hover:bg-[#2a3038] hover:text-rose-300"
                   >
                     ×
                   </button>
@@ -247,13 +247,13 @@ export default function Welcome() {
     <FullScreen>
       <Card
         title="SpinoML"
-        subtitle="Drag-and-drop PyTorch-Architektur, mit Claude an deiner Seite."
+        subtitle="Drag-and-drop PyTorch-Architektur, mit einem KI-Assistenten an deiner Seite."
       >
         <p className="mb-4 text-sm leading-relaxed text-[#9aa1a8]">
           Ein <strong>SpinoML-Projekt</strong> ist ein Ordner mit deinen Modellen
           (<code>models/</code>), Datensätzen (<code>datasets/</code>),
           Notizen (<code>notes/</code>) und Experiment-Logs (<code>experiments/</code>).
-          Claude liest den Projektkontext bei jedem Chat, damit er fokussiert
+          Der Assistent liest den Projektkontext bei jedem Chat, damit er fokussiert
           mitarbeiten kann.
         </p>
         <div className="flex flex-wrap gap-2">
@@ -267,7 +267,7 @@ export default function Welcome() {
 
         {recents.length > 0 && (
           <div className="mt-4">
-            <div className="mb-1.5 text-[10px] uppercase tracking-wider text-[#7a8088]">Zuletzt geöffnet</div>
+            <div className="mb-1.5 text-[10px] uppercase tracking-wider text-[#6f767e]">Zuletzt geöffnet</div>
             <div className="space-y-1.5">
               {recents.map((r) => (
                 <div
@@ -280,12 +280,12 @@ export default function Welcome() {
                     title={`Öffnen: ${r.path}`}
                   >
                     <div className="truncate text-sm text-[#e6e8eb]">{r.name}</div>
-                    <div className="truncate text-[10px] text-[#7a8088]">{r.path}</div>
+                    <div className="truncate text-[10px] text-[#6f767e]">{r.path}</div>
                   </button>
                   <button
                     onClick={() => { removeRecentWorkspace(r.path); setRecents(getRecentWorkspaces()) }}
                     title="Aus der Liste entfernen"
-                    className="rounded px-1.5 py-1 text-[#7a8088] hover:bg-[#2a3038] hover:text-rose-300"
+                    className="rounded px-1.5 py-1 text-[#6f767e] hover:bg-[#2a3038] hover:text-rose-300"
                   >
                     ×
                   </button>
@@ -295,10 +295,10 @@ export default function Welcome() {
           </div>
         )}
         {saved.length > 0 && (
-          <p className="mt-3 text-[11px] text-[#7a8088]">
+          <p className="mt-3 text-[11px] text-[#6f767e]">
             {saved.length} Remote-Verbindung{saved.length === 1 ? '' : 'en'} gespeichert —{' '}
             <button
-              className="underline hover:text-[#6ab7ff]"
+              className="underline hover:text-[var(--accent)]"
               onClick={() => setView('remote-picker')}
             >
               auswählen
@@ -353,7 +353,7 @@ function RemoteConnectionForm({
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               placeholder="z.B. Leipzig HPC"
-              className="w-full rounded border border-[#2a3038] bg-[#0e1115] px-2 py-1 text-sm text-[#e6e8eb] focus:border-[#6ab7ff] focus:outline-none"
+              className="w-full rounded border border-[#2a3038] bg-[#0e1216] px-2 py-1 text-sm text-[#e6e8eb] focus:border-[var(--accent)] focus:outline-none"
             />
           </Field>
           <Field
@@ -367,8 +367,8 @@ function RemoteConnectionForm({
                 setTestResult(null)
               }}
               placeholder="leipzig-hpc"
-              className={`w-full rounded border bg-[#0e1115] px-2 py-1 text-sm text-[#e6e8eb] focus:outline-none ${
-                alias && !validAlias ? 'border-rose-500' : 'border-[#2a3038] focus:border-[#6ab7ff]'
+              className={`w-full rounded border bg-[#0e1216] px-2 py-1 text-sm text-[#e6e8eb] focus:outline-none ${
+                alias && !validAlias ? 'border-rose-500' : 'border-[#2a3038] focus:border-[var(--accent)]'
               }`}
             />
           </Field>
@@ -383,8 +383,8 @@ function RemoteConnectionForm({
                 setTestResult(null)
               }}
               placeholder="zw93onug"
-              className={`w-full rounded border bg-[#0e1115] px-2 py-1 text-sm text-[#e6e8eb] focus:outline-none ${
-                user && !validUser ? 'border-rose-500' : 'border-[#2a3038] focus:border-[#6ab7ff]'
+              className={`w-full rounded border bg-[#0e1216] px-2 py-1 text-sm text-[#e6e8eb] focus:outline-none ${
+                user && !validUser ? 'border-rose-500' : 'border-[#2a3038] focus:border-[var(--accent)]'
               }`}
             />
           </Field>
@@ -396,8 +396,8 @@ function RemoteConnectionForm({
               value={root}
               onChange={(e) => setRoot(e.target.value)}
               placeholder="~/spinoml"
-              className={`w-full rounded border bg-[#0e1115] px-2 py-1 text-sm text-[#e6e8eb] focus:outline-none ${
-                root && !validRoot ? 'border-rose-500' : 'border-[#2a3038] focus:border-[#6ab7ff]'
+              className={`w-full rounded border bg-[#0e1216] px-2 py-1 text-sm text-[#e6e8eb] focus:outline-none ${
+                root && !validRoot ? 'border-rose-500' : 'border-[#2a3038] focus:border-[var(--accent)]'
               }`}
             />
           </Field>
@@ -409,12 +409,12 @@ function RemoteConnectionForm({
               value={python}
               onChange={(e) => setPython(e.target.value)}
               placeholder="~/spinoml/.spinoml/venv/bin/python"
-              className="w-full rounded border border-[#2a3038] bg-[#0e1115] px-2 py-1 text-sm text-[#e6e8eb] focus:border-[#6ab7ff] focus:outline-none"
+              className="w-full rounded border border-[#2a3038] bg-[#0e1216] px-2 py-1 text-sm text-[#e6e8eb] focus:border-[var(--accent)] focus:outline-none"
             />
           </Field>
 
           {validAlias && (
-            <div className="rounded bg-[#1a1e22] px-2 py-1 text-[10px] text-[#7a8088]">
+            <div className="rounded bg-[#1a1e22] px-2 py-1 text-[10px] text-[#6f767e]">
               SSH-Ziel: <code className="text-[#9aa1a8]">{composed}</code>
             </div>
           )}
@@ -536,7 +536,7 @@ function CreateProjectForm({
               autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full rounded border border-[#2a3038] bg-[#0e1115] px-2 py-1 text-sm text-[#e6e8eb] focus:border-[#6ab7ff] focus:outline-none"
+              className="w-full rounded border border-[#2a3038] bg-[#0e1216] px-2 py-1 text-sm text-[#e6e8eb] focus:border-[var(--accent)] focus:outline-none"
             />
           </Field>
           <Field label="Beschreibung" hint="Was ist das hier? 1–2 Sätze.">
@@ -544,16 +544,16 @@ function CreateProjectForm({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={2}
-              className="w-full resize-none rounded border border-[#2a3038] bg-[#0e1115] px-2 py-1 text-sm text-[#e6e8eb] focus:border-[#6ab7ff] focus:outline-none"
+              className="w-full resize-none rounded border border-[#2a3038] bg-[#0e1216] px-2 py-1 text-sm text-[#e6e8eb] focus:border-[var(--accent)] focus:outline-none"
             />
           </Field>
-          <Field label="Ziel" hint="Was willst du erreichen? Claude liest das mit.">
+          <Field label="Ziel" hint="Was willst du erreichen? Der Assistent liest das mit.">
             <textarea
               value={goal}
               onChange={(e) => setGoal(e.target.value)}
               rows={3}
               placeholder="z.B. CNN-Baseline für CIFAR-10, dann mit Dropout/BN vergleichen."
-              className="w-full resize-none rounded border border-[#2a3038] bg-[#0e1115] px-2 py-1 text-sm text-[#e6e8eb] focus:border-[#6ab7ff] focus:outline-none"
+              className="w-full resize-none rounded border border-[#2a3038] bg-[#0e1216] px-2 py-1 text-sm text-[#e6e8eb] focus:border-[var(--accent)] focus:outline-none"
             />
           </Field>
           {error && <div className="rounded bg-rose-900/20 px-2 py-1.5 text-xs text-rose-300">{error}</div>}
@@ -580,7 +580,7 @@ function CreateProjectForm({
 
 function FullScreen({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-full w-full items-center justify-center bg-[#0b0d10] p-8">
+    <div className="flex h-full w-full items-center justify-center bg-[#0a0c0f] p-8">
       {children}
     </div>
   )
@@ -588,9 +588,9 @@ function FullScreen({ children }: { children: React.ReactNode }) {
 
 function Card({ title, subtitle, children }: { title: string; subtitle?: string; children?: React.ReactNode }) {
   return (
-    <div className="w-full max-w-lg rounded-lg border border-[#1f2429] bg-[#0e1115] p-6 shadow-xl">
+    <div className="w-full max-w-lg rounded-lg border border-[#1f2429] bg-[#0e1216] p-6 shadow-xl">
       <h1 className="text-xl font-semibold text-[#e6e8eb]">{title}</h1>
-      {subtitle && <div className="mt-1 truncate text-xs text-[#7a8088]">{subtitle}</div>}
+      {subtitle && <div className="mt-1 truncate text-xs text-[#6f767e]">{subtitle}</div>}
       <div className="mt-4">{children}</div>
     </div>
   )
@@ -599,7 +599,7 @@ function Card({ title, subtitle, children }: { title: string; subtitle?: string;
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="mb-1 block text-xs uppercase tracking-wider text-[#7a8088]">{label}</label>
+      <label className="mb-1 block text-xs uppercase tracking-wider text-[#6f767e]">{label}</label>
       {children}
       {hint && <div className="mt-0.5 text-[10px] text-[#5a6068]">{hint}</div>}
     </div>
@@ -616,7 +616,7 @@ function Button({
 }) {
   const base = 'rounded px-3 py-1.5 text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
   const cls = primary
-    ? 'bg-[#6ab7ff] text-[#0b0d10] hover:bg-[#8cc7ff]'
-    : 'border border-[#2a3038] bg-[#1a1e22] text-[#e6e8eb] hover:border-[#6ab7ff]'
+    ? 'bg-[var(--accent)] text-[#0a0c0f] hover:bg-[#8cc7ff]'
+    : 'border border-[#2a3038] bg-[#1a1e22] text-[#e6e8eb] hover:border-[var(--accent)]'
   return <button onClick={onClick} disabled={disabled} className={`${base} ${cls}`}>{children}</button>
 }

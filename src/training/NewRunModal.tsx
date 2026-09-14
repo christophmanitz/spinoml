@@ -180,8 +180,11 @@ export default function NewRunModal() {
 
   // A manifest carries its own target (no column pick); only tabular needs one.
   const isManifest = datasetRelpath.toLowerCase().endsWith('.manifest')
+  // Multitask runs (prefilled from a graph with Head nodes) carry their targets
+  // in cfg.heads, so no single target column is needed.
+  const isMultitask = (cfg.heads?.length ?? 0) > 0
   const canSubmit =
-    !!modelRelpath && !!datasetRelpath && (isManifest || !!targetColumn) && !submitting && sweepCount <= 64
+    !!modelRelpath && !!datasetRelpath && (isManifest || isMultitask || !!targetColumn) && !submitting && sweepCount <= 64
 
   async function submit() {
     setError(null)
@@ -227,13 +230,13 @@ export default function NewRunModal() {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
       onClick={(e) => { if (e.target === e.currentTarget) close() }}
     >
-      <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-[#1f2429] bg-[#0e1115] shadow-2xl">
+      <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-[#1f2429] bg-[#0e1216] shadow-2xl">
         <div className="flex items-center gap-2 border-b border-[#1f2429] px-4 py-3">
           <span className="flex-1 text-sm text-[#e6e8eb]">
             Neuer Trainings-Run
-            {prefill && <span className="ml-2 rounded bg-[#13344f] px-1.5 py-0.5 text-[10px] text-[#6ab7ff]">aus Graph vorbefüllt</span>}
+            {prefill && <span className="ml-2 rounded bg-[var(--accent-sel)] px-1.5 py-0.5 text-[10px] text-[var(--accent)]">aus Graph vorbefüllt</span>}
           </span>
-          <button onClick={close} className="rounded px-2 py-0.5 text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#e6e8eb]">×</button>
+          <button onClick={close} className="rounded px-2 py-0.5 text-[#6f767e] hover:bg-[#1a1e22] hover:text-[#e6e8eb]">×</button>
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-auto px-4 py-3 text-[12px] text-[#cfd3d8]">
@@ -260,7 +263,23 @@ export default function NewRunModal() {
             )}
           </Field>
 
-          {!isManifest && (
+          {isMultitask && (
+            <Field label="Multitask-Heads (aus dem Graph)">
+              <div className="space-y-1 rounded border border-[#1f2429] bg-[#0b0e11] p-2">
+                {cfg.heads!.map((h, i) => (
+                  <div key={i} className="flex items-center gap-2 font-mono text-[11px] text-[#cfd3d8]">
+                    <span className="rounded bg-[var(--accent-sel)] px-1.5 py-0.5 text-[10px] text-[var(--accent)]">{h.output || 'out'}</span>
+                    <span className="text-[#6f767e]">→</span>
+                    <span className="text-[#e6e8eb]">{h.target}</span>
+                    <span className="ml-auto text-[10px] text-[#6f767e]">{h.loss} · w={h.weight}</span>
+                  </div>
+                ))}
+              </div>
+              <Hint>Jeder Head trainiert einen Modell-Output auf seine Ziel-Spalte; optimiert wird die gewichtete Summe der Verluste.</Hint>
+            </Field>
+          )}
+
+          {!isManifest && !isMultitask && (
             <Field label="Ziel-Spalte (target)">
               <select value={targetColumn} onChange={(e) => setTargetColumn(e.target.value)} className={SELECT} disabled={!columns.length}>
                 <option value="">{columns.length ? '— wählen —' : '(Datensatz wählen)'}</option>
@@ -288,9 +307,13 @@ export default function NewRunModal() {
 
           <div className="grid grid-cols-3 gap-3">
             <Field label="Loss">
-              <select value={cfg.loss.kind} onChange={(e) => setCfg({ ...cfg, loss: { kind: e.target.value as LossKind } })} className={SELECT}>
-                {LOSSES.map((l) => <option key={l} value={l}>{l}</option>)}
-              </select>
+              {isMultitask ? (
+                <div className="rounded border border-[#1f2429] bg-[#0b0e11] px-2 py-1 text-[11px] text-[#6f767e]">pro Head (oben)</div>
+              ) : (
+                <select value={cfg.loss.kind} onChange={(e) => setCfg({ ...cfg, loss: { kind: e.target.value as LossKind } })} className={SELECT}>
+                  {LOSSES.map((l) => <option key={l} value={l}>{l}</option>)}
+                </select>
+              )}
             </Field>
             <Field label="Scheduler">
               <select value={cfg.scheduler.kind} onChange={(e) => setCfg({ ...cfg, scheduler: { kind: e.target.value as SchedulerKind } })} className={SELECT}>
@@ -335,9 +358,9 @@ export default function NewRunModal() {
           <div className="space-y-2 rounded border border-[#1f2429] bg-[#0a0d10] p-3">
             <div className="flex items-baseline gap-2">
               <span className="text-[11px] font-medium text-[#cfd3d8]">Hyperparameter-Tuning</span>
-              <span className="text-[10px] text-[#7a8088]">(Grid Search, optional)</span>
+              <span className="text-[10px] text-[#6f767e]">(Grid Search, optional)</span>
             </div>
-            <p className="text-[10px] leading-snug text-[#7a8088]">
+            <p className="text-[10px] leading-snug text-[#6f767e]">
               Mehrere Werte je Parameter durchprobieren statt einen festen. SpinoML startet
               <strong className="text-[#9aa1a8]"> einen Run pro Kombination</strong> aller Parameter (Gitter) — danach im
               Vergleich gegenüberstellbar. Diese Werte überschreiben die Einzelwerte oben.
@@ -355,13 +378,13 @@ export default function NewRunModal() {
                     >
                       {SWEEP_FIELDS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
                     </select>
-                    <span className={`shrink-0 text-[10px] ${n > 0 ? 'text-[#6ab7ff]' : 'text-[#5a6068]'}`}>
+                    <span className={`shrink-0 text-[10px] ${n > 0 ? 'text-[var(--accent)]' : 'text-[#5a6068]'}`}>
                       {n > 0 ? `${n} Werte` : 'keine Werte'}
                     </span>
-                    <button onClick={() => setSweeps(sweeps.filter((_, j) => j !== i))} className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#ff7a85]">×</button>
+                    <button onClick={() => setSweeps(sweeps.filter((_, j) => j !== i))} className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-[#6f767e] hover:bg-[#1a1e22] hover:text-[#ff7a85]">×</button>
                   </div>
                   <label className="block">
-                    <span className="mb-1 block text-[10px] text-[#7a8088]">zu testende Werte (komma-getrennt)</span>
+                    <span className="mb-1 block text-[10px] text-[#6f767e]">zu testende Werte (komma-getrennt)</span>
                     <input
                       value={s.raw}
                       onChange={(e) => setSweeps(sweeps.map((x, j) => j === i ? { ...x, raw: e.target.value } : x))}
@@ -394,14 +417,14 @@ export default function NewRunModal() {
                   <span className="font-mono text-[#9aa1a8]">
                     {axes.map((a) => `${a.values.length} ${SWEEP_FIELDS.find((f) => f.key === a.key)!.label}`).join('  ×  ')}
                   </span>
-                  <span className={`ml-auto font-medium ${sweepCount > 64 ? 'text-[#ff7a85]' : 'text-[#6ab7ff]'}`}>
+                  <span className={`ml-auto font-medium ${sweepCount > 64 ? 'text-[#ff7a85]' : 'text-[var(--accent)]'}`}>
                     = {sweepCount} Run{sweepCount === 1 ? '' : 's'}{sweepCount > 64 ? ' · zu viele (max 64)' : ''}
                   </span>
                 </div>
                 {sweepCount <= 64 && (
                   <div className="flex flex-wrap gap-1">
                     {combos.slice(0, 10).map((c, i) => (
-                      <span key={i} className="rounded bg-[#14181c] px-1.5 py-0.5 font-mono text-[9px] text-[#7a8088]">
+                      <span key={i} className="rounded bg-[#14181c] px-1.5 py-0.5 font-mono text-[9px] text-[#6f767e]">
                         {comboLabel(c)}
                       </span>
                     ))}
@@ -431,7 +454,7 @@ export default function NewRunModal() {
           <button
             onClick={() => void submit()}
             disabled={!canSubmit}
-            className="rounded bg-[#13344f] px-3 py-1 text-[12px] text-[#6ab7ff] hover:bg-[#184466] disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded bg-[var(--accent-sel)] px-3 py-1 text-[12px] text-[var(--accent)] hover:bg-[var(--accent-sel-hover)] disabled:cursor-not-allowed disabled:opacity-40"
           >
             {submitting ? 'starte…' : sweepCount > 1 ? `${sweepCount} Runs starten` : 'Run starten'}
           </button>
@@ -465,11 +488,11 @@ function BackendSection({
     <div className="space-y-3 rounded border border-[#1f2429] bg-[#0a0d10] p-3">
       <div className="flex items-center gap-2">
         <span className="text-[11px] font-medium text-[#cfd3d8]">Wo läuft das Training?</span>
-        <span className="rounded bg-[#14181c] px-1.5 py-0.5 font-mono text-[10px] text-[#7a8088]">{host}</span>
+        <span className="rounded bg-[#14181c] px-1.5 py-0.5 font-mono text-[10px] text-[#6f767e]">{host}</span>
       </div>
 
       {caps === null ? (
-        <div className="text-[11px] text-[#7a8088]">Prüfe Fähigkeiten von <code className="text-[#9aa1a8]">{host}</code> (sbatch? GPUs?)…</div>
+        <div className="text-[11px] text-[#6f767e]">Prüfe Fähigkeiten von <code className="text-[#9aa1a8]">{host}</code> (sbatch? GPUs?)…</div>
       ) : !caps.has_slurm ? (
         // Plain SSH host — no scheduler. Be explicit that this isn't a cluster.
         <div className="space-y-2">
@@ -567,13 +590,13 @@ function BackendCard({ active, onClick, title, desc }: { active: boolean; onClic
   return (
     <button
       onClick={onClick}
-      className={`rounded border px-2.5 py-2 text-left transition-colors ${active ? 'border-[#6ab7ff] bg-[#13344f]/40' : 'border-[#1f2429] bg-[#0b0e11] hover:border-[#3a4148]'}`}
+      className={`rounded border px-2.5 py-2 text-left transition-colors ${active ? 'border-[var(--accent)] bg-[var(--accent-sel)]/40' : 'border-[#1f2429] bg-[#0b0e11] hover:border-[#3a4148]'}`}
     >
       <div className="flex items-center gap-1.5">
-        <span className={`inline-block h-2 w-2 rounded-full ${active ? 'bg-[#6ab7ff]' : 'bg-[#3a4148]'}`} />
+        <span className={`inline-block h-2 w-2 rounded-full ${active ? 'bg-[var(--accent)]' : 'bg-[#3a4148]'}`} />
         <span className={`text-[12px] font-medium ${active ? 'text-[#e6e8eb]' : 'text-[#cfd3d8]'}`}>{title}</span>
       </div>
-      <div className="mt-1 text-[10px] leading-snug text-[#7a8088]">{desc}</div>
+      <div className="mt-1 text-[10px] leading-snug text-[#6f767e]">{desc}</div>
     </button>
   )
 }
@@ -602,10 +625,10 @@ function FlowDiagram({ steps }: { steps: FlowStep[] }) {
       {steps.map((s, i) => (
         <div key={i} className="flex items-stretch gap-1">
           <div className="min-w-[120px] flex-1 rounded border border-[#1f2429] bg-[#0b0e11] px-2 py-1.5">
-            <div className="mb-1 truncate font-mono text-[9px] uppercase tracking-wide text-[#6ab7ff]">{s.tag}</div>
+            <div className="mb-1 truncate font-mono text-[9px] uppercase tracking-wide text-[var(--accent)]">{s.tag}</div>
             <div className="text-[10px] font-medium text-[#cfd3d8]">{s.title}</div>
             {s.lines.map((l, j) => (
-              <div key={j} className="truncate font-mono text-[9px] text-[#7a8088]" title={l}>{l}</div>
+              <div key={j} className="truncate font-mono text-[9px] text-[#6f767e]" title={l}>{l}</div>
             ))}
           </div>
           {i < steps.length - 1 && <div className="flex items-center px-0.5 text-[#3a4148]">→</div>}
@@ -615,12 +638,12 @@ function FlowDiagram({ steps }: { steps: FlowStep[] }) {
   )
 }
 
-const SELECT = 'w-full rounded border border-[#1f2429] bg-[#14181c] px-2 py-1 text-[12px] text-[#e6e8eb] focus:border-[#6ab7ff] focus:outline-none'
+const SELECT = 'w-full rounded border border-[#1f2429] bg-[#14181c] px-2 py-1 text-[12px] text-[#e6e8eb] focus:border-[var(--accent)] focus:outline-none'
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-[11px] text-[#7a8088]">{label}</span>
+      <span className="mb-1 block text-[11px] text-[#6f767e]">{label}</span>
       {children}
     </label>
   )

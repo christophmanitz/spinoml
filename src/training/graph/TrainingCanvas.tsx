@@ -17,6 +17,9 @@ import TrainingNode from './TrainingNode'
 import TrainingGraphBar from './TrainingGraphBar'
 import { TRAINING_NODES } from './registry'
 import { TRAINING_DRAG_MIME } from './TrainingPalette'
+import CanvasFileGate from '../../canvasdoc/CanvasFileGate'
+import ReloadCanvasButton from '../../canvasdoc/ReloadCanvasButton'
+import { trainingDocAdapter } from './doc'
 
 function TrainingCanvasInner() {
   const nodes = useTrainingGraphStore((s) => s.nodes)
@@ -75,11 +78,12 @@ function TrainingCanvasInner() {
       >
         <Background gap={16} size={1} />
         <Controls />
-        <MiniMap pannable zoomable nodeColor="#3a4148" maskColor="#0b0d1099" />
+        <MiniMap pannable zoomable nodeColor="#3a4148" maskColor="#0a0c0f99" />
         <Panel position="top-left" className="!m-2">
           <TrainingGraphBar />
         </Panel>
-        <Panel position="top-right" className="!m-2">
+        <Panel position="top-right" className="!m-2 flex gap-1">
+          <ReloadCanvasButton adapter={trainingDocAdapter} />
           <button
             className="rounded border border-[#1f2429] bg-[#13171b] px-2 py-1 text-[11px] text-[#9aa1a8] hover:border-[#3a4148] hover:bg-[#1a1f24] hover:text-[#e6e8eb]"
             onClick={() => {
@@ -99,7 +103,9 @@ function TrainingCanvasInner() {
 export default function TrainingCanvas() {
   return (
     <ReactFlowProvider>
-      <TrainingCanvasInner />
+      <CanvasFileGate adapter={trainingDocAdapter}>
+        <TrainingCanvasInner />
+      </CanvasFileGate>
     </ReactFlowProvider>
   )
 }

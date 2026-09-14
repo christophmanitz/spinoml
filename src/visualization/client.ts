@@ -15,7 +15,7 @@ export type Preview =
   | { kind: 'vector'; values: number[] }
   | { kind: 'matrix'; grid: number[][] }
   | { kind: 'maps'; channels: number; shown: number; maps: number[][][] }
-  | { kind: 'tokens'; values: number[] }
+  | { kind: 'tokens'; values: number[]; labels?: string[] }
   | { kind: 'edges'; n_edges: number; n_nodes: number; edges: [number, number][] }
 
 export type NodeActivation = { stats: ActStats; preview: Preview | null }

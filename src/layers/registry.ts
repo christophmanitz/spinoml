@@ -20,7 +20,7 @@ export type FieldSpec =
   /** Multi-line source code (Python for a Custom node). Stored & emitted verbatim. */
   | { name: string; type: 'code'; default: string; placeholder?: string }
 
-export type LayerKind = 'module' | 'input' | 'output' | 'merge' | 'function' | 'custom' | 'group'
+export type LayerKind = 'module' | 'input' | 'output' | 'merge' | 'function' | 'custom' | 'group' | 'dataop' | 'manifest'
 
 export type LayerSpec = {
   type: string
@@ -145,6 +145,66 @@ export const LAYERS: Record<string, LayerSpec> = {
       { name: 'name', type: 'select', options: ['out', 'logits', 'embedding', 'mu', 'sigma', 'aux'], default: 'out' } as FieldSpec,
     ],
     summary: (p) => `→ ${get(p, 'name', 'out')}`,
+  },
+  Manifest: {
+    // A paired-dataset DESCRIPTOR — NOT a tensor input. It declares a .manifest
+    // (what belongs to what, row-by-row) and feeds its branches to typed input
+    // nodes (Graph / Sequence / Input) via edges. Emits NO code: the pairing lives
+    // in the data layer; each connected input node is still a forward arg, fed its
+    // branch at smoke-test / training time. The manifest comes from THIS node, so
+    // typed inputs no longer each load the manifest themselves.
+    type: 'Manifest', category: 'IO', pytorchModule: '', kind: 'manifest',
+    fields: [
+      { name: 'dataset', type: 'dataset-ref', default: '' } as FieldSpec,
+    ],
+    summary: (p) => {
+      const ds = String(get(p, 'dataset', ''))
+      return ds ? `manifest ${ds.split('/').pop()}` : '(keine .manifest gewählt)'
+    },
+  },
+  Sequence: {
+    // A token-id sequence input (LongTensor) — e.g. a protein_seq manifest branch.
+    // Distinct from Graph (whole PyG Data); feeds an Embedding/Transformer encoder.
+    type: 'Sequence', category: 'IO', pytorchModule: '', kind: 'input',
+    fields: [
+      { name: 'name', type: 'text', default: 'seq', placeholder: 'seq', datalist: ['seq', 'tokens', 'protein_seq', 'smiles_ids'] } as FieldSpec,
+      f.shape('shape', [512]),
+      { name: 'dtype', type: 'select', options: ['int64', 'float32'], default: 'int64' } as FieldSpec,
+      // Which manifest branch feeds this input (filled from the connected Manifest).
+      { name: 'branch', type: 'text', default: '', placeholder: 'protein_seq' } as FieldSpec,
+    ],
+    summary: (p) => {
+      const sh = get(p, 'shape', [512]) as number[]
+      const br = String(get(p, 'branch', ''))
+      return `${get(p, 'name', 'seq')}: tokens ${JSON.stringify(sh)}${br ? ` :${br}` : ''}`
+    },
+  },
+  ESPF: {
+    // ESPF (Explainable Substructure Partition Fingerprint, MolTrans): a SMILES
+    // string tokenized into INTERPRETABLE SUBSTRUCTURE subword tokens (LongTensor)
+    // via a BPE codebook — every token id ↔ a named substructure. Like Sequence it
+    // is a token-id input that feeds an Embedding/Transformer, but bound to a SMILES
+    // manifest branch declared `kind:"espf"`. The sidecar tokenizes inline at
+    // sample/train time; num_embeddings = ESPF vocab (≈23.5k drug / shown in the
+    // Inspector). Substructures surface in the Explain view.
+    type: 'ESPF', category: 'IO', pytorchModule: '', kind: 'input',
+    fields: [
+      { name: 'name', type: 'text', default: 'smiles_espf', placeholder: 'smiles_espf', datalist: ['smiles_espf', 'ligand_espf', 'drug_tokens'] } as FieldSpec,
+      // MolTrans uses max_d=50 ESPF tokens per drug; [L] is a 1-D token sequence.
+      f.shape('shape', [50]),
+      // Token ids → Embedding, so always a LongTensor.
+      { name: 'dtype', type: 'select', options: ['int64'], default: 'int64' } as FieldSpec,
+      // Which BPE codebook: 'drug' (SMILES, ChEMBL) or 'protein' (UniProt).
+      f.select('codebook', ['drug', 'protein'], 'drug'),
+      // Which manifest branch (kind:"espf") feeds this input.
+      { name: 'branch', type: 'text', default: '', placeholder: 'ligand_smiles' } as FieldSpec,
+    ],
+    summary: (p) => {
+      const sh = get(p, 'shape', [50]) as number[]
+      const cb = String(get(p, 'codebook', 'drug'))
+      const br = String(get(p, 'branch', ''))
+      return `${get(p, 'name', 'smiles_espf')}: ESPF ${cb} ${JSON.stringify(sh)}${br ? ` :${br}` : ''}`
+    },
   },
 
   Conv2d: {
@@ -633,6 +693,57 @@ export const LAYERS: Record<string, LayerSpec> = {
     },
   },
 
+  // ─── DataOp (a DATA-stage node, not a model layer) ───────────────────────
+  // Runs a self-written Python script ONCE (offline, via the agent run_script
+  // path) to download / tokenize / transform / cache a dataset, materializing a
+  // cached output (and optionally a manifest branch) that an Input then binds.
+  // It is NOT part of the model forward pass: codegen treats it as a pure
+  // passthrough (Input → DataOp → Layer keeps working; the DataOp emits nothing).
+  // The script is executed from the Inspector's "Vorverarbeitung ausführen"
+  // button, which writes it to agent/ and run_scripts it (with the confirm GUI).
+  DataOp: {
+    type: 'DataOp', category: 'Data', pytorchModule: '', kind: 'dataop',
+    fields: [
+      { name: 'input_dataset', type: 'dataset-ref', default: '' } as FieldSpec,
+      { name: 'output_name', type: 'text', default: 'processed/out', placeholder: 'z.B. protein_seq_tokens' } as FieldSpec,
+      { name: 'mode', type: 'select', options: ['shell', 'slurm'], default: 'shell' } as FieldSpec,
+      { name: 'cache', type: 'bool', default: true } as FieldSpec,
+      {
+        name: 'script', type: 'code',
+        placeholder: 'Python: read input_dataset → write output under datasets/',
+        // A runnable-shaped template the user/agent edits. Reads its config from
+        // argv (the Inspector passes --input/--output) and writes a cached result
+        // under datasets/. Kept deliberately minimal — the agent fills the body.
+        default: [
+          'import sys, os, argparse',
+          '',
+          '# DataOp: transform an input dataset into a cached output under datasets/.',
+          '# Invoked by SpinoML as:  python <this>.py --input <rel> --output <rel>',
+          'def main():',
+          '    ap = argparse.ArgumentParser()',
+          '    ap.add_argument("--input", default="")',
+          '    ap.add_argument("--output", default="processed/out")',
+          '    args = ap.parse_args()',
+          '    out_dir = os.path.join("datasets", args.output)',
+          '    os.makedirs(out_dir, exist_ok=True)',
+          '    # TODO: read args.input, transform it, write tensors/files into out_dir,',
+          '    #       and (for a paired model) extend the .manifest with a new branch.',
+          '    print(f"wrote nothing yet — fill in main(); input={args.input} output={out_dir}")',
+          '',
+          'if __name__ == "__main__":',
+          '    main()',
+        ].join('\n'),
+      } as FieldSpec,
+    ],
+    summary: (p) => {
+      const out = String(get(p, 'output_name', 'out')) || 'out'
+      const mode = String(get(p, 'mode', 'shell'))
+      const src = String(get(p, 'input_dataset', ''))
+      const from = src ? `${src.split('/').pop()} → ` : ''
+      return `${from}${out} · ${mode}`
+    },
+  },
+
   // ─── Subgraph (a node that is itself a graph — opens its own subcanvas) ───
   // Compiles to a nested `class <class_name>(nn.Module)` built from its
   // subgraph. The subgraph's Input nodes become the class's forward args (in
@@ -771,6 +882,6 @@ export const LAYER_GROUPS: { name: string; layers: string[] }[] = (() => {
     if (!byCategory[spec.category]) byCategory[spec.category] = []
     byCategory[spec.category].push(spec.type)
   }
-  const order = ['IO', 'Conv', 'Linear', 'Recurrent', 'Graph', 'Norm', 'Activation', 'Pool', 'Regularize', 'Attention', 'Reshape', 'Merge', 'Custom']
+  const order = ['IO', 'Data', 'Conv', 'Linear', 'Recurrent', 'Graph', 'Norm', 'Activation', 'Pool', 'Regularize', 'Attention', 'Reshape', 'Merge', 'Custom']
   return order.filter((c) => byCategory[c]).map((c) => ({ name: c, layers: byCategory[c] }))
 })()

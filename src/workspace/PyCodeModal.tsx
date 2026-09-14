@@ -62,7 +62,7 @@ export default function PyCodeModal({
         <div className="flex shrink-0 items-center justify-between border-b border-[#1f2429] px-3 py-2">
           <div className="flex items-baseline gap-2">
             <span className="font-mono text-sm text-[#e6e8eb]">{preview.pyName}</span>
-            <span className="text-[10px] text-[#7a8088]">generated from {file.name}</span>
+            <span className="text-[10px] text-[#6f767e]">generated from {file.name}</span>
             {issues.length > 0 && (
               <span className="text-[10px] text-amber-400">{issues.length} issue{issues.length > 1 ? 's' : ''}</span>
             )}

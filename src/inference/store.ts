@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { inferShapes, type InferResult } from './client'
 import { useGraphStore } from '../canvas/GraphStore'
 import { generate } from '../codegen/generator'
+import { LAYERS } from '../layers/registry'
 
 type Status = 'idle' | 'inferring' | 'ok' | 'error' | 'offline'
 
@@ -49,7 +50,7 @@ export const useInferenceStore = create<InferenceState>((set) => ({
       const inputShapes = inputs.map((i) => i.shape)
       const inputDtypes = inputs.map((i) => i.dtype)
 
-      const hasInput = nodes.some((n) => n.data.layerType === 'Input')
+      const hasInput = nodes.some((n) => LAYERS[n.data.layerType]?.kind === 'input')
       if (!hasInput || issues.some((i) => i.startsWith('Cycle'))) {
         set({
           status: 'idle',
@@ -154,9 +155,10 @@ function applyShapesToNodes(
   const predOf = new Map<string, string>()
   for (const e of edges) if (!predOf.has(e.target)) predOf.set(e.target, e.source)
 
-  // Input-kind nodes (Input, Graph) carry their shape directly. A Graph node's
-  // shape is its node-feature matrix [N, F] — what the first GNN layer sees.
-  const isInputKind = (lt: string) => lt === 'Input' || lt === 'Graph'
+  // Input-kind nodes (Input, Graph, Sequence) carry their shape directly. A Graph
+  // node's shape is its node-feature matrix [N, F] — what the first GNN layer sees.
+  // Kind-driven so any input-kind node (incl. Sequence) is covered.
+  const isInputKind = (lt: string) => LAYERS[lt]?.kind === 'input'
   const inputShapeFor = (id: string): number[] | undefined => {
     const n = graph.nodes.find((m) => m.id === id)
     if (!n || !isInputKind(n.data.layerType)) return undefined
@@ -217,11 +219,11 @@ function clearShapesOnNodes() {
   let dirty = false
   const nodes = graph.nodes.map((n) => {
     if (!n.data.inferredInputShape && !n.data.inferredOutputShape && !n.data.hasError) return n
-    if (n.data.layerType === 'Input' && !n.data.hasError && !n.data.inferredInputShape) return n
+    if (LAYERS[n.data.layerType]?.kind === 'input' && !n.data.hasError && !n.data.inferredInputShape) return n
     dirty = true
     const data = { ...n.data }
     delete data.inferredInputShape
-    if (n.data.layerType !== 'Input') delete data.inferredOutputShape
+    if (LAYERS[n.data.layerType]?.kind !== 'input') delete data.inferredOutputShape
     delete data.hasError
     return { ...n, data }
   })

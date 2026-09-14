@@ -2,7 +2,7 @@
 // Add new categories here and the canvas/palette will pick them up.
 
 export const CATEGORY_COLORS: Record<string, string> = {
-  Conv: '#6ab7ff',
+  Conv: 'var(--accent)',
   Linear: '#ffb84d',
   Norm: '#b39dff',
   Activation: '#4dd0a8',

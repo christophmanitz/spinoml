@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useGraphStore } from '../canvas/GraphStore'
 import { LAYERS, type FieldSpec } from '../layers/registry'
 import { useInferenceStore } from '../inference/store'
@@ -7,6 +7,7 @@ import type { GraphField } from '../datasets/types'
 import { isTauri } from '../workspace/tauri-fs'
 import { useScopeStore } from '../canvas/scopeStore'
 import { layerInitExpr } from '../codegen/generator'
+import { useChatStore } from '../chat/store'
 import CodeField from './CodeField'
 
 export default function Inspector() {
@@ -32,8 +33,8 @@ export default function Inspector() {
   if (!node) {
     return (
       <div className="flex h-full min-h-0 flex-col p-3 text-sm">
-        <div className="mb-2 text-xs uppercase tracking-wide text-[#7a8088]">Inspector</div>
-        <div className="text-xs text-[#7a8088]">Select a node to edit its parameters.</div>
+        <div className="mb-2 text-xs uppercase tracking-wide text-[#6f767e]">Inspector</div>
+        <div className="text-xs text-[#6f767e]">Select a node to edit its parameters.</div>
       </div>
     )
   }
@@ -49,7 +50,7 @@ export default function Inspector() {
   return (
     <div className="flex h-full min-h-0 flex-col p-3 text-sm">
       <div className="mb-2 flex items-center justify-between">
-        <div className="text-xs uppercase tracking-wide text-[#7a8088]">Inspector</div>
+        <div className="text-xs uppercase tracking-wide text-[#6f767e]">Inspector</div>
         {node.id !== 'input' && (
           <button
             className="text-[10px] text-red-400 hover:text-red-300"
@@ -62,13 +63,13 @@ export default function Inspector() {
 
       <div className="mb-1 flex items-baseline gap-2">
         <span className="font-medium">{node.data.layerType}</span>
-        <span className="text-[10px] text-[#7a8088]">#{node.id}</span>
+        <span className="text-[10px] text-[#6f767e]">#{node.id}</span>
       </div>
 
       <div className="mb-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 font-mono text-[10px] text-[#9aa1a8]">
-        <span className="text-[#7a8088]">in</span>
+        <span className="text-[#6f767e]">in</span>
         <span>{inShape ? `[${inShape.join(', ')}]` : <em className="text-[#5b6168]">unknown</em>}</span>
-        <span className="text-[#7a8088]">out</span>
+        <span className="text-[#6f767e]">out</span>
         <span>{outShape ? `[${outShape.join(', ')}]` : <em className="text-[#5b6168]">unknown</em>}</span>
       </div>
 
@@ -99,7 +100,7 @@ export default function Inspector() {
             <div className="space-y-0.5">
               {spec?.fields.filter((f) => params[f.name] !== undefined).map((f) => (
                 <div key={f.name} className="flex items-center justify-between rounded bg-[#0b0e11] px-1.5 py-1 font-mono text-[10px]">
-                  <span className="text-[#7a8088]">{f.name}</span>
+                  <span className="text-[#6f767e]">{f.name}</span>
                   <span className="text-[#9aa1a8]">{JSON.stringify(params[f.name])}</span>
                 </div>
               ))}
@@ -108,7 +109,7 @@ export default function Inspector() {
         ) : (
           <>
             {spec?.fields.length === 0 && (
-              <div className="text-xs text-[#7a8088]">No parameters.</div>
+              <div className="text-xs text-[#6f767e]">No parameters.</div>
             )}
             {spec?.fields
               .filter((field) => !(isGraphDataset && node.data.layerType === 'Input'
@@ -124,9 +125,60 @@ export default function Inspector() {
               ))}
             {node.data.layerType === 'Input' && <GraphBindingPanel node={node} />}
             {node.data.layerType === 'Graph' && <GraphNodeBindingPanel node={node} />}
+            {node.data.layerType === 'Manifest' && <ManifestNodePanel node={node} />}
+            {node.data.layerType === 'DataOp' && <DataOpPanel node={node} />}
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+// DataOp = a data-stage node. Its preprocessing runs OFFLINE (not in the model
+// forward), via the chatbot's write_file + run_script path so it reuses the same
+// confirm GUI and local/ssh/SLURM execution. The button hands the agent the
+// intent; the node's `script` param is already in the chat's graph snapshot.
+function DataOpPanel({ node }: { node: { id: string; data: { params: Record<string, unknown> } } }) {
+  const p = node.data.params
+  const input = String(p.input_dataset ?? '')
+  const output = String(p.output_name ?? 'out') || 'out'
+  const mode = String(p.mode ?? 'shell')
+  const online = useChatStore((s) => s.online)
+  const status = useChatStore((s) => s.status)
+  const busy = status === 'streaming'
+
+  const run = () => {
+    const scriptPath = `agent/${node.id}.py`
+    const args = input ? `--input ${input} --output ${output}` : `--output ${output}`
+    const msg = [
+      `Führe die DataOp-Vorverarbeitung für Node "${node.id}" aus.`,
+      `Schreibe dessen \`script\`-Parameter (steht im Graph-Snapshot) mit write_file nach ${scriptPath}.`,
+      input ? `Eingabe-Dataset: ${input}.` : 'Es ist kein Eingabe-Dataset gesetzt.',
+      `Ist das Skript noch ein Platzhalter/TODO, fülle es passend zum Eingabe-Dataset (lesen → transformieren → unter datasets/${output} cachen, ggf. die .manifest um einen Branch ergänzen); bei Unklarheiten frag mit ask_user.`,
+      `Führe es dann aus mit run_script(path="${scriptPath}", mode="${mode}", args="${args}").`,
+    ].filter(Boolean).join(' ')
+    void useChatStore.getState().send(msg)
+  }
+
+  return (
+    <div className="mt-3 space-y-2 border-t border-[#1f2429] pt-2">
+      <div className="rounded border border-[#243a52] bg-[#0d1722] p-2 text-[11px] leading-snug text-[#8fb6e0]">
+        Daten-Node: läuft einmal <strong>offline</strong> und cached das Ergebnis als Dataset
+        (unter <code className="text-[#cdd3da]">datasets/{output}</code>). Nicht Teil des Modells —
+        im Forward-Pass ist er ein Passthrough.
+      </div>
+      <button
+        className="w-full rounded border border-emerald-800/60 bg-emerald-950/30 px-2 py-1.5 text-xs text-emerald-200 hover:bg-emerald-900/40 disabled:opacity-50"
+        onClick={run}
+        disabled={online === false || busy}
+        title={online === false ? 'Chatbot-Sidecar offline' : 'Skript schreiben + ausführen (mit Bestätigung)'}
+      >
+        ▶ Vorverarbeitung ausführen{mode === 'slurm' ? ' (SLURM)' : ''}
+      </button>
+      {online === false && (
+        <div className="text-[10px] text-amber-400">Chatbot offline — Sidecar starten (npm run sidecar:llm).</div>
+      )}
+      {busy && <div className="text-[10px] text-[#6f767e]">Chatbot arbeitet… Bestätigung erscheint im Chat.</div>}
     </div>
   )
 }
@@ -137,11 +189,28 @@ export default function Inspector() {
 // auto-applies x's shape, n_edges and edge_dim to the node so codegen + smoke
 // line up. For a manifest, pick which branch this node is.
 function GraphNodeBindingPanel({ node }: { node: { id: string; data: { params: Record<string, unknown> } } }) {
-  const datasetRel = String(node.data.params.dataset ?? '')
   const branch = String(node.data.params.branch ?? '')
   const updateNodeParams = useGraphStore((s) => s.updateNodeParams)
+  // Prefer a connected Manifest node's dataset (the manifest is its own node now);
+  // fall back to this Graph node's own `dataset` for a standalone graph dataset.
+  const allNodes = useGraphStore((s) => s.nodes)
+  const allEdges = useGraphStore((s) => s.edges)
+  const manifestRel = useMemo(() => {
+    for (const e of allEdges) {
+      if (e.target !== node.id) continue
+      const src = allNodes.find((n) => n.id === e.source)
+      if (src && src.data.layerType === 'Manifest') return String(src.data.params.dataset ?? '')
+    }
+    return ''
+  }, [allNodes, allEdges, node.id])
+  const datasetRel = manifestRel || String(node.data.params.dataset ?? '')
   const inspectAction = useDatasetsStore((s) => s.inspect)
-  const data = useDatasetsStore((s) => (datasetRel ? s.inspects[datasetRel]?.data : null))
+  const cached = useDatasetsStore((s) => (datasetRel ? s.inspects[datasetRel] : undefined))
+  const data = cached?.data ?? null
+  const inspecting = !!cached?.loading
+  // The inspect call returned an error (e.g. the HPC sidecar wasn't reachable yet,
+  // or a path was missing). Surface it instead of the misleading "not a graph?".
+  const inspectError = (!data && cached?.error) ? cached.error : null
 
   useEffect(() => { if (datasetRel) void inspectAction(datasetRel) }, [datasetRel, inspectAction])
 
@@ -165,6 +234,9 @@ function GraphNodeBindingPanel({ node }: { node: { id: string; data: { params: R
   const eiField = fields?.find((f) => f.name === 'edge_index') ?? null
   const eaField = fields?.find((f) => f.name === 'edge_attr') ?? null
   const key = `${xField?.shape.join(',')}|${eiField?.shape.join(',')}|${eaField?.shape.join(',')}`
+  // Per-branch resolution notes from a manifest inspect (e.g. a .pt that isn't a
+  // PyG graph, a missing branch file) — shown so failures are explained, not hidden.
+  const notes: string[] = isManifest && data && data.ok && data.kind === 'manifest' ? (data.notes ?? []) : []
 
   // Auto-apply x shape [N,F], n_edges (edge_index [2,E]) and edge_dim (edge_attr).
   useEffect(() => {
@@ -173,15 +245,18 @@ function GraphNodeBindingPanel({ node }: { node: { id: string; data: { params: R
     const curShape = node.data.params.shape as number[] | undefined
     const same = !!curShape && curShape.length === xField.shape.length && curShape.every((v, i) => v === xField.shape[i])
     if (!same) patch.shape = xField.shape
-    if (eiField && eiField.shape.length === 2) patch.n_edges = eiField.shape[1]
-    if (eaField && eaField.shape.length === 2) patch.edge_dim = eaField.shape[1]
+    if (eiField && eiField.shape.length === 2 && node.data.params.n_edges !== eiField.shape[1]) patch.n_edges = eiField.shape[1]
+    // No edge_attr on this branch → edge_dim 0 (don't keep a stale value from a
+    // previously-selected branch that did have edge features).
+    const wantEdgeDim = (eaField && eaField.shape.length === 2) ? eaField.shape[1] : 0
+    if (node.data.params.edge_dim !== wantEdgeDim) patch.edge_dim = wantEdgeDim
     if (Object.keys(patch).length) updateNodeParams(node.id, patch)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, node.id])
 
   if (!datasetRel) {
     return (
-      <div className="mt-2 rounded border border-[#1f2429] bg-[#0b0e11] p-2 text-[10px] text-[#7a8088]">
+      <div className="mt-2 rounded border border-[#1f2429] bg-[#0b0e11] p-2 text-[10px] text-[#6f767e]">
         Binde diesen Graph an ein Dataset (oben „dataset") — ein <code>.pt</code>-Ordner, ein <code>pyg:</code>-Set,
         ein Molekül oder einen <strong>Manifest-Branch</strong>. Der ganze Graph (x · edge_index · batch · edge_attr) fließt als ein <code>Data</code>-Objekt.
       </div>
@@ -192,36 +267,135 @@ function GraphNodeBindingPanel({ node }: { node: { id: string; data: { params: R
     <div className="mt-2 rounded border border-[#1f2429] bg-[#0b0e11] p-2">
       {branches.length > 0 && (
         <div className="mb-2">
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">Manifest-Branch dieses Graphen</div>
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">Manifest-Branch dieses Graphen</div>
           <div className="flex flex-wrap gap-1">
             {branches.map((b) => (
               <button
                 key={b}
                 onClick={() => updateNodeParams(node.id, { branch: b })}
-                className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${b === branch ? 'bg-[#13344f] text-[#6ab7ff]' : 'text-[#9aa1a8] hover:bg-[#13171b]'}`}
+                className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${b === branch ? 'bg-[var(--accent-sel)] text-[var(--accent)]' : 'text-[#9aa1a8] hover:bg-[#13171b]'}`}
               >{b}</button>
             ))}
           </div>
         </div>
       )}
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">Graph-Felder (Realität · read-only)</div>
+      <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">Graph-Felder (Realität · read-only)</div>
       {fields && fields.length > 0 ? (
         <div className="space-y-0.5">
           {fields.map((f) => (
             <div key={f.name} className="flex items-center justify-between rounded px-1.5 py-1 font-mono text-[10px] text-[#9aa1a8]">
               <span>{f.name}</span>
-              <span className="text-[#7a8088]">[{f.shape.join(', ')}] · {f.dtype.replace('torch.', '')}</span>
+              <span className="text-[#6f767e]">[{f.shape.join(', ')}] · {f.dtype.replace('torch.', '')}</span>
             </div>
           ))}
         </div>
+      ) : inspecting ? (
+        <div className="text-[10px] text-[#6f767e]">Dataset wird geprüft… (Torch-Sidecar)</div>
+      ) : inspectError ? (
+        <div className="space-y-1 text-[10px]">
+          <div className="text-rose-400">Dataset konnte nicht gelesen werden: {inspectError}</div>
+          <button
+            onClick={() => datasetRel && void inspectAction(datasetRel, true)}
+            className="rounded border border-[#1f2429] px-1.5 py-0.5 text-[#9aa1a8] hover:border-[#3a4148] hover:text-[#e6e8eb]"
+          >Erneut versuchen</button>
+        </div>
+      ) : isManifest && !branch ? (
+        <div className="text-[10px] text-amber-400/80">Branch oben wählen.</div>
+      ) : isManifest && branch ? (
+        <div className="text-[10px] text-amber-400/80">Branch „{branch}" hat keine Graph-Felder (x / edge_index) — siehe Hinweise unten.</div>
       ) : (
-        <div className="text-[10px] text-amber-400/80">
-          {isManifest && !branch ? 'Branch oben wählen.' : 'Keine Graph-Felder erkannt — ist das ein Graph-Dataset?'}
+        <div className="text-[10px] text-amber-400/80">Keine Graph-Felder erkannt — ein Graph braucht ein .pt-Graph-/pyg:-/Molekül-Dataset oder einen Manifest-Branch.</div>
+      )}
+      {notes.length > 0 && (
+        <div className="mt-1.5 space-y-0.5 border-t border-[#1f2429] pt-1.5 text-[10px] text-amber-400/70">
+          {notes.map((n, i) => <div key={i}>⚠ {n}</div>)}
         </div>
       )}
       {xField && (
         <div className="mt-1 text-[10px] text-emerald-300/80">
           ✓ x [{xField.shape.join(', ')}] → Form gesetzt{eiField ? ` · ${eiField.shape[1]} Kanten` : ''}{eaField ? ` · edge_dim ${eaField.shape[1]}` : ''}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Panel for a Manifest node: shows the .manifest's branches grouped by TYPE
+// (Graph / Sequence / Tensor / Target) so you see "what belongs to what" and
+// connect each branch to the right typed input node via an edge.
+function ManifestNodePanel({ node }: { node: { id: string; data: { params: Record<string, unknown> } } }) {
+  const datasetRel = String(node.data.params.dataset ?? '')
+  const inspectAction = useDatasetsStore((s) => s.inspect)
+  const cached = useDatasetsStore((s) => (datasetRel ? s.inspects[datasetRel] : undefined))
+  useEffect(() => { if (datasetRel) void inspectAction(datasetRel) }, [datasetRel, inspectAction])
+  const data = cached?.data ?? null
+
+  if (!datasetRel) {
+    return (
+      <div className="mt-2 rounded border border-[#1f2429] bg-[#0b0e11] p-2 text-[10px] text-[#6f767e]">
+        Wähle oben eine <code>.manifest</code>. Verbinde diesen Node dann per Kante mit Graph-/Sequence-/Input-Nodes — je eine Kante pro Branch. Der Manifest-Node liefert die gepaarten Daten; er erzeugt selbst keinen Modell-Code.
+      </div>
+    )
+  }
+  if (cached?.loading) return <div className="mt-2 rounded border border-[#1f2429] bg-[#0b0e11] p-2 text-[10px] text-[#6f767e]">Manifest wird geprüft…</div>
+  if (!data || !data.ok || data.kind !== 'manifest') {
+    return <div className="mt-2 rounded border border-[#1f2429] bg-[#0b0e11] p-2 text-[10px] text-rose-400">{cached?.error ?? 'Keine gültige .manifest erkannt.'}</div>
+  }
+
+  const byBranch = new Map<string, { field: string; shape: number[]; dtype: string }[]>()
+  for (const s of data.slots) {
+    if (s.field === 'target') continue
+    const dot = s.field.indexOf('.')
+    const br = dot > 0 ? s.field.slice(0, dot) : s.field
+    const fld = dot > 0 ? s.field.slice(dot + 1) : s.field
+    if (!byBranch.has(br)) byBranch.set(br, [])
+    byBranch.get(br)!.push({ field: fld, shape: s.shape, dtype: s.dtype })
+  }
+  // Branches the sidecar tokenizes as ESPF substructures (kind:"espf") — read off
+  // the inspect notes, since an ESPF slot looks like a plain 1-D int Sequence slot.
+  const espfBranches = new Set<string>()
+  for (const n of data.notes ?? []) {
+    const m = /branch '([^']+)': ESPF/.exec(n)
+    if (m) espfBranches.add(m[1])
+  }
+  const typeOf = (br: string, flds: { field: string; shape: number[]; dtype: string }[]): string => {
+    if (espfBranches.has(br)) return 'ESPF'
+    if (!flds.length) return '?'
+    const names = flds.map((f) => f.field)
+    if (names.includes('x') && names.includes('edge_index')) return 'Graph'
+    if (flds.length === 1 && flds[0].shape.length <= 1 && /int|long/.test(flds[0].dtype)) return 'Sequence'
+    return 'Tensor'
+  }
+  const hint = (t: string) => t === 'Graph' ? ' → Graph-Node' : t === 'Sequence' ? ' → Sequence-Node' : t === 'ESPF' ? ' → ESPF-Node' : t === 'Tensor' ? ' → Input-Node' : ''
+
+  return (
+    <div className="mt-2 rounded border border-[#1f2429] bg-[#0b0e11] p-2">
+      <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">Branches · verbinde je einen mit einem Input-Node</div>
+      <div className="space-y-1.5">
+        {data.branches.map((br) => {
+          const flds = byBranch.get(br) ?? []
+          const type = typeOf(br, flds)
+          return (
+            <div key={br} className="rounded border border-[#1f2429] px-1.5 py-1">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[11px] text-[#e6e8eb]">{br}</span>
+                <span className="text-[10px] text-[var(--accent)]">{type}{hint(type)}</span>
+              </div>
+              {flds.length ? (
+                <div className="mt-0.5 flex flex-wrap gap-x-2 font-mono text-[10px] text-[#6f767e]">
+                  {flds.map((f) => <span key={f.field}>{f.field}[{f.shape.join(',')}]</span>)}
+                </div>
+              ) : (
+                <div className="mt-0.5 text-[10px] text-amber-400/70">nicht als Graph ladbar — siehe Hinweise (z.B. Token-Tensor → Sequence-Node)</div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {data.target && <div className="mt-1.5 text-[10px] text-[#9aa1a8]">target: <span className="font-mono">{data.target.column}</span> ({data.target.type}) → Training</div>}
+      {data.notes && data.notes.length > 0 && (
+        <div className="mt-1.5 space-y-0.5 border-t border-[#1f2429] pt-1.5 text-[10px] text-amber-400/70">
+          {data.notes.map((n, i) => <div key={i}>⚠ {n}</div>)}
         </div>
       )}
     </div>
@@ -286,7 +460,7 @@ function GraphBindingPanel({ node }: { node: { id: string; data: { params: Recor
 
   return (
     <div className="mt-2 rounded border border-[#1f2429] bg-[#0b0e11] p-2">
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">
+      <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">
         {isManifest ? 'Manifest-Slots · klick = an Input binden' : 'Graph-Felder · klick = an Input binden'}
       </div>
       <div className="space-y-0.5">
@@ -296,10 +470,10 @@ function GraphBindingPanel({ node }: { node: { id: string; data: { params: Recor
             <button
               key={s.key}
               onClick={() => pick(s.key, s.shape, dtypeFor(s.dtype))}
-              className={`flex w-full items-center justify-between rounded px-1.5 py-1 font-mono text-[10px] ${active ? 'bg-[#13344f] text-[#6ab7ff]' : 'text-[#9aa1a8] hover:bg-[#13171b]'}`}
+              className={`flex w-full items-center justify-between rounded px-1.5 py-1 font-mono text-[10px] ${active ? 'bg-[var(--accent-sel)] text-[var(--accent)]' : 'text-[#9aa1a8] hover:bg-[#13171b]'}`}
             >
               <span>{s.key}</span>
-              <span className="text-[#7a8088]">[{s.shape.join(', ')}] · {s.dtype.replace('torch.', '')}</span>
+              <span className="text-[#6f767e]">[{s.shape.join(', ')}] · {s.dtype.replace('torch.', '')}</span>
             </button>
           )
         })}
@@ -340,7 +514,7 @@ function NodeActions({
     return (
       <button
         onClick={onEnterGroup}
-        className="mb-2 w-full rounded bg-[#13344f] px-2 py-1 text-[11px] text-[#6ab7ff] hover:bg-[#184466]"
+        className="mb-2 w-full rounded bg-[var(--accent-sel)] px-2 py-1 text-[11px] text-[var(--accent)] hover:bg-[var(--accent-sel-hover)]"
         title="Subgraph dieses Knotens bearbeiten"
       >
         ⤢ Subcanvas öffnen
@@ -555,7 +729,7 @@ function ParamField({
 }) {
   return (
     <label className="mb-2 flex flex-col gap-1">
-      <span className="flex items-baseline justify-between text-[10px] uppercase tracking-wide text-[#7a8088]">
+      <span className="flex items-baseline justify-between text-[10px] uppercase tracking-wide text-[#6f767e]">
         <span>{field.name}</span>
         <FieldHint field={field} value={value} inShape={inShape} />
       </span>
@@ -608,7 +782,7 @@ function FieldInput({
       return (
         <input
           type="checkbox"
-          className="h-4 w-4 self-start accent-[#6ab7ff]"
+          className="h-4 w-4 self-start accent-[var(--accent)]"
           checked={value as boolean}
           onChange={(e) => onChange(e.target.checked)}
         />
@@ -757,10 +931,10 @@ function ColumnsMultiInput({
   return (
     <div className="space-y-1 rounded border border-[#1f2429] bg-[#0b0e11] p-1.5">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] text-[#7a8088]">{value.length}/{cols.length} ausgewählt</span>
+        <span className="text-[10px] text-[#6f767e]">{value.length}/{cols.length} ausgewählt</span>
         <button
           onClick={selectAllNumeric}
-          className="text-[10px] text-[#6ab7ff] hover:underline"
+          className="text-[10px] text-[var(--accent)] hover:underline"
         >
           alle numerischen
         </button>
@@ -772,7 +946,7 @@ function ColumnsMultiInput({
               type="checkbox"
               checked={value.includes(col)}
               onChange={() => toggle(col)}
-              className="h-3 w-3 accent-[#6ab7ff]"
+              className="h-3 w-3 accent-[var(--accent)]"
             />
             <span className="truncate">{col}</span>
           </label>
@@ -903,7 +1077,7 @@ function DatasetRefInput({
           )}
           {naturalShape && (
             <div className="flex items-baseline justify-between gap-2">
-              <span className="text-[#7a8088]">
+              <span className="text-[#6f767e]">
                 Dataset-Shape: <code className="text-[#9aa1a8]">[{naturalShape.join(', ')}]</code>
               </span>
               {!shapesMatch && (
@@ -921,10 +1095,10 @@ function DatasetRefInput({
             </div>
           )}
           <div className="flex items-baseline justify-between">
-            <span className="text-[#7a8088]">{value}</span>
+            <span className="text-[#6f767e]">{value}</span>
             <button
               onClick={() => select(value)}
-              className="text-[#6ab7ff] hover:underline"
+              className="text-[var(--accent)] hover:underline"
               title="open dataset detail modal"
             >
               ansehen ↗

@@ -25,32 +25,48 @@ export default function ExperimentsExplorer() {
   const saved = useConnectionsStore((s) => s.saved)
   const remoteConn = saved.find((c) => c.id === currentId) ?? null
 
+  // Status filter (client-side). 'all' = no filter.
+  const [statusFilter, setStatusFilter] = useState<string>('all')
+
   useEffect(() => {
     if (isTauri()) void refresh()
   }, [refresh, currentId])
 
   if (!isTauri()) {
     return (
-      <div className="p-3 text-[11px] text-[#7a8088]">
+      <div className="p-3 text-[11px] text-[#6f767e]">
         Training braucht Tauri (echtes Dateisystem). Im Browser-Dev nicht verfügbar.
       </div>
     )
   }
 
+  // Per-status counts + the statuses actually present, in a canonical order so
+  // the filter chips read running→queued→done→failed→cancelled (others appended).
+  const counts: Record<string, number> = {}
+  for (const r of runs) counts[r.status] = (counts[r.status] ?? 0) + 1
+  const STATUS_ORDER = ['running', 'queued', 'done', 'failed', 'cancelled']
+  const present = Object.keys(counts).sort((a, b) => {
+    const ia = STATUS_ORDER.indexOf(a), ib = STATUS_ORDER.indexOf(b)
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
+  })
+  // If the active filter's status vanished after a refresh, fall back to all.
+  const effFilter = statusFilter !== 'all' && !counts[statusFilter] ? 'all' : statusFilter
+  const visibleRuns = effFilter === 'all' ? runs : runs.filter((r) => r.status === effFilter)
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-[#1f2429] px-2 py-1.5">
-        <span className="flex-1 text-[11px] uppercase tracking-wide text-[#7a8088]">Runs</span>
+        <span className="flex-1 text-[11px] uppercase tracking-wide text-[#6f767e]">Runs</span>
         <button
           onClick={() => void refresh()}
-          className="rounded px-1.5 py-0.5 text-[11px] text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#e6e8eb]"
+          className="rounded px-1.5 py-0.5 text-[11px] text-[#6f767e] hover:bg-[#1a1e22] hover:text-[#e6e8eb]"
           title="Refresh"
         >
           ↻
         </button>
         <button
           onClick={() => openNewRun()}
-          className="rounded bg-[#13344f] px-2 py-0.5 text-[11px] text-[#6ab7ff] hover:bg-[#184466]"
+          className="rounded bg-[var(--accent-sel)] px-2 py-0.5 text-[11px] text-[var(--accent)] hover:bg-[var(--accent-sel-hover)]"
           title="Neuen Trainings-Run starten"
         >
           + Run
@@ -59,17 +75,26 @@ export default function ExperimentsExplorer() {
 
       {remoteConn && <RemoteConfigStrip conn={remoteConn} />}
 
+      {present.length > 1 && (
+        <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-[#1f2429] px-2 py-1.5 text-[10px]">
+          <FilterChip label="Alle" count={runs.length} active={effFilter === 'all'} onClick={() => setStatusFilter('all')} />
+          {present.map((s) => (
+            <FilterChip key={s} label={s} count={counts[s]} active={effFilter === s} onClick={() => setStatusFilter(s)} />
+          ))}
+        </div>
+      )}
+
       {compareIds.length > 0 && (
         <div className="flex items-center gap-2 border-b border-[#1f2429] bg-[#0f1419] px-3 py-1.5 text-[11px]">
           <span className="text-[#9aa1a8]">{compareIds.length} ausgewählt</span>
           <button
             onClick={openCompare}
             disabled={compareIds.length < 2}
-            className="ml-auto rounded bg-[#13344f] px-2 py-0.5 text-[#6ab7ff] hover:bg-[#184466] disabled:opacity-40"
+            className="ml-auto rounded bg-[var(--accent-sel)] px-2 py-0.5 text-[var(--accent)] hover:bg-[var(--accent-sel-hover)] disabled:opacity-40"
           >
             Vergleichen
           </button>
-          <button onClick={clearCompare} className="rounded px-1.5 py-0.5 text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#e6e8eb]">
+          <button onClick={clearCompare} className="rounded px-1.5 py-0.5 text-[#6f767e] hover:bg-[#1a1e22] hover:text-[#e6e8eb]">
             ×
           </button>
         </div>
@@ -78,11 +103,14 @@ export default function ExperimentsExplorer() {
       <div className="min-h-0 flex-1 overflow-auto">
         {error && <div className="px-3 py-2 text-[11px] text-[#ff7a85]">{error}</div>}
         {!error && runs.length === 0 && (
-          <div className="px-3 py-3 text-[11px] text-[#7a8088]">
+          <div className="px-3 py-3 text-[11px] text-[#6f767e]">
             {loading ? 'lade…' : 'Noch keine Runs. „+ Run" startet den ersten.'}
           </div>
         )}
-        {runs.map((r) => {
+        {!error && runs.length > 0 && visibleRuns.length === 0 && (
+          <div className="px-3 py-3 text-[11px] text-[#6f767e]">Keine Runs mit Status „{effFilter}".</div>
+        )}
+        {visibleRuns.map((r) => {
           const model = r.model_path.split('/').pop() ?? r.model_path
           const checked = compareIds.includes(r.run_id)
           return (
@@ -97,7 +125,7 @@ export default function ExperimentsExplorer() {
                 checked={checked}
                 onChange={() => toggleCompare(r.run_id)}
                 title="Für Vergleich auswählen"
-                className="shrink-0 accent-[#6ab7ff]"
+                className="shrink-0 accent-[var(--accent)]"
               />
               <button
                 onClick={() => select(r.run_id)}
@@ -105,11 +133,14 @@ export default function ExperimentsExplorer() {
               >
                 <div className="flex items-center gap-2">
                   <StatusPill status={r.status} alive={r.alive} />
+                  {r.eval_only && (
+                    <span className="shrink-0 rounded bg-[var(--accent-sel)] px-1 py-0.5 text-[9px] font-semibold text-[var(--accent)]" title="Externe Validierung">VAL</span>
+                  )}
                   <span className="flex-1 truncate text-[12px] text-[#e6e8eb]">
                     {r.run_label || r.run_id}
                   </span>
                 </div>
-                <div className="flex items-center gap-2 text-[10px] text-[#7a8088]">
+                <div className="flex items-center gap-2 text-[10px] text-[#6f767e]">
                   <span className="truncate">{model}</span>
                   {r.best_val_loss != null && (
                     <span className="ml-auto shrink-0 text-[#5fd39a]">val {r.best_val_loss.toFixed(4)}</span>
@@ -123,7 +154,7 @@ export default function ExperimentsExplorer() {
                     if (await confirmDialog(`Run „${r.run_label || r.run_id}" löschen?`)) await deleteRun(r.run_id)
                   }}
                   title="Run löschen"
-                  className="shrink-0 rounded px-1 py-0.5 text-[#7a8088] opacity-0 hover:bg-[#1a1e22] hover:text-[#ff7a85] group-hover:opacity-100"
+                  className="shrink-0 rounded px-1 py-0.5 text-[#6f767e] opacity-0 hover:bg-[#1a1e22] hover:text-[#ff7a85] group-hover:opacity-100"
                 >
                   ×
                 </button>
@@ -133,6 +164,20 @@ export default function ExperimentsExplorer() {
         })}
       </div>
     </div>
+  )
+}
+
+// A single status-filter chip: label + count, highlighted when active.
+function FilterChip({ label, count, active, onClick }: { label: string; count: number; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded px-1.5 py-0.5 ${
+        active ? 'bg-[var(--accent-sel)] text-[var(--accent)]' : 'text-[#6f767e] hover:bg-[#1a1e22] hover:text-[#e6e8eb]'
+      }`}
+    >
+      {label} <span className="opacity-60">{count}</span>
+    </button>
   )
 }
 
@@ -153,12 +198,12 @@ function RemoteConfigStrip({ conn }: { conn: RemoteSshConnection }) {
 
   return (
     <div className="flex flex-col gap-1 border-b border-[#1f2429] bg-[#0f1419] px-3 py-2 text-[11px]">
-      <div className="flex items-center gap-1.5 text-[#7a8088]">
-        <span className="text-[#6ab7ff]">remote</span>
+      <div className="flex items-center gap-1.5 text-[#6f767e]">
+        <span className="text-[var(--accent)]">remote</span>
         <span className="truncate text-[#9aa1a8]">{conn.alias}:{conn.root}</span>
       </div>
       <label className="flex items-center gap-1.5">
-        <span className="shrink-0 text-[#7a8088]">Python</span>
+        <span className="shrink-0 text-[#6f767e]">Python</span>
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -166,7 +211,7 @@ function RemoteConfigStrip({ conn }: { conn: RemoteSshConnection }) {
           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
           placeholder="python"
           spellCheck={false}
-          className="min-w-0 flex-1 rounded border border-[#1f2429] bg-[#0b0e11] px-1.5 py-0.5 font-mono text-[10px] text-[#e6e8eb] focus:border-[#6ab7ff] focus:outline-none"
+          className="min-w-0 flex-1 rounded border border-[#1f2429] bg-[#0b0e11] px-1.5 py-0.5 font-mono text-[10px] text-[#e6e8eb] focus:border-[var(--accent)] focus:outline-none"
           title="Pfad zum python mit torch (z.B. ~/miniconda3/envs/ml/bin/python)"
         />
       </label>

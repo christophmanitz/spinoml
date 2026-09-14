@@ -61,7 +61,7 @@ export default function CodeField({
 
   return (
     <div className="overflow-hidden rounded border border-[#1f2429] focus-within:border-[#3a4148]">
-      <div className="flex items-center justify-between border-b border-[#1f2429] bg-[#0b0e11] px-2 py-1 text-[10px] text-[#7a8088]">
+      <div className="flex items-center justify-between border-b border-[#1f2429] bg-[#0b0e11] px-2 py-1 text-[10px] text-[#6f767e]">
         <span className="font-mono">python</span>
         <button
           onClick={() => setModalSeed(latest.current)}
@@ -135,7 +135,7 @@ function CodeModal({
             <span className="text-[10px] text-[#5b6168]">⌘S / Esc zum Schließen</span>
             <button
               onClick={close}
-              className="rounded bg-[#13344f] px-2.5 py-1 text-[11px] text-[#6ab7ff] hover:bg-[#184466]"
+              className="rounded bg-[var(--accent-sel)] px-2.5 py-1 text-[11px] text-[var(--accent)] hover:bg-[var(--accent-sel-hover)]"
             >
               Fertig
             </button>

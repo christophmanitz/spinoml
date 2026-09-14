@@ -1,66 +1,60 @@
-import { useEffect, useState } from 'react'
+import { useMemo } from 'react'
 
-import { isTauri } from '../../workspace/tauri-fs'
 import { useTrainingGraphStore } from './store'
-import { listTrainingGraphs, saveTrainingGraph, loadTrainingGraph } from './files'
+import { compileTrainingGraph } from '../../codegen/trainingGenerator'
+import { useTrainingStore } from '../store'
 
+// File open/save/switch live in the CanvasFileGate header and the generated
+// script in the bottom Code panel. This top bar carries the run action (like the
+// data canvas's "Pipeline ausführen") + clear + an empty-state hint — so the run
+// button sits in the SAME place on both canvases.
 const BTN = 'rounded border border-[#1f2429] bg-[#13171b] px-2 py-1 text-[11px] text-[#9aa1a8] hover:border-[#3a4148] hover:bg-[#1a1f24] hover:text-[#e6e8eb]'
 
 export default function TrainingGraphBar() {
-  const nodeCount = useTrainingGraphStore((s) => s.nodes.length)
+  const nodes = useTrainingGraphStore((s) => s.nodes)
+  const edges = useTrainingGraphStore((s) => s.edges)
   const resetGraph = useTrainingGraphStore((s) => s.resetGraph)
-  const [name, setName] = useState('training')
-  const [graphs, setGraphs] = useState<string[]>([])
-  const [msg, setMsg] = useState<string | null>(null)
+  const openNewRun = useTrainingStore((s) => s.openNewRun)
 
-  const refreshList = () => { if (isTauri()) void listTrainingGraphs().then(setGraphs).catch(() => {}) }
-  useEffect(refreshList, [])
+  const compile = useMemo(
+    () => compileTrainingGraph({
+      nodes: nodes.map((n) => ({ id: n.id, trainingType: n.data.trainingType, params: n.data.params })),
+      edges: edges.map((e) => ({ source: e.source, target: e.target })),
+    }),
+    [nodes, edges],
+  )
 
-  async function onSave() {
-    setMsg(null)
-    try {
-      const rel = await saveTrainingGraph(name)
-      setMsg(`gespeichert: ${rel.split('/').pop()}`)
-      refreshList()
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e))
-    }
-  }
-
-  async function onLoad(rel: string) {
-    if (!rel) return
-    setMsg(null)
-    try {
-      await loadTrainingGraph(rel)
-      setName(rel.split('/').pop()!.replace(/\.spinotrain$/i, ''))
-      setMsg(`geladen: ${rel.split('/').pop()}`)
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e))
-    }
+  // Compile the graph and hand the plan to the New-Run dialog pre-filled, so the
+  // graph-driven launch still gets the dialog's backend/SLURM/sweep/resume knobs.
+  function launch() {
+    if (!compile.plan) return
+    const plan = compile.plan
+    openNewRun({
+      label: plan.modelRelpath.split('/').pop()!.replace(/\.spinoml$/i, ''),
+      modelRelpath: plan.modelRelpath,
+      datasetRelpath: plan.datasetRelpath,
+      targetColumn: plan.target,
+      featureColumns: plan.features,
+      training: plan.training,
+    })
   }
 
   return (
-    <div className="flex flex-col gap-1 rounded border border-[#1f2429] bg-[#0e1115]/90 p-1.5 backdrop-blur">
+    <div className="flex flex-col gap-1 rounded border border-[#1f2429] bg-[#0e1216]/90 p-1.5 backdrop-blur">
       <div className="flex items-center gap-1">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="w-28 rounded border border-[#1f2429] bg-[#0b0e11] px-1.5 py-1 text-[11px] text-[#e6e8eb] focus:border-[#6ab7ff] focus:outline-none"
-          placeholder="name"
-        />
-        <button onClick={() => void onSave()} className={BTN} disabled={!isTauri()}>Speichern</button>
-        <select onChange={(e) => { void onLoad(e.target.value); e.target.value = '' }} className={BTN} defaultValue="" title="Graph laden">
-          <option value="">Laden…</option>
-          {graphs.map((g) => <option key={g} value={g}>{g.split('/').pop()}</option>)}
-        </select>
-        <button onClick={() => { resetGraph(); setMsg(null) }} className={BTN}>Neu</button>
+        <button
+          onClick={launch}
+          disabled={!compile.ok}
+          className="rounded bg-[var(--accent-sel)] px-2 py-1 text-[11px] text-[var(--accent)] hover:bg-[var(--accent-sel-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+          title="Aus diesem Graph einen Run vorbereiten — öffnet den Dialog mit Backend/SLURM, Sweep und Resume"
+        >▶ Run vorbereiten…</button>
+        <button onClick={resetGraph} className={BTN} title="Alle Knoten entfernen">Leeren</button>
       </div>
-      {nodeCount === 0 && (
-        <div className="max-w-xs text-[10px] text-[#7a8088]">
+      {nodes.length === 0 && (
+        <div className="max-w-xs text-[10px] text-[#6f767e]">
           Leerer Graph — zieh Knoten aus der Palette: DatasetSource, ModelSource, Loss, Optimizer, TrainLoop.
         </div>
       )}
-      {msg && <div className="text-[10px] text-[#6ab7ff]">{msg}</div>}
     </div>
   )
 }

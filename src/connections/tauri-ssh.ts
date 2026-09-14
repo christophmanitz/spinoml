@@ -110,6 +110,6 @@ export const tauriSsh = {
   promoteCheckpoint: (alias: string, root: string, runId: string, destName: string) =>
     invoke<string>('ssh_promote_checkpoint', { alias, root, runId, destName }),
 
-  gpuStats: (alias: string, root: string) =>
-    invoke<GpuStat[]>('ssh_gpu_stats', { alias, root }),
+  gpuStats: (alias: string, root: string, runId?: string) =>
+    invoke<GpuStat[]>('ssh_gpu_stats', { alias, root, runId: runId ?? null }),
 }

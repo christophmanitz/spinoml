@@ -19,11 +19,17 @@ export default function MiniViz({ act, hex }: { act: NodeActivation; hex: string
       )}
       {p?.kind === 'vector' && <VectorBars values={p.values.slice(0, 64)} width={140} height={26} hex={hex} />}
       {p?.kind === 'matrix' && <Heatmap grid={p.grid} cell={3} gap={0} mode="diverging" maxW={140} />}
-      {p?.kind === 'tokens' && (
-        <div className="font-mono text-[9px] text-[#9aa1a8]">
-          {p.values.slice(0, 12).join(' ')}{p.values.length > 12 ? ' …' : ''}
-        </div>
-      )}
+      {p?.kind === 'tokens' && (() => {
+        // Prefer interpretable ESPF substructure labels over raw token ids.
+        const subs = p.labels?.filter((l) => l !== '<pad>').map((l) => (l === '<unk>' ? '∅' : l))
+        const items = subs && subs.length ? subs : p.values.map(String)
+        const cap = subs && subs.length ? 6 : 12
+        return (
+          <div className="font-mono text-[9px] text-[#9aa1a8]">
+            {items.slice(0, cap).join(' ')}{items.length > cap ? ' …' : ''}
+          </div>
+        )
+      })()}
       {p?.kind === 'scalar' && <div className="font-mono text-[10px] text-[#9aa1a8]">{p.value}</div>}
 
       {sparsity > 0.001 && (

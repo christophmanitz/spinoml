@@ -1,711 +1,3801 @@
-# TODO — capability gaps
+# SpinoML – Production and Scientific Reliability Hardening Plan
 
-Missing capabilities that block real model-building, found during an
-ML-engineer evaluation of the codegen + shape-inference pipeline (2026-06-14).
-The architecture/codegen core is sound (branching DAGs, residual skips,
-multi-input, live ground-truth shape inference); these are the gaps that keep
-it a *model designer* rather than a *model builder*.
+## Mission
 
-Ordered roughly by leverage. Each layer-add follows the
-"Add a new layer type" recipe in CLAUDE.md (registry.ts + generator.ts
-serializeParam + an Inspector FixHint + verify:codegen/verify:sidecar cases).
+You are a coding agent responsible for taking the existing **SpinoML** repository and hardening it for reliable scientific machine-learning work.
 
-## Layer catalog gaps
+Your goal is **not** merely to make the application build.
 
-- [ ] **`Reshape` / `View` / `Permute` / `Transpose`** — cheapest win, highest
-      unlock. Only `Flatten` exists today, so you cannot go from conv feature
-      maps to a token sequence. Blocks ViT, CRNN, any Conv→Seq bridge.
-      Needs a functional/merge-style node (forwardExpr emits `x.reshape(...)`
-      / `x.permute(...)`), not an `nn.Module`.
-- [ ] **`Embedding`** (+ Positional Encoding) — the Transformer path is
-      effectively unusable for NLP without it. The current transformer template
-      feeds raw `[1,16,512]` floats, never token IDs. Requires integer-tensor
-      inputs (today Input shapes assume float `torch.zeros`).
-- [ ] **Sequence models: `LSTM` / `GRU` / `RNN`** — none exist. Closes the
-      entire recurrent / sequence-modeling gap. Note: these return
-      `(output, (h, c))` tuples — codegen + shape-inference hooks assume a
-      single tensor output, so this touches generator.ts and the sidecar hook.
-- [ ] **GNNs** — graph neural network layers (e.g. `GCNConv`, `GATConv`,
-      `GraphSAGE`, `MessagePassing`). Bigger lift: depends on
-      `torch_geometric` (new optional sidecar dep), edge-index inputs (a new
-      input modality beyond dense tensors), and a graph-batch concept. Likely
-      its own phase, not a single layer add.
+Your goal is to make the repository sufficiently reliable that researchers can use it for experiments where:
 
-## Smaller catalog gaps
+* model architecture must be correct,
+* generated PyTorch code must be correct,
+* tensor shapes must be correct,
+* training failures must never be reported as successful runs,
+* datasets must be handled correctly,
+* checkpoints must be reliable,
+* experiment configurations must be reproducible,
+* local and remote jobs must report their actual state,
+* asynchronous operations must not corrupt state,
+* scientific results must be traceable to the exact code/configuration/data used.
 
-- [ ] **`BatchNorm1d`** — only `BatchNorm2d` exists; needed for MLP/tabular nets.
-- [ ] **`Conv3d`** — only 1d/2d; blocks volumetric / video models.
-- [ ] **`Softmax` / `LogSoftmax`** — no explicit output activation (loss
-      usually handles it, but needed for inference heads / attention from scratch).
-- [ ] **`TransformerEncoder` stack** — only the single `TransformerEncoderLayer`
-      exists; multi-layer stacking is manual. Add a `num_layers` wrapper.
-- [ ] **`Add` skip shape adaptation** — the residual `Add` does no shape
-      matching, so downsample residuals (1×1 conv in the skip branch) must be
-      wired by hand or PyTorch throws. Consider a FixHint that detects the
-      mismatch and suggests the projection conv.
+The existing architecture should be preserved wherever possible.
 
-## Beyond architecture (larger, separate decision)
+Do **not** rewrite the project from scratch.
 
-- [~] **Training** — siehe ausführlicher Plan unten in "Phase 13–18: Training-System".
-      **Alle Phasen 13–18 sind umgesetzt** (13 Foundation, 14 Trainings-Graph,
-      15 Live-Tracking-UI, 16 Remote-Direct via ssh+nohup, 17 SLURM-Submit,
-      18 Sweeps + CSV-Export). Reste je Phase als „Offen/Abweichung" notiert.
+---
 
-# Phase 13–18: Training-System — ausführlicher Plan
+# 0. CRITICAL FIRST PHASE – REPLACE/EXTEND CLAUDE CONTROL WITH OPENCode SUPPORT
 
-Stand der Architektur, an die wir andocken:
+## Objective
 
-- `models/*.spinoml` ist der Modellgraph (Source of Truth)
-- `models/*.py` wird via `generator.ts` aus dem Graph emittiert
-  (pure `nn.Module`, kein Training)
-- `datasets/` enthält die geladenen Datensätze (6 Formate)
-- `experiments/` ist der Run-Output-Bucket (bisher nur
-  `smoke-results.jsonl`)
-- Workspace kennt zwei Modi: **local** und **remote-ssh** (Phase 12)
-- Sidecars: `torch` (Shape-Inferenz, Smoke-Test) und `llm` (Chat)
-- Connection-Dispatch in `src/connections/backend.ts` ist die einzige
-  Stelle die zwischen lokalem FS und SSH unterscheidet
+**This phase must be completed BEFORE downloading, installing, testing, or modifying the SpinoML codebase.**
 
-Das Trainings-System soll **drei orthogonale Achsen** sauber bedienen:
+The future development and later practical use of SpinoML will be performed primarily through **OpenCode**, not Claude Code.
 
-1. **WO läuft das Training** — local Python / HPC direkt (Login-Knoten oder
-   ssh-spawned shell) / **SLURM-Job auf Compute-Knoten**
-2. **WIE wird Training konfiguriert** — separater visueller
-   Trainings-Graph (eigene Canvas-Ansicht), nicht Formulare
-3. **WIE überlebt der Run einen SpinoML-Close** — alle Trainings laufen
-   detached; SpinoML ist nur eine Sicht auf den Status
+The existing SpinoML architecture currently contains Claude/LLM-specific control mechanisms. These must therefore be extended so that **OpenCode is a first-class, supported coding/AI control path**.
 
-Diese drei Achsen geben die Phasen-Reihenfolge.
+Do not simply rename "Claude" to "OpenCode".
 
-## Phase 13: Foundation — Trainings-Config, Run-Verzeichnis, Local-Executor  ✅ ERLEDIGT (2026-06-14)
+The implementation must introduce a clean abstraction that allows SpinoML to work with different AI coding/agent backends.
 
-Das eigentliche Fundament. Wenn 13 steht, kann man von Hand einen Run
-starten, ihn überleben den App-Restart sehen, Logs lesen.
+The desired direction is:
 
-**Umsetzung** (Branch `phase-13-training-foundation`):
-- `sidecar-torch/training_template.py` — pure-python Trainer (tabular),
-  liest `run.json`, importiert `model.py`, schreibt events.jsonl +
-  checkpoints + status + metrics.json. Klassifikation (CrossEntropy/BCE) +
-  Regression (MSE/L1); Optimizer Adam/AdamW/SGD/RMSprop; Scheduler
-  Step/Cosine/Plateau.
-- `src-tauri/src/training.rs` — Local-Executor: `start_training_run`
-  (detached `setsid`, schreibt Run-Dir + pid), `stop_training_run`
-  (kooperativ via status-File + SIGTERM auf Prozessgruppe),
-  `list_training_runs`, `training_run_status`, `read_training_run_file`,
-  `delete_training_run`. Stale „running" wird zu „failed" reconciled, wenn
-  pid weg ist.
-- Frontend `src/training/` — `types.ts`, `tauri-training.ts`,
-  `backend.ts` (Dispatch; remote-ssh in Phase 13 geblockt), `store.ts`
-  (Zustand + Poller alle 2s solange ein Run lebt), `ExperimentsExplorer`,
-  `NewRunModal` (manuelle Config), `RunDetailModal` (Overview/Events/Logs),
-  `StatusPill`. Experiments-Tab in `LeftSidebar`, Modals in `App.tsx`.
-- Noch NICHT in 13 (kommt später): Live-Charts (Phase 15), visueller
-  Trainings-Graph (Phase 14), Remote/SLURM (16/17). Run-Tailing ist
-  Polling, nicht fs-watch/Tauri-Events.
-
-### 13.1 Run-Verzeichnis-Format
-
-```
-experiments/
-  runs/
-    2026-06-15T12-30-00_iris-mlp_a8f3/
-      run.json              ← frozen config + meta (s.u.)
-      model.spinoml         ← snapshot des Architektur-Graphs
-      model.py              ← snapshot des generierten Codes
-      train.py              ← snapshot des Trainings-Codes
-      events.jsonl          ← append-only event stream (eine Zeile / Event)
-      metrics.json          ← finale Zusammenfassung (best metric, total time, …)
-      stdout.log            ← prozess-stdout
-      stderr.log            ← prozess-stderr
-      checkpoints/
-        epoch_0.pt
-        epoch_5.pt
-        best.pt             ← symlink auf den besten checkpoint
-      pid                   ← lokaler PID oder SLURM-jobid (s.u.)
-      status                ← single-line: queued|running|done|failed|cancelled
-      slurm-12345.out       ← (nur bei SLURM, zusätzlich zu stdout/err)
+```text
+                    SpinoML
+                       |
+                       v
+              ┌─────────────────┐
+              │ Agent Interface │
+              └────────┬────────┘
+                       |
+              ┌────────┴─────────┐
+              |                  |
+              v                  v
+       ┌─────────────┐    ┌─────────────┐
+       │   OpenCode  │    │    Claude   │
+       │   Backend   │    │   Backend   │
+       └──────┬──────┘    └──────┬──────┘
+              |                  |
+              v                  v
+        Selected model      Selected model
 ```
 
-`run.json` enthält:
-- run_id, run_label, created_at, ended_at?, status
-- model_path (Pfad relativ zum Workspace)
-- training_graph_path (Pfad zum visuellen Training-Graph, s. Phase 14)
-- backend: `{kind: "local" | "ssh-direct" | "slurm", ... }`
-- frozen Konfiguration (Optimizer, Loss, LR-Schedule, Batch-Size, …)
-- final metrics snapshot
+OpenCode must be the **default/primary integration**.
 
-Naming: `<iso-timestamp>_<slug-from-label>_<short-rand>` macht
-Sortierung im FS = Sortierung in der UI = chronologisch.
+Claude support should remain available where practical, but the application must no longer be architecturally dependent on Claude Code.
 
-### 13.2 events.jsonl Schema
+---
 
-Streamendes Event-Log, eine JSON-Zeile pro Event:
+## 0.1 OpenCode must be a first-class provider
 
-```json
-{"t":"2026-06-15T12:30:01.123Z","kind":"epoch.start","epoch":0}
-{"t":"2026-06-15T12:30:02.456Z","kind":"batch","epoch":0,"step":10,"loss":2.31,"lr":0.001}
-{"t":"2026-06-15T12:31:15.789Z","kind":"epoch.end","epoch":0,"train_loss":1.87,"val_loss":1.92,"val_acc":0.43}
-{"t":"2026-06-15T12:45:01.000Z","kind":"checkpoint","epoch":5,"path":"checkpoints/epoch_5.pt","val_loss":0.34,"is_best":true}
-{"t":"2026-06-15T13:00:00.000Z","kind":"run.done","total_seconds":1800,"best_val_loss":0.21}
+Implement or adapt the existing LLM/agent control layer so that it supports:
+
+```text
+Provider
+Model
+Authentication/configuration
+Capabilities
+Request
+Response
+Tool/action handling
+Errors
+Timeouts
+Cancellation
 ```
 
-Wichtig: **append-only**, atomic per-line write (POSIX guarantee bis 4KB).
-Frontend tailt die Datei (lokal: `fs.watchFile`; remote: `ssh + tail -f`).
+At minimum, the application must be able to distinguish:
 
-### 13.3 Trainings-Skript-Template
-
-Pure-Python, **kein SpinoML-Runtime-Dep** außer torch:
-
-```
-sidecar-torch/training_template.py
+```text
+OpenCode
+Claude
 ```
 
-Liest `run.json` aus dem Run-Dir, importiert `model.py` (das macht
-Codegen schon), baut Optimizer/Loss/Scheduler aus der Config,
-fährt die Training-Loop, schreibt nach `events.jsonl` +
-`checkpoints/`. Crash-Verhalten: `events.jsonl` letzte Zeile
-`run.failed` mit Traceback, dann `status=failed`.
+without duplicating the entire control architecture for each provider.
 
-Detach-Mechanismus lokal: `setsid` + `nohup` + stdout/stderr in
-die Run-Dir-Files umgeleitet. PID nach `pid`-Datei.
+Prefer an interface similar in concept to:
 
-### 13.4 Local-Executor (Rust)
-
-`src-tauri/src/training/local.rs`:
-
-- `start_run(run_id, train_config) -> RunHandle`
-- `stop_run(run_id) -> ()` (kill PID)
-- `run_status(run_id) -> Status` (lese status-File + ggf. `kill -0 <pid>`)
-- `tail_events(run_id) -> Stream` (Tauri-Event-Channel,
-  emittiert Zeilen aus `events.jsonl` ab Position X)
-
-### 13.5 UI: Run-Liste + Run-Detail
-
-Neuer „Experiments"-Tab in der linken Sidebar (neben Files +
-Datasets). Zeigt:
-
-- Liste aller Runs in `experiments/runs/`, sortiert neueste oben
-- Pro Run: Status-Pille, Label, Modell-Name, kurzes Metric-Tag
-- Klick → Run-Detail-Modal (analog zum DatasetDetail) mit
-  Logs, finalen Metriken, Config-Diff zu anderen Runs
-
-In 13 noch **keine** Live-Charts, noch **kein** visueller
-Trainings-Graph. Nur „kann ich einen Run starten und ihn nach
-App-Restart wieder sehen".
-
-## Phase 14: Visueller Trainings-Graph (eigene Canvas-Ansicht)  ✅ ERLEDIGT (2026-06-14)
-
-Wenn Phase 13 steht, kommt die UX-Innovation: Training wird nicht
-über Formulare konfiguriert, sondern wie das Modell selbst als
-Graph geknüpft.
-
-**Umsetzung** (14a Engine / 14b Editor / 14c Wiring):
-- 14a — `src/training/graph/{registry,store,persist}.ts` +
-  `src/codegen/trainingGenerator.ts` (PURE Graph→run.json-Compiler) +
-  Template-Erweiterungen (Metrics, EarlyStopping, GradClip, AMP). Harness
-  `scripts/verify-traingen.ts` (`npm run verify:traingen`) — Compiler +
-  echtes Training der kompilierten Config.
-- 14b — Mode-Toggle Architektur↔Training (`viewMode` Store + `ModeToggle`),
-  `TrainingCanvas`/`TrainingPalette`/`TrainingNode`/`TrainingInspector`
-  parallel zur Architektur-Canvas; App.tsx swappt Palette/Canvas/Inspector.
-- 14c — „▶ Run starten" direkt aus dem Graph (Inspector-CompilePanel →
-  `useTrainingStore.startRun`), Save/Load `.spinotrain` unter
-  `experiments/training-graphs/` (`TrainingGraphBar` + `graph/files.ts`).
-- Abweichung vom Plan: KEIN Rename `GraphStore`→`useArchitectureGraphStore`
-  (zu invasiv für den Nutzen); stattdessen ein parallel lebender
-  `useTrainingGraphStore`. Der Trainings-Graph kompiliert in die Phase-13
-  `run.json` (nicht in eine eigene `train.py`) — der konfig-getriebene
-  Trainer aus Phase 13 wird wiederverwendet statt ein zweiter Codepfad.
-- ✅ Edge-Validierung des Trainings-Graphs (2026-06-15): der Compiler prüft jetzt
-  per Erreichbarkeits-Analyse, ob jede Kern-Komponente (Dataset/Model/Loss/
-  Optimizer/Scheduler/Metric/Callbacks) tatsächlich zum TrainLoop verdrahtet ist,
-  und zeigt fehlende Verbindungen als nicht-blockierende Warnungen
-  (`TrainingCompile.warnings`) im Inspector. Nicht-blockierend, weil der Trainer
-  knoten-typ-getrieben ist (Edges sind rein visuell) — ein unverdrahteter Graph
-  liefe identisch, die Warnung fängt aber den „ich dachte das ist verbunden"-Fall.
-- ✅ `.spinotrain` im FileExplorer-Baum (2026-06-15): Klick auf eine `.spinotrain`-Datei
-  lädt den Trainings-Graph auf den Canvas und schaltet in den Training-Modus.
-- Offen: echter Smoke-Test des Trainings-Graphs (1 Batch forward/backward über den
-  Sidecar) — braucht einen neuen Sidecar-Endpunkt; bewusst verschoben.
-
-### 14.1 Mode-Switch im Canvas
-
-`Canvas.tsx` bekommt einen Mode-Toggle oben: **Architecture** ↔
-**Training**. Beide nutzen die gleiche React-Flow-Engine, aber:
-
-- Architecture-Mode arbeitet auf `models/*.spinoml` (heute)
-- Training-Mode arbeitet auf `experiments/training-graphs/<name>.spinotrain`
-  — gleiches Persistenz-Schema, anderes Suffix
-
-`GraphStore` wird zu `useArchitectureGraphStore` umbenannt und ein
-parallel-lebender `useTrainingGraphStore` daneben gebaut. Beide
-teilen die Generator/Codegen-Infrastruktur über ein gemeinsames
-`canvas/`-Modul.
-
-### 14.2 Trainings-Knoten-Palette
-
-Neue Layer-Kategorien (gleicher Mechanismus wie `layers/registry.ts`,
-aber separate Datei `training/registry.ts`):
-
-**Source/Sink**:
-- `DatasetSource` — Reference auf `datasets/<name>`, mit Field
-  `dataset-ref` (das gibt's schon aus Phase 11)
-- `ModelSource` — Reference auf `models/<name>.spinoml`, mit
-  Live-Param-Count im Inspector
-
-**Data-Pipeline**:
-- `Split` — train/val/test ratios, seed
-- `DataLoader` — batch_size, num_workers, shuffle, pin_memory,
-  drop_last
-- `Augment` (für Image): RandomCrop, HorizontalFlip,
-  Normalize — Sub-Pipeline mit Drag-Drop in eigenes Sub-Panel
-
-**Training-Komponenten**:
-- `Loss` — kind-Select aus {CrossEntropyLoss, BCEWithLogitsLoss,
-  MSELoss, L1Loss, KLDivLoss, custom-Python} mit kind-spezifischen
-  Params (label_smoothing, pos_weight, …)
-- `Optimizer` — kind aus {Adam, AdamW, SGD, Lion, RMSprop} mit
-  lr, weight_decay, betas/momentum
-- `Scheduler` — kind aus {None, StepLR, MultiStepLR, CosineAnnealingLR,
-  CosineAnnealingWarmRestarts, OneCycleLR, ReduceLROnPlateau, custom}
-- `Metric` — Accuracy, F1, Precision/Recall, ConfusionMatrix, MSE,
-  R2 — kann mehrfach gewählt werden
-
-**Callbacks** (mehrfach, alle parallel an TrainLoop verdrahtet):
-- `EarlyStopping` — monitor metric, patience, mode (min/max)
-- `ModelCheckpoint` — every_n_epochs, save_top_k, monitor
-- `ReduceLROnPlateau` — wenn nicht im Scheduler-Node
-- `GradientClipping` — max_norm, norm_type
-- `MixedPrecision` — AMP an/aus, dtype (fp16/bf16)
-- `WandBLogger` (optional, eigene Phase) — entity, project, run_name
-
-**Orchestrator**:
-- `TrainLoop` — der zentrale Knoten. Hat Inputs für
-  data (DataLoader), model (Model), loss (Loss),
-  optimizer (Optimizer), scheduler (Scheduler optional), metrics
-  (Metric[]), callbacks (Callback[]). Params: epochs,
-  gradient_accumulation_steps, val_every_n_epochs, log_every_n_steps,
-  seed, deterministic.
-
-### 14.3 Visualisierung — Beispiel-Layout
-
-```
-┌──────────────┐    ┌──────┐    ┌────────────┐
-│ DatasetSource│───→│Split │───→│ DataLoader │───┐
-│ iris.csv     │    │70/15/│    │ batch=32   │   │
-│ features:[…] │    │  15  │    │ workers=4  │   │
-└──────────────┘    └──────┘    └────────────┘   │
-                                                 ↓
-┌──────────────┐                          ┌──────────────┐
-│ ModelSource  │─────────────────────────→│              │
-│ iris-mlp     │                          │  TrainLoop   │
-│ 67 params    │                          │              │
-└──────────────┘                          │  epochs=200  │
-                                          │  seed=42     │
-┌──────────────┐                          │              │
-│   Loss       │─────────────────────────→│              │
-│ CrossEntropy │                          │              │
-└──────────────┘                          │              │
-                                          │              │
-┌──────────────┐                          │              │
-│  Optimizer   │─────────────────────────→│              │
-│ Adam lr=1e-3 │                          │              │
-└──────────────┘                          │              │
-                                          │              │
-┌──────────────┐                          │              │
-│  Scheduler   │─────────────────────────→│              │
-│ Cosine 200ep │                          │              │
-└──────────────┘                          │              │
-                                          │              │
-┌──────────────┐                          │              │
-│ EarlyStopping│─────────────────────────→│              │
-│ patience=20  │                          └──────────────┘
-└──────────────┘
+```text
+AgentProvider
+    ├── OpenCodeProvider
+    └── ClaudeProvider
 ```
 
-Edge-Validation: Loss erwartet `(prediction, target)`-Konvention,
-Metric ebenso. Inspector erkennt Mismatch und schlägt Reshape vor.
+Use the existing architecture and naming conventions where appropriate.
 
-### 14.4 Codegen — Training-Graph → train.py
+Do not blindly introduce a new abstraction if the repository already contains an equivalent mechanism.
 
-Analog zu Architecture-Codegen (`codegen/generator.ts`) gibt's
-`codegen/trainingGenerator.ts`. Nimmt den Training-Graph, emittiert:
+---
+
+# 0.2 OpenCode must be the default
+
+The normal/default configuration must use:
+
+```text
+Provider: OpenCode
+```
+
+The system must not require Claude Code to be installed simply to use the normal AI-assisted SpinoML workflow.
+
+The application should continue to work without either provider for core local functionality such as:
+
+```text
+Graph editing
+Graph validation
+Shape inference
+Code generation
+Local scientific workflows
+```
+
+where the architecture permits this.
+
+---
+
+# 0.3 OpenCode model selection
+
+The user must be able to select the OpenCode model.
+
+Do **not** hard-code a single model.
+
+For example, the configuration concept should support:
+
+```text
+Provider:
+    OpenCode
+
+Model:
+    Big Pickle
+```
+
+but the implementation must treat the model as configuration rather than as a special-case string.
+
+The user is currently using:
+
+```text
+Big Pickle
+```
+
+as the preferred OpenCode model.
+
+Therefore the initial/default OpenCode model should be configurable to **Big Pickle**, but the implementation must allow another available OpenCode model to be selected later.
+
+The system should conceptually support:
+
+```text
+OpenCode
+ ├── Big Pickle
+ ├── Model B
+ ├── Model C
+ └── Future models
+```
+
+Do not assume that the currently selected model will remain available forever.
+
+---
+
+# 0.4 Model configuration must not be scattered through the code
+
+Find every existing location where the current Claude model/provider is:
+
+```text
+hard-coded
+assumed
+constructed
+validated
+passed to a sidecar
+stored in state
+shown in the UI
+```
+
+Centralize provider/model configuration.
+
+Prefer a single authoritative configuration structure.
+
+For example:
+
+```typescript
+type AgentProvider = "opencode" | "claude";
+
+interface AgentConfiguration {
+  provider: AgentProvider;
+  model: string;
+}
+```
+
+Use the project's existing type/configuration system if one already exists.
+
+Do not introduce unnecessary duplicate configuration sources.
+
+---
+
+# 0.5 OpenCode configuration UI
+
+The user must be able to configure the AI control system from the application.
+
+At minimum, the UI/configuration flow should make it possible to select:
+
+```text
+Provider
+    OpenCode
+    Claude
+
+Model
+    available/configured OpenCode model(s)
+    available/configured Claude model(s)
+```
+
+The exact UI location should follow the existing SpinoML design.
+
+Do not create a large new settings system if an existing settings/preferences mechanism can be extended.
+
+---
+
+# 0.6 Do not assume the OpenCode API
+
+Before implementing the integration:
+
+1. Inspect the existing SpinoML Claude integration.
+2. Inspect how the current LLM sidecar communicates.
+3. Inspect the installed OpenCode interface/documentation available in the development environment.
+4. Determine the exact supported OpenCode invocation/API.
+5. Determine how OpenCode exposes model selection.
+6. Determine how authentication is handled.
+7. Determine how tool calls/actions are represented.
+8. Determine how errors and process termination are reported.
+
+**Never invent an OpenCode API.**
+
+If OpenCode is invoked as a CLI, use the actual CLI contract discovered during implementation.
+
+If OpenCode exposes another supported integration mechanism, use that mechanism where appropriate.
+
+---
+
+# 0.7 OpenCode process lifecycle
+
+Test the complete lifecycle:
+
+```text
+SpinoML starts
+      ↓
+OpenCode integration available
+      ↓
+Model selected
+      ↓
+Request sent
+      ↓
+Response received
+      ↓
+Action/tool result processed
+```
+
+Also test:
+
+```text
+OpenCode unavailable
+OpenCode process fails
+OpenCode times out
+OpenCode exits unexpectedly
+Invalid model
+Invalid configuration
+Malformed response
+Request cancellation
+```
+
+Every failure must become an explicit application state.
+
+Never silently fall back to Claude.
+
+Never silently fall back to another model.
+
+Never silently pretend that an AI operation succeeded.
+
+---
+
+# 0.8 OpenCode model selection must be observable
+
+When an AI operation is executed, it must be possible to determine which provider and model were actually used.
+
+For example:
+
+```text
+Provider: OpenCode
+Model: Big Pickle
+```
+
+This information should be available to the relevant logs/metadata and, where appropriate, experiment artifacts.
+
+Scientific experiments must not become ambiguous because an AI-generated graph was produced using an unknown model.
+
+---
+
+# 0.9 AI-generated changes must remain provider-independent
+
+The following pipeline must be identical regardless of whether OpenCode or Claude is used:
+
+```text
+AI provider
+      ↓
+Structured action
+      ↓
+Schema validation
+      ↓
+Graph validation
+      ↓
+Commit
+      ↓
+Shape inference
+      ↓
+Code generation
+      ↓
+Scientific verification
+```
+
+Neither OpenCode nor Claude may bypass:
+
+```text
+Graph validation
+Shape validation
+Code generation validation
+```
+
+The provider is untrusted input.
+
+---
+
+# 0.10 OpenCode must not become a second source of truth
+
+Do not allow:
+
+```text
+OpenCode state
+```
+
+and:
+
+```text
+SpinoML graph state
+```
+
+to become competing authoritative states.
+
+SpinoML's graph store remains the authoritative representation of the model.
+
+The AI provider may:
+
+```text
+propose
+modify
+query
+```
+
+but the resulting graph must always pass through SpinoML's own validation and commit mechanisms.
+
+---
+
+# 0.11 Preserve Claude compatibility
+
+Do not remove Claude support merely because OpenCode becomes the primary provider.
+
+Instead:
+
+```text
+Existing Claude functionality
+        ↓
+Provider abstraction
+        ↓
+Claude backend
+```
+
+and:
+
+```text
+OpenCode functionality
+        ↓
+Provider abstraction
+        ↓
+OpenCode backend
+```
+
+Both must use the same internal validation and graph mutation pipeline.
+
+If the existing Claude integration cannot be cleanly retained, document the reason before removing or substantially changing it.
+
+---
+
+# 0.12 OpenCode tests
+
+Before proceeding to the repository-hardening phases, create focused tests for:
+
+### Configuration
+
+```text
+OpenCode selected
+OpenCode model selected
+Model persisted
+Model changed
+Invalid model handled
+```
+
+### Provider selection
+
+```text
+OpenCode → OpenCode backend
+Claude → Claude backend
+```
+
+### Request handling
+
+```text
+Valid request
+Invalid request
+Timeout
+Cancellation
+Provider unavailable
+```
+
+### Model handling
+
+```text
+Big Pickle selected
+Alternative model selected
+Unknown model rejected or handled explicitly
+```
+
+### Failure handling
+
+```text
+OpenCode process failure
+Malformed response
+Provider unavailable
+```
+
+### Security
+
+Verify that:
+
+```text
+Credentials
+Tokens
+Secrets
+```
+
+are not written to ordinary logs or experiment artifacts.
+
+---
+
+# 0.13 OpenCode integration acceptance criteria
+
+Do not proceed to the next phase until all applicable criteria are satisfied:
+
+* [ ] OpenCode is a first-class provider.
+* [ ] OpenCode is the default provider.
+* [ ] The model is configurable.
+* [ ] Big Pickle can be selected as the OpenCode model.
+* [ ] Another OpenCode model can be selected without source-code changes.
+* [ ] Provider/model configuration is centralized.
+* [ ] The UI exposes provider/model selection where appropriate.
+* [ ] OpenCode does not bypass graph validation.
+* [ ] OpenCode failures are explicit.
+* [ ] OpenCode timeouts are handled.
+* [ ] OpenCode cancellation is handled.
+* [ ] OpenCode process failure is handled.
+* [ ] The actual provider/model used can be identified.
+* [ ] Core SpinoML functionality does not require Claude Code.
+* [ ] Existing Claude functionality remains available where intended.
+* [ ] Provider-specific code does not leak throughout the graph/training architecture.
+* [ ] Regression tests exist for the provider/model configuration.
+* [ ] No credentials are leaked.
+
+If an OpenCode dependency cannot be installed or accessed in the current environment, mark the relevant test:
+
+```text
+BLOCKED
+```
+
+with the exact reason.
+
+Do not fake a successful OpenCode test.
+
+---
+
+# 0.14 Critical architectural rule
+
+The final architecture should conceptually become:
+
+```text
+                 AI / CODING CONTROL
+                         |
+                         v
+                ┌─────────────────┐
+                │ Agent Provider  │
+                │   Interface     │
+                └────────┬────────┘
+                         |
+             ┌───────────┴───────────┐
+             |                       |
+             v                       v
+      ┌──────────────┐       ┌──────────────┐
+      │   OpenCode   │       │    Claude    │
+      │   Provider   │       │   Provider   │
+      └──────┬───────┘       └──────┬───────┘
+             |                       |
+             v                       v
+        Selected model          Selected model
+             |                       |
+             └───────────┬───────────┘
+                         v
+                 Structured actions
+                         |
+                         v
+                 Schema validation
+                         |
+                         v
+                  Graph validation
+                         |
+                         v
+                   Graph commit
+                         |
+                         v
+                  Shape inference
+                         |
+                         v
+                 Deterministic codegen
+                         |
+                         v
+                  PyTorch validation
+```
+
+**OpenCode is the primary path. Claude is an optional compatible provider.**
+
+Do not allow either AI provider to become a trusted authority over the scientific model state.
+
+---
+
+# 0.15 Only after this phase
+
+Only after the OpenCode integration has been implemented, tested, and documented should the agent proceed to:
+
+```text
+PHASE 1 – DOWNLOAD, INSTALL AND VERIFY THE COMPLETE REPOSITORY
+```
+
+The repository-hardening process must then test the newly established OpenCode integration as part of the complete system.
+
+---
+
+# 1. DOWNLOAD, INSTALL AND VERIFY THE COMPLETE REPOSITORY
+
+## Objective
+
+Before changing the remaining application components, download the repository and install the **complete development/runtime environment** required by the project.
+
+Do not assume the repository is already correctly installed.
+
+---
+
+## 1.1 Clone the repository
+
+Use the official repository:
+
+```bash
+git clone https://github.com/christophmanitz/spinoml.git
+cd spinoml
+```
+
+If the repository is already present:
+
+```bash
+git status
+git remote -v
+git log -1 --oneline
+```
+
+Record the exact commit being tested.
+
+---
+
+## 1.2 Inspect the repository before installation
+
+Read:
+
+```text
+README.md
+CLAUDE.md
+package.json
+package-lock.json
+tsconfig*.json
+vite.config.*
+src/
+src-tauri/
+sidecar-torch/
+sidecar-llm/
+scripts/
+workspace/
+examples/
+```
+
+Do not make changes yet.
+
+Determine:
+
+```text
+Frontend technology
+Rust/Tauri version
+Node requirements
+Python requirements
+PyTorch requirements
+Sidecar architecture
+LLM/agent requirements
+Testing framework
+Build commands
+Training commands
+Remote execution requirements
+```
+
+---
+
+[Continue with the remainder of the existing plan unchanged, renumbering the existing phases by +1.]
+
+
+## Rule 1 – Work sequentially
+
+Complete one phase before starting the next.
+
+Use:
+
+```text
+READ
+→ UNDERSTAND
+→ TEST
+→ REPRODUCE
+→ FIX
+→ REGRESSION TEST
+→ DOCUMENT
+→ NEXT PHASE
+```
+
+Do not perform large unrelated changes simultaneously.
+
+---
+
+## Rule 2 – Never guess
+
+If you do not understand a component:
+
+1. Read the relevant source files.
+2. Find existing tests.
+3. Trace the data flow.
+4. Reproduce the behavior.
+5. Only then modify the code.
+
+Never invent an API because you assume it exists.
+
+---
+
+## Rule 3 – Never hide errors
+
+Do not make tests pass by hiding errors.
+
+Never introduce code such as:
 
 ```python
-import torch
-from torch.utils.data import DataLoader, random_split
-
-from model import Model
-from sidecar_torch.dataset_handlers import load_dataset
-
-def run():
-    ds = load_dataset("datasets/iris.csv", features=[...], target="species")
-    train_ds, val_ds, test_ds = random_split(ds, [0.7, 0.15, 0.15],
-                                              generator=torch.Generator().manual_seed(42))
-    train_loader = DataLoader(train_ds, batch_size=32, shuffle=True, num_workers=4)
-    val_loader   = DataLoader(val_ds,   batch_size=32, shuffle=False, num_workers=4)
-
-    model = Model()
-    loss_fn = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
-    callbacks = [EarlyStopping(...)]
-
-    for epoch in range(200):
-        emit({"kind":"epoch.start","epoch":epoch})
-        ...
-        emit({"kind":"epoch.end", ...})
+try:
+    ...
+except Exception:
+    pass
 ```
 
-Smoke-Test-Modus für den Trainings-Graph: gleicher Trick wie heute
-beim Modell-Smoke-Test — 1 Batch durchschicken, prüfen ob Loss
-endlich ist, ohne den ganzen Run zu starten.
+or:
 
-## Phase 15: Live-Tracking-UI  ✅ ERLEDIGT (2026-06-14)
+```typescript
+catch (_) {}
+```
 
-**Umsetzung** (15a Charts / 15b Compare):
-- 15a — `src/training/charts/LineChart.tsx` (pure-SVG Multi-Series-Chart,
-  keine Lib, log-Y, Crosshair + Hover-Readout, Gaps bei null-y) +
-  `charts/series.ts` (leitet loss/lr/metric-Serien aus events.jsonl ab,
-  stabile Palette). `RunDetailModal` bekommt Tab „charts" (Loss mit
-  log-Toggle, Metriken, LR) + Live-Progress-Bar in Overview mit
-  epoch x/N + ETA (aus beobachteter Epoch-Kadenz).
-- 15b — Multi-Run-Compare: Checkboxen pro Run in `ExperimentsExplorer`,
-  „Vergleichen"-Bar, `CompareModal` (Loss-Overlay aller gewählten Runs,
-  finale-Metriken-Tabelle, Config-Diff der training-Sektionen). Compare-
-  State (`compareIds`/`compareOpen`) im `useTrainingStore`.
-- Abweichung vom Plan: Tailing bleibt Polling (alle 2s solange ein Run
-  lebt), KEIN `fs::watch`/Tauri-`training:event` — für Epoch-Granularität
-  ausreichend; fs-watch verschoben (relevant erst bei Batch-Live-Charts).
-  Kein eigener Bottom-Panel-Tab „Training" — Charts leben im Run-Detail-
-  Modal (weniger invasiv, gleiche Daten).
-- ✅ Hardware-Strip (2026-06-15): Run-Detail-Tab „hardware" pollt `nvidia-smi`
-  auf dem Ausführungs-Host (lokal via `gpu_stats`-Command, remote via
-  `ssh_gpu_stats`) und zeigt pro GPU Auslastung/Speicher/Temperatur, solange der
-  Tab offen ist. Leer/Hinweis bei reinem CPU-Training.
-- ✅ Sample-Predictions (2026-06-15): der Trainer emittiert bei jedem neuen
-  Best-Checkpoint ein `sample.preds`-Event (gleichmäßige Stichprobe aus dem
-  Val-Set, Pred vs. Truth + Konfidenz); Run-Detail-Tab „predictions" zeigt sie.
+unless the exception is explicitly expected and safely handled.
 
-Sobald Phase 13+14 stehen, baue Live-Visualisierung:
+Do not use:
 
-### 15.1 Run-Tab im Bottom-Panel
+```typescript
+// @ts-ignore
+```
 
-Zusätzlich zu Code+Terminal: dritter Tab **Training**. Wenn ein
-Run aktiv ist:
+to hide real problems.
 
-- Status-Bar oben: `running · epoch 47/200 · 14m elapsed · ETA 38m`
-- **Loss-Chart**: train + val, log-scale-Toggle, smoothing
-- **Metric-Chart**: pro Metric eine Linie, Best-marker
-- **LR-Chart**: lr über Steps
-- **Logs**: stdout-Tail mit Filter (ERROR/WARN/INFO)
-- **Sample-Preds**: für Klassifikation ein paar val-Beispiele mit
-  Prediction vs. Truth (kommt aus optionalem `sample` Callback)
-- **Hardware-Strip**: GPU util/mem/temp, CPU%, RAM (kommt aus
-  parallel-laufendem `nvidia-smi`/`top`-Polling, optional)
+Do not disable lint rules globally to make the build pass.
 
-### 15.2 Tailing-Mechanismus
+---
 
-Lokal: Rust `fs::watch` auf `events.jsonl`, neue Zeilen werden
-geparst und als Tauri-Event `training:event` emittiert. Frontend
-hat eine Zustand-Store `useTrainingRunStore` der die Event-Liste
-hält + aktive Charts berechnet.
+## Rule 4 – Never weaken tests
 
-Remote: ssh + `tail -F` als langlebige Session (wie unser
-remote-sidecar tunnel). Output wird Zeile für Zeile als Tauri-Event
-weitergereicht.
+Do not modify a test merely because the implementation currently fails it.
 
-SLURM: same wie remote, aber Quelle ist `slurm-<jobid>.out`
-(oder besser: events.jsonl, denn das Training-Skript schreibt
-unabhängig von SLURMs stdout-Buffering direkt in die Datei mit
-`flush=True`).
+The correct order is:
 
-### 15.3 Multi-Run-Vergleich
+```text
+Existing test fails
+        ↓
+Understand expected behavior
+        ↓
+Determine whether implementation or test is wrong
+        ↓
+Fix the actual problem
+        ↓
+Keep/add regression test
+```
 
-Im Experiments-Tab: mehrere Runs auswählen → Compare-Modus:
-- Alle ausgewählten Loss-Kurven übereinander
-- Tabelle final-metrics (val_loss, val_acc, train_time, n_params)
-- Config-Diff highlights nur veränderte Felder
+---
 
-Best-of-N: schnellste Wahl welches Modell ins `models/best/`
-verlinkt wird.
+## Rule 5 – Every real bug gets a regression test
 
-## Phase 16: Remote-Direct-Training (kein SLURM)  ✅ ERLEDIGT (2026-06-14)
+For every confirmed bug:
 
-**Umsetzung**:
-- `src-tauri/src/ssh.rs` — sechs `ssh_*`-Mirror der lokalen Training-Commands
-  (`ssh_start_training_run` / `ssh_list_training_runs` /
-  `ssh_training_run_status` / `ssh_read_training_run_file` /
-  `ssh_stop_training_run` / `ssh_delete_training_run`). Start schreibt das Run-
-  Dir auf den Host (run.json/model.spinoml/model.py + train.py aus dem lokalen
-  Bundle) und launcht detached via `nohup setsid <python> -u train.py
-  > stdout 2> stderr < /dev/null & echo $! > pid` — überlebt ssh-Session UND
-  App-Close. Status = `kill -0 <pid>` + status-File über ssh; Liste in EINEM
-  Round-Trip (marker-delimitierter Shell-Loop, in Rust geparst).
-- `src-tauri/src/training.rs` — `RunSummary::from_parts` / `RunStatus::new` /
-  `reconcile_status` / `validate_run_id` / `READABLE` als `pub(crate)`
-  herausgezogen, damit local + ssh exakt dieselbe Summarize-/Reconcile-Logik
-  teilen.
-- Frontend — `connections/store.ts` bekommt `python?` pro Remote-Connection
-  (+ `remotePython()`), `tauri-ssh.ts` die sechs Wrapper,
-  `training/backend.ts` dispatcht jetzt local↔remote (statt zu blocken),
-  `ExperimentsExplorer` zeigt einen Remote-Strip mit Host + Python-Pfad-Input
-  (persistiert via `updateRemote`).
-- Abweichung vom Plan: KEIN rsync — Run-Dateien gehen per `cat >`/stdin über
-  ssh (klein, kein extra Tool nötig); Dataset bleibt auf dem Host (abspath =
-  `<root>/datasets/...`). Backend-Detection (sbatch/nvidia-smi/module,
-  RemoteCapabilities) ist Vorbereitung für Phase 17 und hier noch NICHT dabei.
-  Remote-Python muss eine Umgebung mit torch (+ pandas für tabular) sein — der
-  Strip weist darauf hin; fehlende Deps landen sichtbar in stderr.log.
+```text
+1. Reproduce it.
+2. Create a test that fails before the fix.
+3. Fix the bug.
+4. Verify the test passes.
+5. Run related tests.
+6. Document the fix.
+```
 
-Manche User wollen testweise auf dem Login-Knoten trainieren oder
-auf einem Compute-Knoten den sie sich vorher mit `salloc` geholt
-haben. Das ist der einfachere Fall, weil keine Queue dazwischen ist.
+---
 
-### 16.1 Backend-Detection
+## Rule 6 – Never claim a test passed if it could not run
 
-Beim Open eines Remote-Workspace: zusätzlich zur torch-Sidecar-
-Probe (Phase 12b) prüfe:
+Use explicit statuses:
+
+```text
+PASS
+FAIL
+SKIPPED
+BLOCKED
+NOT APPLICABLE
+```
+
+Never turn:
+
+```text
+CUDA unavailable
+```
+
+into:
+
+```text
+CUDA PASS
+```
+
+Never turn:
+
+```text
+SLURM unavailable
+```
+
+into:
+
+```text
+SLURM PASS
+```
+
+---
+
+## Rule 7 – Scientific correctness has priority
+
+Priority order:
+
+```text
+1. Data corruption
+2. Scientifically incorrect results
+3. Incorrect generated models
+4. Incorrect training
+5. Checkpoint corruption
+6. Race conditions
+7. Job/process state corruption
+8. Security problems
+9. Reproducibility
+10. Performance
+11. UI polish
+```
+
+Do not work on cosmetic UI improvements while critical scientific correctness problems remain.
+
+---
+
+# 1. PHASE 0 – DOWNLOAD, INSTALL AND VERIFY THE COMPLETE REPOSITORY
+
+## Objective
+
+Before changing anything, download the repository and install the **complete development/runtime environment** required by the project.
+
+Do not assume the repository is already correctly installed.
+
+---
+
+## 1.1 Clone the repository
+
+Use the official repository:
 
 ```bash
-command -v sbatch    # → SLURM verfügbar?
-command -v salloc    # → interaktive Reservierung möglich?
-nvidia-smi -L 2>/dev/null    # → GPUs erreichbar?
-command -v module    # → Module-System?
+git clone https://github.com/christophmanitz/spinoml.git
+cd spinoml
 ```
 
-Ergebnis in `RemoteCapabilities` festhalten: `{has_slurm,
-has_gpu, has_modules, gpu_names: [...]}`. UI bekommt das via
-Tauri-Event.
-
-### 16.2 Detached-Run via ssh+nohup+setsid
-
-`start_remote_run(run_id, ...)`:
-1. ssh: rsync run.json + model.py + train.py + dataset (oder Pfad
-   wenn schon da) nach `<root>/experiments/runs/<run_id>/`
-2. ssh + spawn:
-   ```bash
-   cd <run_dir>
-   nohup setsid <venv>/bin/python -u train.py \
-     > stdout.log 2> stderr.log < /dev/null &
-   echo $! > pid
-   disown
-   ```
-3. ssh-Verbindung darf nach diesem Command sterben — `setsid` löst
-   den Python-Prozess von der Session, `nohup` blockt HUP.
-
-Lebenszeichen-Check: regelmäßig (z.B. alle 5 s) `ssh + kill -0 <pid>`
-+ tail von events.jsonl. Wenn `kill -0` fehlschlägt → Run gilt als
-beendet, lese status-File für final-state.
-
-Cleanup-Lesson aus Phase 12b: systemd-logind reapt User-Prozesse
-**nicht** auf RHEL/Rocky (KillUserProcesses=no Default). Deshalb
-funktioniert nohup+setsid hier zuverlässig — das war beim
-sidecar-torch der bug, hier wird es zum Feature.
-
-## Phase 17: SLURM-Integration  ✅ ERLEDIGT (2026-06-14)
-
-**Umsetzung**:
-- `src-tauri/src/ssh.rs` — `ssh_start_training_run` verzweigt nach
-  `backend.kind` aus run.json: `slurm` → `build_sbatch()` schreibt
-  `train.sbatch` (#SBATCH-Header aus partition/time/mem/cpus/gres/account/qos
-  + `module load`-Zeilen + pre_run_script + `python -u train.py`), submittet
-  via `sbatch`, parsed die Jobid und friert sie als `pid = slurm:<jobid>`
-  ein. Liveness/Status/Stop/Delete sind slurm-aware: `slurm:`-pids gehen über
-  `squeue`/`scancel` statt `kill -0`/`kill`. Neuer Probe-Command
-  `ssh_remote_training_capabilities` (sbatch? nvidia-smi? `sinfo`-Partitionen).
-- Frontend — `RunBackend`/`SlurmConfig` in types; `NewRunModal` zeigt einen
-  Backend-Block (Direkt ↔ SLURM) NUR wenn die Probe `has_slurm` meldet, mit
-  Partition-Dropdown (aus `sinfo`), time/mem/cpus/gres/account, module-Liste,
-  pre-run-script. SlurmConfig wird auf der Connection gemerkt (`slurm?`).
-- Abweichung vom Plan: KEIN `SlurmConfig`-Graph-Node (17.1) — SLURM wird beim
-  Run-Start gewählt statt als Trainings-Graph-Knoten (deutlich weniger
-  invasiv, gleiche Capability). KEIN rsync (wie Phase 16).
-- ✅ sacct-Final-State-Parsing (2026-06-15): `ssh_training_run_status` holt für
-  SLURM-Runs die Live-`squeue`-State (PENDING→queued, RUNNING→running) und, sobald
-  der Job aus der Queue ist, den `sacct`-State und mappt ihn präzise
-  (COMPLETED→done, CANCELLED→cancelled, TIMEOUT/OOM/FAILED/NODE_FAIL→failed) via
-  `reconcile_slurm_status`. So wird ein scheduler-gekillter Job korrekt erklärt
-  statt nur als „failed".
-- ✅ Resume aus Checkpoint (2026-06-15): Checkpoints speichern jetzt auch
-  optimizer/scheduler-State + best_val; `run.json.resume_from` (Picker im
-  NewRunModal, Quelle = jeder Run mit `best.pt`) lädt sie und trainiert
-  „Epochs" weitere Epochen. `RunSummary.has_checkpoint` (local + ssh) speist den
-  Picker.
-
-Der eigentliche HPC-Use-Case. Voraussetzung: Phase 16.
-
-### 17.1 sbatch-Generator
-
-Neuer Trainings-Graph-Node **`SlurmConfig`** (alternativ zum
-`LocalConfig` für `TrainLoop.backend`). Felder:
-
-- `partition` (Dropdown, befüllt aus `sinfo -h -o '%P'`)
-- `time` (HH:MM:SS, default 04:00:00)
-- `mem` (z.B. 32G)
-- `cpus_per_task` (default 8)
-- `gres` (z.B. `gpu:a100:1`)
-- `account` (optional)
-- `qos` (optional)
-- `modules`: Liste von `module load …` (Multi-Select aus
-  `module avail` Output, im Erst-Setup gecached)
-- `pre_run_script`: Freitext (wird vor python ausgeführt — z. B.
-  `export OMP_NUM_THREADS=8`)
-
-Codegen-Snippet erweitert um Header:
+If the repository is already present:
 
 ```bash
-#!/bin/bash
-#SBATCH --job-name=spinoml-iris-mlp-a8f3
-#SBATCH --partition=gpu-l40
-#SBATCH --time=04:00:00
-#SBATCH --mem=32G
-#SBATCH --cpus-per-task=8
-#SBATCH --gres=gpu:l40s:1
-#SBATCH --output=slurm-%j.out
-#SBATCH --error=slurm-%j.err
-
-module load Python/3.11.5-GCCcore-13.2.0
-module load CUDA/12.4.0
-export OMP_NUM_THREADS=8
-
-cd $SLURM_SUBMIT_DIR
-<venv>/bin/python -u train.py
+git status
+git remote -v
+git log -1 --oneline
 ```
 
-### 17.2 Job-Lifecycle
+Record the exact commit being tested.
 
-`submit_slurm(run_id) -> jobid`:
-1. ssh: rsync Run-Dir wie 16.1
-2. ssh: `cd <run_dir> && sbatch train.sbatch` → parse jobid
-   aus `Submitted batch job 12345`
-3. Schreibe jobid in `pid`-Datei (mit `slurm:` prefix damit Status-
-   Check weiß: SLURM, nicht direkter PID)
+---
 
-Status-Polling: `squeue -j <jobid> --noheader -o '%T,%S,%e,%R'`
-gibt State (PENDING/RUNNING/COMPLETED/FAILED/CANCELLED), Start-/End-
-Zeit, Reason. Wenn `squeue` leer → Job nicht mehr in Queue →
-`sacct -j <jobid> -o State,ExitCode --parsable2 --noheader` für
-finalen State.
+## 1.2 Inspect the repository before installation
 
-UI in der Run-Liste: PENDING-Pille mit ETA aus `--start-time`
-(SLURM schätzt), RUNNING-Pille mit GPU-Anzeige aus events.jsonl,
-COMPLETED/FAILED entsprechend.
+Read:
 
-### 17.3 Cancel + Resume
-
-`scancel <jobid>` cancellt. Resume: aus letztem Checkpoint einen
-neuen Run mit `resume_from=<checkpoint-path>` starten —
-`TrainLoop`-Knoten bekommt optional `resume_from` Field.
-
-### 17.4 Log-Streaming durch die Queue
-
-Während PENDING gibt's keine Logs. Während RUNNING: `events.jsonl`
-existiert sobald Python startet → tail via ssh wie in 15.2.
-
-`slurm-<jobid>.out` wird per SLURM aktualisiert (buffered, evtl.
-bis Job-Ende kaum sichtbar). Deshalb verlassen wir uns auf
-`events.jsonl` + `print(..., flush=True)` im Training-Skript.
-
-## Phase 18: Polish + Multi-Run  ✅ ERLEDIGT (2026-06-14, MVP)
-
-**Umsetzung**:
-- Hyperparameter-Sweep im `NewRunModal`: beliebig viele Achsen
-  (lr/batch_size/weight_decay/epochs/seed), je eine komma-getrennte Werteliste.
-  Das Gitter (cartesian product) startet einen Run pro Kombination (sequentiell,
-  damit Run-Dirs/ssh nicht kollidieren), mit lesbaren Labels `… [lr=0.01 bs=32]`.
-  Cap bei 64 Runs. Die Runs landen in der Liste und sind direkt über den
-  Phase-15b-Compare vergleichbar.
-- CSV-Export im `CompareModal` („CSV"-Button): eine Zeile pro Run mit
-  finalen Metriken + allen abweichenden Config-Feldern (aus dem Config-Diff).
-- ✅ `best.pt`-Promotion nach `models/best/` (2026-06-15): im Run-Detail-Modal
-  („Bestes Modell übernehmen", nur bei terminalem Run mit Checkpoint) kopiert
-  `promote_run_checkpoint` / `ssh_promote_checkpoint` die `best.pt` nach
-  `models/best/<name>.pt` (lokal + remote).
-- Abweichung/Offen: SLURM-Array-Jobs für Sweeps (aktuell N Einzel-Runs),
-  W&B/TensorBoard-Export, und der Chat-Auto-Tag („warum ist Run #47 schlechter
-  als #46") sind NICHT dabei — brauchen externe Deps bzw. LLM-Tool-Surface;
-  bewusst verschoben.
-
-Letzte Phase macht's komfortabel:
-
-- **Hyperparam-Sweeps**: Trainings-Graph-Knoten mit
-  Range/Choice-Feld (`lr: [1e-2, 1e-3, 1e-4]`), startet pro
-  Kombination einen Run. SLURM-Array-Jobs wenn verfügbar.
-- **Auto-Tag von Runs** durch den Chat: „warum ist Run #47
-  schlechter als #46?" → Claude diff'd die configs + metrics.
-- **Export**: nach W&B / TensorBoard / CSV.
-- **`best.pt`-Promotion**: bestes Modell aus N Runs nach
-  `models/best/<name>.pt`, von wo aus es als Pretrained in eine
-  neue Architektur-Pipeline kommt.
-
-## Übergreifende Querschnittsthemen
-
-### Resilienz — wirklich entkoppelt vom UI
-
-Der harte Test für „läuft weiter wenn SpinoML zu":
-
-| Backend | Mechanismus | Recovery beim Re-Open |
-|-|-|-|
-| **local** | `setsid` + `nohup` + PID-File | `kill -0 <pid>` + `status`-File |
-| **ssh-direct** | gleicher Trick remote | ssh + `kill -0` |
-| **SLURM** | Job in der Queue | `squeue` + `sacct` |
-
-In allen drei Fällen ist `events.jsonl` die single source of
-truth — wenn die Datei wächst, läuft was, egal ob mit PID-File
-oder ohne. Beim App-Open scant ein Background-Job alle
-`experiments/runs/*` und re-attached an noch laufende Runs.
-
-### Code-Generation-Konsistenz
-
-Beide Generatoren (Architektur + Training) müssen reproduzibel
-sein (CLAUDE.md invariant): gleicher Graph → gleicher Code. Keine
-Date.now() im Generator. Trainings-Code referenziert das Modell
-über relativen Pfad, nicht über sys.path-Hacks.
-
-### Sidecar-Reuse
-
-Der Phase-12b-torch-Sidecar (Shape-Inferenz + Datensätze) und
-das Training nutzen die **gleiche venv**. Heißt: Trainings-Deps
-(`tqdm`, ggf. `accelerate`, `safetensors`) kommen in den
-gleichen `install()`-Step. Spart Bootstrap-Zeit auf HPC.
-
-### Workspace-Backend bleibt agnostisch
-
-Local-vs-Remote-Trennung läuft weiter über
-`src/connections/backend.ts`. Trainings-Lifecycle-Calls (start,
-status, cancel) bekommen ihren eigenen Dispatcher in
-`src/training/backend.ts` analog. KEIN if-remote im Component-
-Code.
-
-### Datenschutz
-
-Trainings-Logs (events.jsonl, stdout.log) können sensitive
-Informationen enthalten (Sample-Inputs, Modell-Outputs).
-Standardmäßig nur 127.0.0.1, nie nach außen. Wenn W&B-Logger
-aktiv, expliziter Consent + Token-Storage in
-`~/.config/spinoml/secrets` (nicht in `spinoml.project.json`).
-
-## Phase-Reihenfolge — Empfehlung
-
-```
-13 (Foundation: Run-Format + Local-Executor + Liste)
-↓
-14 (Training-Graph + Codegen)
-↓
-15 (Live-UI: Charts + Tail)
-↓
-16 (Remote-Direct via ssh+nohup)
-↓
-17 (SLURM-Submit + Status-Polling)
-↓
-18 (Sweeps + Compare + Export)
+```text
+README.md
+CLAUDE.md
+package.json
+package-lock.json
+tsconfig*.json
+vite.config.*
+src/
+src-tauri/
+sidecar-torch/
+sidecar-llm/
+scripts/
+workspace/
+examples/
 ```
 
-13–15 sind nutzbar ohne 16/17 — local-only Trainings sind ein
-sinnvoller MVP. 16/17 öffnen den HPC, 18 ist Komfort.
+Do not make changes yet.
 
-Jede Phase eigene Commit-Serie wie bei Phase 12 (a/b/c). Vor
-13 sollten die Layer-Catalog-Lücken (oben in diesem File) gefüllt
-sein, sonst trainiert man modelle die ein paar Schichten zu wenig
-haben.
+Determine:
+
+```text
+Frontend technology
+Rust/Tauri version
+Node requirements
+Python requirements
+PyTorch requirements
+Sidecar architecture
+LLM/Claude requirements
+Testing framework
+Build commands
+Training commands
+Remote execution requirements
+```
+
+---
+
+## 1.3 Check the local environment
+
+Record:
+
+```bash
+node --version
+npm --version
+python --version
+python3 --version
+rustc --version
+cargo --version
+git --version
+```
+
+If available:
+
+```bash
+nvidia-smi
+```
+
+Record:
+
+```text
+Operating system
+CPU
+RAM
+GPU
+GPU memory
+CUDA version
+Python version
+Node version
+Rust version
+```
+
+---
+
+## 1.4 Install Node dependencies
+
+Use the repository's lockfile.
+
+Prefer:
+
+```bash
+npm ci
+```
+
+over:
+
+```bash
+npm install
+```
+
+when a valid `package-lock.json` exists.
+
+Do not arbitrarily update dependencies.
+
+---
+
+## 1.5 Install Python dependencies
+
+Inspect the repository first.
+
+If it contains:
+
+```text
+requirements.txt
+pyproject.toml
+poetry.lock
+uv.lock
+```
+
+follow the existing project mechanism.
+
+Do not create a second competing dependency-management system unless necessary.
+
+Use an isolated Python environment where appropriate:
+
+```bash
+python -m venv .venv
+```
+
+Then install the project's documented dependencies.
+
+Verify PyTorch:
+
+```bash
+python -c "import torch; print(torch.__version__)"
+```
+
+If CUDA is expected:
+
+```bash
+python -c "import torch; print(torch.cuda.is_available())"
+```
+
+---
+
+## 1.6 Install Rust dependencies
+
+From the Rust/Tauri directory:
+
+```bash
+cargo check
+```
+
+Download/build all required dependencies.
+
+Do not update the dependency versions unless required for a confirmed problem.
+
+---
+
+## 1.7 Install all project-specific tools
+
+Inspect the documentation and package configuration for:
+
+```text
+Tauri
+Claude CLI
+MCP
+PyTorch
+SSH
+SFTP
+SLURM
+system dependencies
+```
+
+Install everything required for normal local development.
+
+If Claude is required for optional LLM functionality, verify whether the local environment has it.
+
+Do not fabricate credentials.
+
+---
+
+## 1.8 Run the complete existing verification suite
+
+Before modifying code, execute all documented checks.
+
+At minimum, investigate and run:
+
+```bash
+npm run build
+npm run lint
+npm run verify:codegen
+npm run verify:sidecar
+npm run verify:traingen
+```
+
+Then:
+
+```bash
+cd src-tauri
+cargo check
+cd ..
+```
+
+If Python tests exist:
+
+```bash
+pytest
+```
+
+If JavaScript/TypeScript tests exist:
+
+```bash
+npm test
+```
+
+Use the actual repository scripts when they differ.
+
+---
+
+## 1.9 Create baseline report
+
+Create:
+
+```text
+docs/engineering/BASELINE.md
+```
+
+Record:
+
+```text
+Repository commit
+Operating system
+Node version
+npm version
+Python version
+PyTorch version
+Rust version
+Cargo version
+CUDA version
+GPU
+```
+
+Then:
+
+```text
+Build: PASS/FAIL
+Lint: PASS/FAIL
+Codegen verification: PASS/FAIL
+Torch sidecar: PASS/FAIL
+Training generation: PASS/FAIL
+Rust: PASS/FAIL
+Python tests: PASS/FAIL/SKIPPED
+Other tests: PASS/FAIL/SKIPPED
+```
+
+For every failure, record:
+
+```text
+Command
+Error
+Relevant stack trace
+Likely component
+```
+
+---
+
+## 1.10 Important
+
+Do not fix anything yet unless required simply to complete installation.
+
+The purpose of this phase is to establish:
+
+> **What exactly works before hardening begins?**
+
+---
+
+# 2. PHASE 1 – FULL REPOSITORY INVENTORY
+
+Create:
+
+```text
+docs/engineering/ARCHITECTURE.md
+docs/engineering/RISK_REGISTER.md
+docs/engineering/TEST_MATRIX.md
+```
+
+Map:
+
+```text
+Frontend
+GraphStore
+Layer registry
+Code generation
+Shape inference
+Dataset handling
+Training
+Persistence
+Torch sidecar
+LLM sidecar
+MCP
+Tauri
+Rust commands
+Filesystem
+SSH
+SFTP
+PTY
+SLURM
+Workspace
+```
+
+For every component document:
+
+```text
+Inputs
+Outputs
+State
+External dependencies
+Failure modes
+Existing tests
+```
+
+---
+
+# 3. PHASE 2 – RISK REGISTER
+
+Create a risk table.
+
+Example:
+
+| ID   | Area        | Risk                                    | Severity | Test   | Status |
+| ---- | ----------- | --------------------------------------- | -------- | ------ | ------ |
+| R001 | Graph       | Invalid graph can be committed          | CRITICAL | G001   | OPEN   |
+| R002 | Codegen     | Generated code differs from graph       | CRITICAL | C001   | OPEN   |
+| R003 | Shape       | Incorrect shape accepted                | CRITICAL | S001   | OPEN   |
+| R004 | Training    | Failed training reported successful     | CRITICAL | T001   | OPEN   |
+| R005 | Checkpoint  | Corrupted checkpoint                    | CRITICAL | T002   | OPEN   |
+| R006 | Dataset     | Split leakage                           | CRITICAL | D001   | OPEN   |
+| R007 | Async       | Stale response overwrites state         | HIGH     | A001   | OPEN   |
+| R008 | Sidecar     | Crash leaves application inconsistent   | HIGH     | P001   | OPEN   |
+| R009 | SSH         | Connection failure produces wrong state | HIGH     | R001   | OPEN   |
+| R010 | SLURM       | Wrong remote job state                  | HIGH     | R002   | OPEN   |
+| R011 | Persistence | Graph corruption                        | CRITICAL | P001   | OPEN   |
+| R012 | Security    | Command/path injection                  | CRITICAL | SEC001 | OPEN   |
+
+Update this throughout the project.
+
+---
+
+# 4. PHASE 3 – GRAPH STORE CORRECTNESS
+
+The graph is the core model representation.
+
+Treat it as a critical data structure.
+
+---
+
+## 4.1 Define graph invariants
+
+At minimum:
+
+```text
+Node IDs are unique.
+Edge IDs are unique.
+Every edge references existing nodes.
+Every edge references valid handles.
+Layer types are known.
+Layer parameters are valid.
+Required parameters exist.
+Dimensions are valid.
+```
+
+Determine whether cycles are allowed.
+
+If cycles are not supported, explicitly reject them.
+
+---
+
+## 4.2 Test graph mutations
+
+Test:
+
+```text
+Add node
+Remove node
+Update node
+Add edge
+Remove edge
+Rewire edge
+Change parameters
+Change input
+Change output
+```
+
+Test invalid cases:
+
+```text
+Duplicate node
+Duplicate edge
+Unknown node
+Unknown edge
+Unknown layer
+Invalid parameter
+Invalid connection
+Deleted node with remaining edges
+Invalid handle
+Invalid dimension
+```
+
+---
+
+## 4.3 Validate before commit
+
+Preferred architecture:
+
+```text
+Mutation proposal
+      ↓
+Validation
+      ↓
+Commit
+```
+
+Not:
+
+```text
+Mutation
+      ↓
+Commit
+      ↓
+Validation
+```
+
+An invalid graph must never become the authoritative graph state.
+
+---
+
+# 5. PHASE 4 – GRAPH PERSISTENCE
+
+Test:
+
+```text
+Create graph
+Save graph
+Close application
+Reload graph
+Compare graph
+```
+
+Test malformed files:
+
+```text
+Empty file
+Invalid JSON
+Truncated JSON
+Missing fields
+Unknown fields
+Wrong types
+Invalid values
+Old schema
+```
+
+The application must fail safely.
+
+It must never silently replace a corrupt graph with an empty graph.
+
+---
+
+## 5.1 Schema versioning
+
+If not already present, introduce a version field such as:
+
+```json
+{
+  "schemaVersion": 1
+}
+```
+
+Future schema changes should use explicit migrations.
+
+---
+
+# 6. PHASE 5 – DETERMINISTIC CODE GENERATION
+
+Code generation is CRITICAL.
+
+For the same graph:
+
+```text
+generate(graph)
+```
+
+must produce deterministic output.
+
+Run:
+
+```text
+generate(graph)
+generate(graph)
+generate(graph)
+```
+
+and compare outputs.
+
+If some generated metadata legitimately varies, isolate that variation.
+
+---
+
+# 7. PHASE 6 – CODEGEN GOLDEN TESTS
+
+Create fixtures for:
+
+```text
+Linear
+MLP
+CNN
+Residual
+Branch
+Merge
+Multi-input
+Multi-output
+Concat
+Flatten
+Reshape
+Normalization
+Pooling
+Attention
+Recurrent
+GNN
+```
+
+For each:
+
+```text
+Graph fixture
+Expected generated Python
+```
+
+Do not make the golden tests depend on timestamps or random identifiers.
+
+---
+
+# 8. PHASE 7 – EXECUTE GENERATED CODE
+
+A generated model is not considered valid merely because the Python parser accepts it.
+
+For every important model:
+
+```text
+Graph
+ ↓
+Code generation
+ ↓
+Write temporary Python file
+ ↓
+Compile
+ ↓
+Import
+ ↓
+Instantiate
+ ↓
+Forward
+ ↓
+Loss
+ ↓
+Backward
+```
+
+Verify:
+
+```python
+loss.backward()
+```
+
+when the model is trainable.
+
+---
+
+# 9. PHASE 8 – SHAPE INFERENCE
+
+Compare SpinoML's predicted shapes with real PyTorch execution.
+
+For every test graph:
+
+```text
+SpinoML shape inference
+        VS
+Actual PyTorch tensor shapes
+```
+
+Use assertions.
+
+Test:
+
+```text
+1D
+2D
+3D
+4D
+5D
+Batch
+Channels
+Sequence
+Convolution
+Pooling
+Flatten
+Reshape
+Transpose
+Concat
+Broadcasting
+Multi-input
+Multi-output
+Attention
+Recurrent
+Normalization
+```
+
+---
+
+# 10. PHASE 9 – SHAPE FAILURE MUST FAIL CLOSED
+
+If shape inference fails:
+
+Do not use an old shape silently.
+
+Do not continue training with unknown dimensions.
+
+Represent the state explicitly:
+
+```text
+VALID
+INVALID
+UNKNOWN
+```
+
+Training must refuse to start if the model is not known to be valid.
+
+---
+
+# 11. PHASE 10 – ASYNCHRONOUS SHAPE RACE CONDITIONS
+
+Test:
+
+```text
+Graph A
+request inference A
+
+Graph B
+request inference B
+
+Response B arrives
+
+Response A arrives later
+```
+
+Response A must not overwrite Graph B.
+
+Use an appropriate mechanism such as:
+
+```text
+Graph revision
+Request ID
+Graph hash
+```
+
+The implementation must reject stale responses.
+
+---
+
+# 12. PHASE 11 – TORCH SIDECAR ROBUSTNESS
+
+Test:
+
+```text
+Startup
+Shutdown
+Restart
+Malformed request
+Missing fields
+Invalid dtype
+Invalid shape
+Unknown layer
+Invalid graph
+Timeout
+Internal exception
+Unexpected process termination
+```
+
+The API must return structured errors.
+
+Example:
+
+```json
+{
+  "error": {
+    "code": "INVALID_GRAPH",
+    "message": "Graph validation failed",
+    "details": {}
+  }
+}
+```
+
+Use the project's existing API conventions if they already provide an error structure.
+
+Do not create inconsistent error formats.
+
+---
+
+# 13. PHASE 12 – SIDECAR CRASH RECOVERY
+
+Test:
+
+```text
+Start application
+Start Torch sidecar
+Send request
+Kill Torch sidecar
+Send request
+Restart sidecar
+Send request
+```
+
+The application must recover or clearly report that the service is unavailable.
+
+It must never silently use stale data.
+
+---
+
+# 14. PHASE 13 – LOCAL PORT AND PROCESS MANAGEMENT
+
+Test:
+
+```text
+Port already occupied
+Sidecar startup failure
+Sidecar shutdown
+Repeated startup/shutdown
+Application restart
+```
+
+Check for:
+
+```text
+Orphan processes
+Zombie processes
+Released ports
+Incorrect service state
+```
+
+---
+
+# 15. PHASE 14 – LLM / CLAUDE SAFETY
+
+Claude must not be treated as a trusted compiler.
+
+Preferred flow:
+
+```text
+Claude
+ ↓
+Structured graph action
+ ↓
+Schema validation
+ ↓
+Graph validation
+ ↓
+Graph commit
+ ↓
+Shape inference
+ ↓
+Code generation
+```
+
+Never rely on Claude producing correct Python code directly.
+
+---
+
+# 16. PHASE 15 – MCP VALIDATION
+
+Test MCP tools with:
+
+```text
+Unknown node ID
+Unknown edge ID
+Invalid layer
+Invalid parameter
+Missing parameter
+Wrong parameter type
+Negative dimension
+NaN
+Infinity
+Invalid connection
+Duplicate edge
+Invalid graph mutation
+```
+
+All invalid operations must be rejected cleanly.
+
+---
+
+# 17. PHASE 16 – CLAUDE ADVERSARIAL TESTING
+
+Send deliberately problematic instructions.
+
+Examples:
+
+```text
+Connect this layer to a nonexistent node.
+Delete the input node.
+Create a negative tensor dimension.
+Connect incompatible tensors.
+Create duplicate edges.
+Change output size to an invalid value.
+```
+
+Expected behavior:
+
+```text
+Claude may propose the operation.
+Validator must reject invalid operation.
+Invalid state must never be committed.
+```
+
+---
+
+# 18. PHASE 17 – DATASET RELIABILITY
+
+Test all supported dataset formats documented by the project.
+
+Test:
+
+```text
+Valid dataset
+Empty dataset
+Missing file
+Corrupt file
+Wrong dtype
+NaN
+Infinity
+Single sample
+Large dataset
+Unicode filename
+Spaces in path
+Relative path
+Absolute path
+```
+
+Errors must be explicit.
+
+Never silently turn a dataset error into an empty dataset.
+
+---
+
+# 19. PHASE 18 – DATASET FINGERPRINTING
+
+Scientific experiments must identify the dataset used.
+
+Create a stable dataset identifier using appropriate metadata and/or content hashing.
+
+Store:
+
+```text
+Dataset source
+Dataset configuration
+Split configuration
+Dataset hash/identifier
+```
+
+Avoid relying only on human-readable dataset names.
+
+---
+
+# 20. PHASE 19 – TRAIN / VALIDATION / TEST INTEGRITY
+
+Check for accidental overlap.
+
+Test:
+
+```text
+Same sample in train and validation
+Same sample in train and test
+Duplicates across splits
+```
+
+Record split strategy:
+
+```text
+Random
+Stratified
+Grouped
+Time-based
+Predefined
+```
+
+Do not silently change a user's split strategy.
+
+---
+
+# 21. PHASE 20 – TRAINING SNAPSHOT
+
+At training start, create an immutable snapshot containing:
+
+```text
+Graph
+Model configuration
+Training configuration
+Dataset configuration
+Preprocessing configuration
+Seed
+```
+
+The running experiment must not depend directly on mutable UI state.
+
+If the user edits the graph after training starts, the running experiment must not change.
+
+---
+
+# 22. PHASE 21 – TRAINING CONFIGURATION
+
+Store:
+
+```text
+Experiment ID
+Git commit
+Graph
+Generated model
+Dataset identifier
+Dataset split
+Preprocessing
+Seed
+Optimizer
+Learning rate
+Scheduler
+Batch size
+Epochs
+Loss
+Metrics
+Device
+dtype
+Software versions
+Hardware information
+```
+
+Use the actual fields supported by the project.
+
+---
+
+# 23. PHASE 22 – SEED AND DETERMINISM
+
+Determine all random sources used by training.
+
+At minimum investigate:
+
+```text
+Python random
+NumPy
+PyTorch CPU
+PyTorch CUDA
+DataLoader workers
+```
+
+Set seeds where appropriate.
+
+If full determinism is impossible:
+
+Document exactly why.
+
+Do not claim:
+
+```text
+Fully reproducible
+```
+
+when the underlying operation is nondeterministic.
+
+---
+
+# 24. PHASE 23 – SCIENTIFIC SMOKE TEST
+
+Create a tiny local synthetic experiment.
+
+Example:
+
+```text
+100 samples
+10 input features
+2 classes
+```
+
+Model:
+
+```text
+Linear
+ReLU
+Linear
+```
+
+Training:
+
+```text
+2–5 epochs
+```
+
+Verify:
+
+```text
+Training starts
+Loss is finite
+Loss changes
+Metrics are finite
+Checkpoint exists
+Logs exist
+Metadata exists
+Training exits successfully
+```
+
+This test must be fast enough for regular CI execution.
+
+---
+
+# 25. PHASE 24 – TRAINING FAILURE TESTS
+
+Deliberately cause:
+
+```text
+Invalid dataset
+Invalid model
+Invalid optimizer
+Invalid learning rate
+Missing output directory
+Unwritable output directory
+NaN input
+Training process termination
+```
+
+Expected result:
+
+```text
+FAILED
+```
+
+Never:
+
+```text
+SUCCESS
+```
+
+Never leave the job indefinitely in:
+
+```text
+RUNNING
+```
+
+---
+
+# 26. PHASE 25 – NUMERICAL FAILURE DETECTION
+
+Monitor appropriate training values for:
+
+```text
+NaN
+Infinity
+```
+
+At minimum investigate:
+
+```text
+Loss
+Metrics
+Gradients
+```
+
+If numerical instability makes the result unusable, the run must not be reported as successful.
+
+Use an explicit failure reason where appropriate.
+
+---
+
+# 27. PHASE 26 – CHECKPOINT CORRECTNESS
+
+Test:
+
+```text
+Train
+Save checkpoint
+Stop
+Load checkpoint
+Resume
+```
+
+Verify that checkpoints preserve the necessary state:
+
+```text
+Model state
+Optimizer state
+Scheduler state
+Epoch
+Global step
+Random state where supported
+Experiment configuration
+```
+
+---
+
+# 28. PHASE 27 – ATOMIC CHECKPOINT WRITES
+
+Where appropriate, use an atomic write strategy:
+
+```text
+Write temporary checkpoint
+        ↓
+Flush/close
+        ↓
+Atomic rename
+```
+
+The goal is to avoid a partially written checkpoint replacing the last valid checkpoint.
+
+---
+
+# 29. PHASE 28 – CHECKPOINT CRASH TEST
+
+Simulate:
+
+```text
+Training
+ ↓
+Checkpoint write
+ ↓
+Process termination
+ ↓
+Restart
+```
+
+Verify that the system either has:
+
+```text
+Previous valid checkpoint
+```
+
+or:
+
+```text
+New valid checkpoint
+```
+
+and never silently accepts a corrupted checkpoint.
+
+---
+
+# 30. PHASE 29 – METRIC CORRECTNESS
+
+Check:
+
+```text
+Batch loss
+Epoch loss
+Validation loss
+Metric aggregation
+```
+
+Pay special attention to batches of different sizes.
+
+Do not incorrectly average batch averages when weighted averaging is required.
+
+Create explicit tests.
+
+---
+
+# 31. PHASE 30 – LOCAL JOB STATE MACHINE
+
+Define and test training states.
+
+Example:
+
+```text
+CREATED
+ ↓
+STARTING
+ ↓
+RUNNING
+ ├──> SUCCEEDED
+ ├──> FAILED
+ └──> CANCELLED
+```
+
+Prevent invalid transitions.
+
+For example:
+
+```text
+SUCCEEDED → RUNNING
+FAILED → RUNNING
+CANCELLED → SUCCEEDED
+```
+
+must not happen accidentally.
+
+---
+
+# 32. PHASE 31 – TRAINING EVENT ORDERING
+
+Test out-of-order events.
+
+Example:
+
+```text
+RUNNING
+EPOCH 5
+FAILED
+EPOCH 6
+```
+
+A late event must not overwrite a final state.
+
+Final states should be protected from stale asynchronous updates.
+
+---
+
+# 33. PHASE 32 – CANCELLATION
+
+Test:
+
+```text
+Cancel before start
+Cancel during startup
+Cancel during training
+Cancel after completion
+Double cancellation
+```
+
+The resulting state must be consistent.
+
+---
+
+# 34. PHASE 33 – JOB SUBMISSION IDEMPOTENCY
+
+Test:
+
+```text
+Submit job
+Network timeout
+Client retries
+```
+
+Ensure the system does not accidentally submit two jobs.
+
+If perfect idempotency is impossible, use a submission identifier and verify the existing job before retrying.
+
+---
+
+# 35. PHASE 34 – SSH RELIABILITY
+
+If SSH functionality is supported, test:
+
+```text
+Successful connection
+Authentication failure
+Host unavailable
+Connection timeout
+Connection loss
+Reconnect
+Missing remote directory
+Permission denied
+SFTP failure
+Remote command failure
+```
+
+Errors must be explicit.
+
+---
+
+# 36. PHASE 35 – SSH CREDENTIAL SAFETY
+
+Search logs and workspace files for:
+
+```text
+Passwords
+Private keys
+Tokens
+OAuth secrets
+SSH credentials
+```
+
+They must never be written to ordinary logs or experiment artifacts.
+
+---
+
+# 37. PHASE 36 – SLURM RELIABILITY
+
+If SLURM support is available, test:
+
+```text
+Submit success
+Submit failure
+Pending
+Running
+Completed
+Failed
+Cancelled
+Unknown
+Communication failure
+```
+
+Persist the remote job ID.
+
+---
+
+# 38. PHASE 37 – REMOTE JOB RECOVERY
+
+Critical test:
+
+```text
+Submit remote training job
+Close SpinoML
+Wait
+Restart SpinoML
+Reconnect
+Query actual remote job
+```
+
+The application must recover the actual remote state.
+
+Do not rely only on UI state saved before shutdown.
+
+---
+
+# 39. PHASE 38 – UI STATE MUST NOT LIE
+
+Examples:
+
+If saving fails:
+
+```text
+Do not display "Saved".
+```
+
+If training fails:
+
+```text
+Do not display "Completed".
+```
+
+If shape inference fails:
+
+```text
+Do not display "Valid".
+```
+
+If SSH disconnects:
+
+```text
+Do not display "Connected".
+```
+
+If SLURM state is unknown:
+
+```text
+Do not display "Running" unless verified.
+```
+
+---
+
+# 40. PHASE 39 – FRONTEND ERROR STATES
+
+External operations should distinguish:
+
+```text
+Loading
+Success
+Error
+Timeout
+Cancelled
+Unavailable
+```
+
+Do not represent all failures simply as:
+
+```text
+loading = false
+```
+
+---
+
+# 41. PHASE 40 – GRAPH REVISION SYSTEM
+
+If not already present, introduce a reliable graph revision mechanism.
+
+Example:
+
+```text
+Graph revision 101
+```
+
+Every asynchronous operation records the revision it belongs to.
+
+When a response arrives:
+
+```text
+Response revision == current revision?
+```
+
+If not:
+
+```text
+Ignore as stale.
+```
+
+Use this for:
+
+```text
+Shape inference
+Dataset loading
+LLM actions where relevant
+Other asynchronous graph operations
+```
+
+---
+
+# 42. PHASE 41 – CONCURRENT OPERATIONS
+
+Test:
+
+```text
+Save + edit
+Edit + inference
+Claude mutation + user mutation
+Training start + graph edit
+Dataset reload + dataset inspection
+```
+
+Define which operations are allowed concurrently.
+
+Prevent silent state corruption.
+
+---
+
+# 43. PHASE 42 – TRAINING IMMUTABILITY
+
+Once a training run begins:
+
+```text
+Graph
+Dataset configuration
+Training configuration
+Generated code
+```
+
+must be tied to the run snapshot.
+
+Later UI changes must not modify the running experiment.
+
+---
+
+# 44. PHASE 43 – GENERATED PYTHON SECURITY
+
+Audit all values inserted into generated Python:
+
+```text
+Layer names
+Parameters
+Paths
+Labels
+Dataset information
+User input
+LLM-generated values
+```
+
+Avoid unsafe string interpolation.
+
+Never allow user-controlled input to become arbitrary executable Python unintentionally.
+
+---
+
+# 45. PHASE 44 – COMMAND INJECTION REVIEW
+
+Search for:
+
+```text
+shell=True
+eval
+exec
+dynamic shell strings
+unsafe subprocess calls
+```
+
+Also inspect Rust command construction.
+
+Especially review:
+
+```text
+SSH commands
+SLURM commands
+Python execution
+filesystem commands
+```
+
+Use argument arrays / safe APIs where possible.
+
+---
+
+# 46. PHASE 45 – PATH SECURITY
+
+Test paths containing:
+
+```text
+Spaces
+Unicode
+Relative paths
+Absolute paths
+..
+Symlinks
+Missing paths
+Long paths
+```
+
+Ensure path operations behave predictably.
+
+---
+
+# 47. PHASE 46 – PATH TRAVERSAL
+
+Check all filesystem boundaries.
+
+Prevent unintended access through:
+
+```text
+../
+absolute paths
+symlinks
+```
+
+where the application expects paths to remain inside a workspace/dataset directory.
+
+---
+
+# 48. PHASE 47 – UNSAFE DESERIALIZATION
+
+Search for:
+
+```text
+pickle
+torch.load
+eval
+exec
+unsafe YAML
+dynamic imports
+```
+
+Review every occurrence.
+
+A dataset file must not automatically be considered trusted.
+
+Where safe serialization is possible, use it.
+
+---
+
+# 49. PHASE 48 – RUST ERROR HANDLING
+
+Audit:
+
+```text
+src-tauri
+filesystem
+SSH
+SFTP
+PTY
+sidecars
+process management
+```
+
+Look for:
+
+```text
+unwrap()
+expect()
+panic!
+```
+
+Determine whether each is safe.
+
+Do not blindly remove them.
+
+A crash caused by an unexpected external condition should generally become a controlled error.
+
+---
+
+# 50. PHASE 49 – TYPESCRIPT ERROR HANDLING
+
+Review:
+
+```text
+any
+unknown
+null
+undefined
+async functions
+promise rejection
+```
+
+Use strict typing where practical.
+
+Do not perform a massive unrelated TypeScript rewrite.
+
+Prioritize code involved in:
+
+```text
+Graph
+Codegen
+Training
+Sidecars
+Persistence
+Remote jobs
+```
+
+---
+
+# 51. PHASE 50 – SILENT EXCEPTION AUDIT
+
+Search for patterns such as:
+
+```text
+catch {}
+catch (_) {}
+except: pass
+except Exception: pass
+console.log(error)
+```
+
+Review each one individually.
+
+For each occurrence determine:
+
+```text
+Expected error?
+or
+Hidden real failure?
+```
+
+Fix hidden failures.
+
+---
+
+# 52. PHASE 51 – RESOURCE LEAK TESTING
+
+Repeatedly perform:
+
+```text
+Open workspace
+Close workspace
+Start sidecar
+Stop sidecar
+Run inference
+Restart sidecar
+```
+
+Check for:
+
+```text
+Increasing process count
+Memory growth
+Unreleased ports
+Unclosed files
+```
+
+---
+
+# 53. PHASE 52 – LONG-RUNNING TEST
+
+Run a long test involving:
+
+```text
+Repeated inference
+Repeated saves
+Training progress
+Metric updates
+Sidecar communication
+```
+
+Observe:
+
+```text
+Memory
+CPU
+GPU memory
+Process count
+Errors
+State consistency
+```
+
+---
+
+# 54. PHASE 53 – REFERENCE SCIENTIFIC EXPERIMENTS
+
+Create at least three small reference experiments.
+
+## Experiment A – MLP
+
+Synthetic classification.
+
+```text
+Input
+ ↓
+Linear
+ ↓
+ReLU
+ ↓
+Linear
+```
+
+---
+
+## Experiment B – CNN
+
+Small image/synthetic image task.
+
+```text
+Input
+ ↓
+Conv
+ ↓
+Activation
+ ↓
+Pooling
+ ↓
+Linear
+```
+
+---
+
+## Experiment C – Multi-input
+
+```text
+Input A ─┐
+         ├→ Merge → Classifier
+Input B ─┘
+```
+
+Each experiment must produce:
+
+```text
+Graph
+Dataset configuration
+Training configuration
+Generated code
+Checkpoint
+Metrics
+Logs
+Metadata
+```
+
+---
+
+# 55. PHASE 54 – HAND-WRITTEN PYTORCH COMPARISON
+
+For at least one reference model, create an equivalent manually written PyTorch implementation.
+
+Compare:
+
+```text
+Architecture
+Parameter count
+Input shape
+Output shape
+Forward behavior
+Loss behavior
+Gradient behavior
+```
+
+Where operations are mathematically equivalent, compare outputs using appropriate PyTorch numerical assertions.
+
+---
+
+# 56. PHASE 55 – PARAMETER COUNT
+
+For generated models:
+
+```text
+Total parameters
+Trainable parameters
+```
+
+must be calculable.
+
+Compare against known/reference implementations for test models.
+
+---
+
+# 57. PHASE 56 – DEVICE TESTS
+
+Test CPU.
+
+If CUDA hardware is available, test CUDA.
+
+If unavailable:
+
+```text
+SKIPPED – CUDA unavailable
+```
+
+Do not claim CUDA compatibility merely because the code contains a CUDA option.
+
+---
+
+# 58. PHASE 57 – DTYPE TESTS
+
+Where supported, test relevant dtypes such as:
+
+```text
+float32
+float64
+```
+
+Add other dtypes only where the existing project intends to support them.
+
+Do not promise unsupported dtype combinations.
+
+---
+
+# 59. PHASE 58 – EXPERIMENT ARTIFACT STRUCTURE
+
+A successful experiment should produce a reconstructable artifact.
+
+Example:
+
+```text
+experiment/
+├── metadata.json
+├── graph.json
+├── model.py
+├── config.json
+├── dataset.json
+├── metrics.jsonl
+├── logs/
+└── checkpoints/
+```
+
+Adapt this to the existing project architecture.
+
+Do not duplicate information unnecessarily.
+
+---
+
+# 60. PHASE 59 – SCIENTIFIC RUN MANIFEST
+
+Create a machine-readable manifest containing, where available:
+
+```json
+{
+  "experimentId": "...",
+  "gitCommit": "...",
+  "graphHash": "...",
+  "datasetHash": "...",
+  "configHash": "...",
+  "seed": 1234,
+  "software": {},
+  "hardware": {},
+  "createdAt": "..."
+}
+```
+
+Use the project's existing metadata structures if appropriate.
+
+---
+
+# 61. PHASE 60 – GIT STATE
+
+Record:
+
+```text
+Git commit
+Working tree clean/dirty
+```
+
+If the experiment uses uncommitted source changes, record that fact.
+
+Never falsely claim an experiment is reproducible from a Git commit if uncommitted changes were involved.
+
+---
+
+# 62. PHASE 61 – GENERATED CODE ARTIFACT
+
+Save the exact generated model code used by the experiment.
+
+This is important because the code generator itself may change in the future.
+
+The historical experiment must retain the exact generated code.
+
+---
+
+# 63. PHASE 62 – SOFTWARE ENVIRONMENT
+
+Record:
+
+```text
+Operating system
+Python
+PyTorch
+CUDA
+Node
+Rust
+Relevant package versions
+GPU
+```
+
+as available.
+
+---
+
+# 64. PHASE 63 – HASHING
+
+Use stable hashes for:
+
+```text
+Graph
+Configuration
+Dataset identity
+Generated model
+```
+
+The purpose is to determine whether two experiments actually used identical inputs/configuration.
+
+---
+
+# 65. PHASE 64 – PROPERTY TESTING
+
+Where practical, test properties rather than only individual examples.
+
+Important properties:
+
+```text
+Valid graph → accepted
+Invalid graph → rejected
+Valid graph → generated code executes
+Same graph → same generated code
+Predicted shape == actual shape
+Invalid mutation → no graph corruption
+```
+
+---
+
+# 66. PHASE 65 – RANDOM GRAPH TESTING
+
+Create controlled random valid graphs.
+
+Generate hundreds of small cases if practical.
+
+For every valid graph:
+
+```text
+Validate
+ ↓
+Infer shapes
+ ↓
+Generate code
+ ↓
+Execute model
+ ↓
+Forward
+ ↓
+Backward where applicable
+```
+
+Do not generate arbitrary impossible graphs and expect all of them to be valid.
+
+---
+
+# 67. PHASE 66 – INVALID GRAPH FUZZING
+
+Generate intentionally invalid graphs:
+
+```text
+Unknown node
+Unknown edge
+Missing node
+Duplicate edge
+Invalid parameter
+Negative dimension
+Invalid handle
+Incompatible shape
+```
+
+Expected:
+
+```text
+Clean rejection
+```
+
+Not:
+
+```text
+Crash
+Hang
+Memory leak
+Silent acceptance
+Incorrect model
+```
+
+---
+
+# 68. PHASE 67 – TEST PYRAMID
+
+Organize tests into:
+
+```text
+Unit
+Contract
+Integration
+E2E
+Scientific
+Remote
+Hardware
+```
+
+Prefer many fast unit tests.
+
+Use fewer expensive E2E tests.
+
+---
+
+# 69. PHASE 68 – CONTRACT TESTS
+
+Test boundaries:
+
+```text
+Frontend ↔ Torch sidecar
+Frontend ↔ LLM sidecar
+Frontend ↔ Rust
+Rust ↔ filesystem
+Rust ↔ SSH
+Training ↔ generated code
+```
+
+For each:
+
+```text
+Valid request
+Invalid request
+Expected response
+Expected error
+Timeout
+```
+
+---
+
+# 70. PHASE 69 – CI
+
+If the project does not already have sufficient CI, add a minimal reliable CI pipeline.
+
+At minimum:
+
+```text
+Install
+Build
+Lint
+Codegen verification
+Sidecar verification
+Training generation verification
+Rust check
+Python tests
+```
+
+CI must not require private credentials for ordinary tests.
+
+---
+
+# 71. PHASE 70 – CI DETERMINISM
+
+Tests should not depend unnecessarily on:
+
+```text
+Current time
+Random values
+External internet
+Private accounts
+Claude credentials
+SSH credentials
+SLURM
+Private datasets
+```
+
+Integration tests requiring these resources must be clearly separated.
+
+---
+
+# 72. PHASE 71 – TEST TIMEOUTS
+
+External operations must have timeouts.
+
+Especially:
+
+```text
+HTTP
+SSE
+SSH
+SFTP
+SLURM
+Sidecars
+Training processes
+```
+
+No automated test should hang indefinitely.
+
+---
+
+# 73. PHASE 72 – RETRY LOGIC
+
+Retries must have:
+
+```text
+Maximum attempts
+Backoff
+Timeout
+Final failure state
+```
+
+Never implement infinite retry loops.
+
+---
+
+# 74. PHASE 73 – EXPERIMENT RESULT INTEGRITY
+
+Only mark a run:
+
+```text
+SUCCESS
+```
+
+when appropriate required artifacts exist:
+
+```text
+Valid exit status
+Metrics
+Required metadata
+Expected checkpoint
+Logs
+```
+
+If training failed but generated partial artifacts:
+
+```text
+FAILED
+```
+
+not:
+
+```text
+SUCCESS
+```
+
+---
+
+# 75. PHASE 74 – FAILED RUNS AND RESUME
+
+If a failed run has a valid checkpoint, distinguish:
+
+```text
+FAILED
+```
+
+from:
+
+```text
+RESUMABLE
+```
+
+where appropriate.
+
+Do not automatically resume without explicit user intent.
+
+---
+
+# 76. PHASE 75 – OFFLINE CORE FUNCTIONALITY
+
+Where the architecture allows it, verify that core functionality does not unnecessarily depend on Claude/network access.
+
+If Claude is unavailable:
+
+```text
+Graph editing
+Validation
+Shape inference
+Code generation
+Local training
+```
+
+should remain available where designed to be local.
+
+---
+
+# 77. PHASE 76 – CLAUDE FAILURE
+
+Test:
+
+```text
+Claude unavailable
+Claude timeout
+Malformed Claude response
+Invalid Claude tool arguments
+Claude proposes invalid graph
+```
+
+The application must fail safely.
+
+---
+
+# 78. PHASE 77 – SECURITY REVIEW
+
+Perform a focused security review of:
+
+```text
+Command injection
+Path traversal
+Python code injection
+Unsafe deserialization
+Subprocess handling
+SSH command construction
+LLM/MCP tool access
+Workspace access
+Local HTTP sidecars
+Secrets
+Logs
+```
+
+---
+
+# 79. PHASE 78 – LOCALHOST SERVICES
+
+Check all local HTTP services.
+
+Verify:
+
+```text
+Bind address
+CORS
+Input validation
+Authentication requirements where appropriate
+```
+
+Do not expose a service on:
+
+```text
+0.0.0.0
+```
+
+unless there is an explicit reason.
+
+---
+
+# 80. PHASE 79 – DEPENDENCY SECURITY
+
+Review:
+
+```bash
+npm audit
+```
+
+and the equivalent security checks for Python/Rust dependencies.
+
+Do not blindly upgrade every dependency.
+
+For each security-relevant update:
+
+```text
+Update
+→ run tests
+→ verify compatibility
+```
+
+---
+
+# 81. PHASE 80 – DOCUMENTATION
+
+Create or update:
+
+```text
+docs/engineering/
+```
+
+with:
+
+```text
+ARCHITECTURE.md
+BASELINE.md
+RISK_REGISTER.md
+TEST_MATRIX.md
+REPRODUCIBILITY.md
+FAILURE_RECOVERY.md
+REMOTE_TRAINING.md
+LIMITATIONS.md
+```
+
+Documentation must describe the actual behavior of the system.
+
+Do not document intended behavior as if it were already implemented.
+
+---
+
+# 82. PHASE 81 – KNOWN LIMITATIONS
+
+Create:
+
+```text
+docs/engineering/LIMITATIONS.md
+```
+
+Document honestly:
+
+```text
+Nondeterministic PyTorch operations
+CUDA limitations
+Unsupported layers
+Unsupported dataset types
+Remote execution limitations
+SLURM limitations
+Platform limitations
+Claude dependency
+Known performance limitations
+```
+
+---
+
+# 83. PHASE 82 – FINAL FULL TEST SUITE
+
+Run all available project verification commands.
+
+At minimum investigate and execute:
+
+```bash
+npm run build
+npm run lint
+npm run verify:codegen
+npm run verify:sidecar
+npm run verify:traingen
+```
+
+and:
+
+```bash
+cd src-tauri
+cargo check
+cd ..
+```
+
+plus:
+
+```text
+All unit tests
+All integration tests
+All persistence tests
+All scientific smoke tests
+All recovery tests
+All security tests
+All available fuzz/property tests
+```
+
+---
+
+# 84. FINAL RELEASE GATE
+
+The repository may only be described as:
+
+```text
+Production Ready for Scientific Work
+```
+
+if all applicable CRITICAL requirements pass.
+
+---
+
+## Code
+
+* [ ] TypeScript build passes
+* [ ] Lint passes
+* [ ] Rust checks pass
+* [ ] Python tests pass
+* [ ] No known CRITICAL bugs
+
+---
+
+## Graph
+
+* [ ] Graph invariants are enforced
+* [ ] Invalid mutations are rejected
+* [ ] Persistence roundtrip works
+* [ ] Corrupt files fail safely
+* [ ] Concurrent mutations are safe
+
+---
+
+## Code Generation
+
+* [ ] Code generation is deterministic
+* [ ] Golden tests exist
+* [ ] Generated code compiles
+* [ ] Generated code imports
+* [ ] Generated models instantiate
+* [ ] Forward pass works
+* [ ] Backward pass works
+* [ ] Gradient tests exist
+
+---
+
+## Shape Inference
+
+* [ ] Positive tests
+* [ ] Negative tests
+* [ ] Multi-input tests
+* [ ] Multi-output tests
+* [ ] Shape mismatch detection
+* [ ] Stale-response protection
+* [ ] Failed inference cannot silently produce a valid state
+
+---
+
+## Sidecars
+
+* [ ] Startup tested
+* [ ] Shutdown tested
+* [ ] Restart tested
+* [ ] Invalid requests tested
+* [ ] Timeout tested
+* [ ] Crash recovery tested
+* [ ] Error states are visible
+
+---
+
+## Training
+
+* [ ] Seed handling
+* [ ] Training snapshot
+* [ ] Checkpointing
+* [ ] Resume
+* [ ] NaN/Inf detection
+* [ ] Failure state
+* [ ] Success state
+* [ ] Cancellation
+* [ ] Metric correctness
+* [ ] Artifact integrity
+
+---
+
+## Scientific Reproducibility
+
+* [ ] Git commit recorded
+* [ ] Dirty Git state recorded
+* [ ] Graph stored
+* [ ] Generated model stored
+* [ ] Training configuration stored
+* [ ] Dataset identity stored
+* [ ] Dataset split stored
+* [ ] Seed stored
+* [ ] Software versions stored
+* [ ] Hardware information stored
+* [ ] Experiment manifest stored
+
+---
+
+## Remote Execution
+
+* [ ] SSH failure handling
+* [ ] SSH reconnect
+* [ ] SFTP failure handling
+* [ ] SLURM submission
+* [ ] SLURM status tracking
+* [ ] SLURM failure handling
+* [ ] Job ID persistence
+* [ ] Application restart recovery
+
+---
+
+## Security
+
+* [ ] No known command injection
+* [ ] No known path traversal
+* [ ] No unsafe Python execution
+* [ ] Unsafe deserialization reviewed
+* [ ] No secrets in logs
+* [ ] Local services are appropriately bound
+* [ ] LLM/MCP actions are validated
+
+---
+
+# 85. CRITICAL STOP CONDITIONS
+
+The agent must **not** declare the project production-ready if any of the following remain possible:
+
+```text
+Data can be silently corrupted.
+
+A wrong model can be generated and accepted as valid.
+
+Shape inference can silently be wrong.
+
+A failed training run can be reported as successful.
+
+A corrupted checkpoint can be silently accepted.
+
+Dataset leakage can occur without detection where the system claims to manage the split.
+
+A stale asynchronous response can overwrite current state.
+
+An invalid graph can become the authoritative graph.
+
+A remote job can be reported with an incorrect final status.
+
+A running experiment can be silently changed by later UI edits.
+
+An experiment cannot be reconstructed from its artifacts.
+
+Critical security vulnerabilities remain unresolved.
+```
+
+---
+
+# 86. BUG SEVERITY
+
+## CRITICAL
+
+Affects scientific correctness, data integrity, security, or experiment validity.
+
+Examples:
+
+```text
+Wrong generated architecture
+Wrong labels
+Dataset leakage
+Wrong metric
+Corrupt checkpoint
+False successful training
+Silent graph corruption
+Wrong experiment configuration
+```
+
+Must be fixed before release.
+
+---
+
+## HIGH
+
+Can cause major operational failure.
+
+Examples:
+
+```text
+Training lost
+SSH recovery broken
+SLURM state incorrect
+Sidecar crash
+Persistence failure
+Race condition
+```
+
+Must normally be fixed before release.
+
+---
+
+## MEDIUM
+
+Clear defect but unlikely to silently invalidate scientific results.
+
+---
+
+## LOW
+
+Cosmetic or convenience issue.
+
+May be deferred.
+
+---
+
+# 87. BUG FIX PROCEDURE
+
+For every confirmed bug:
+
+```text
+1. Reproduce.
+2. Add failing regression test.
+3. Identify root cause.
+4. Apply minimal correct fix.
+5. Run regression test.
+6. Run surrounding tests.
+7. Run full relevant suite.
+8. Document the fix.
+9. Update RISK_REGISTER.md.
+```
+
+---
+
+# 88. DO NOT OVER-REFACTOR
+
+Prefer:
+
+```text
+Small fix
++
+Regression test
+```
+
+over:
+
+```text
+Large rewrite
++
+No clear proof of correctness
+```
+
+Preserve existing architecture unless a change is required for correctness, reliability, security, or reproducibility.
+
+---
+
+# 89. DO NOT ADD FEATURES DURING HARDENING
+
+Do not add unrelated:
+
+```text
+New layer types
+New UI systems
+Major redesigns
+Animations
+Experimental features
+Unnecessary dependency upgrades
+```
+
+during this hardening project.
+
+A new feature is allowed only when directly required for:
+
+```text
+Correctness
+Testing
+Reproducibility
+Security
+Error handling
+Recovery
+```
+
+---
+
+# 90. FINAL RELIABILITY REPORT
+
+Create:
+
+```text
+docs/engineering/FINAL_RELIABILITY_REPORT.md
+```
+
+The report must contain:
+
+## 90.1 Executive Summary
+
+Use exactly one:
+
+```text
+PASS
+CONDITIONAL
+FAIL
+```
+
+---
+
+## 90.2 Environment
+
+Record:
+
+```text
+OS
+CPU
+RAM
+GPU
+CUDA
+Python
+PyTorch
+Node
+Rust
+Git commit
+```
+
+---
+
+## 90.3 Test Results
+
+Use a table:
+
+| Test                | Result    | Duration | Notes |
+| ------------------- | --------- | -------: | ----- |
+| Build               | PASS/FAIL |          |       |
+| Lint                | PASS/FAIL |          |       |
+| Codegen             | PASS/FAIL |          |       |
+| Sidecar             | PASS/FAIL |          |       |
+| Training generation | PASS/FAIL |          |       |
+| Rust                | PASS/FAIL |          |       |
+| Unit                | PASS/FAIL |          |       |
+| Integration         | PASS/FAIL |          |       |
+| Scientific smoke    | PASS/FAIL |          |       |
+| Persistence         | PASS/FAIL |          |       |
+| Recovery            | PASS/FAIL |          |       |
+| Security            | PASS/FAIL |          |       |
+| Fuzz/property       | PASS/FAIL |          |       |
+
+---
+
+## 90.4 Bugs Fixed
+
+For every bug:
+
+```text
+Bug ID
+Description
+Root cause
+Fix
+Regression test
+Severity
+```
+
+---
+
+## 90.5 Remaining Risks
+
+List every known remaining risk.
+
+Do not hide weaknesses.
+
+---
+
+## 90.6 Reproducibility Assessment
+
+Explain:
+
+```text
+What is deterministic?
+What is partially deterministic?
+What is nondeterministic?
+What metadata is stored?
+What is required to reproduce an experiment?
+```
+
+---
+
+# 91. FINAL ARCHITECTURE TARGET
+
+The hardened architecture should follow this conceptual flow:
+
+```text
+                    USER
+                     |
+                     v
+               ┌───────────┐
+               │ Graph UI  │
+               └─────┬─────┘
+                     |
+                     v
+              ┌──────────────┐
+              │ Graph Store  │
+              └──────┬───────┘
+                     |
+                     v
+              ┌──────────────┐
+              │   Validate   │
+              └──────┬───────┘
+                     |
+                     v
+             ┌─────────────────┐
+             │ Shape Inference │
+             └───────┬─────────┘
+                     |
+                     v
+             ┌─────────────────┐
+             │ Deterministic   │
+             │ Code Generation  │
+             └───────┬─────────┘
+                     |
+                     v
+             ┌─────────────────┐
+             │ Real PyTorch    │
+             │ Forward/Backward│
+             └───────┬─────────┘
+                     |
+                     v
+             ┌─────────────────┐
+             │ Experiment      │
+             │ Snapshot        │
+             └───────┬─────────┘
+                     |
+                     v
+             ┌─────────────────┐
+             │ Training        │
+             └───────┬─────────┘
+                     |
+              ┌──────┴──────┐
+              v             v
+        Checkpoints       Metrics
+              |             |
+              └──────┬──────┘
+                     v
+             ┌─────────────────┐
+             │ Reproducible    │
+             │ Experiment       │
+             │ Artifacts        │
+             └─────────────────┘
+```
+
+LLM interaction should follow:
+
+```text
+Claude
+   |
+   v
+Structured action
+   |
+   v
+Schema validation
+   |
+   v
+Graph validation
+   |
+   v
+Commit
+   |
+   v
+Shape inference
+   |
+   v
+Code generation
+```
+
+Claude must not bypass validation.
+
+---
+
+# 92. FINAL WORKFLOW FOR THE AGENT
+
+For every phase use:
+
+```text
+PHASE START
+    ↓
+Read relevant code
+    ↓
+Identify existing behavior
+    ↓
+Run existing tests
+    ↓
+Write focused test
+    ↓
+Reproduce problem
+    ↓
+Implement minimal fix
+    ↓
+Run focused test
+    ↓
+Run related tests
+    ↓
+Run full regression suite
+    ↓
+Update documentation
+    ↓
+Update risk register
+    ↓
+PHASE COMPLETE
+```
+
+Never skip directly from:
+
+```text
+Read
+```
+
+to:
+
+```text
+Rewrite
+```
+
+---
+
+# 93. PRIORITY IF COMPUTE/TIME IS LIMITED
+
+If the environment is limited and not everything can be executed simultaneously, prioritize:
+
+```text
+1. Graph validation
+2. Shape inference
+3. Deterministic code generation
+4. Generated-model execution
+5. Training correctness
+6. Checkpoint correctness
+7. Dataset integrity
+8. Experiment reproducibility
+9. Async/race correctness
+10. Sidecar reliability
+11. Remote execution
+12. Security
+13. Performance
+14. UI polish
+```
+
+The first eight are the most important for scientific correctness.
+
+---
+
+# 94. FINAL DEFINITION OF DONE
+
+The project is complete only when an independent developer can:
+
+```text
+1. Clone the repository.
+2. Install the documented environment.
+3. Run the test suite.
+4. Obtain passing results.
+5. Create a reference experiment.
+6. Run the experiment.
+7. Obtain model code, configuration, metrics and checkpoint artifacts.
+8. Identify the exact Git commit.
+9. Identify the dataset/configuration used.
+10. Reload the checkpoint.
+11. Reconstruct the experiment.
+12. Understand all remaining limitations.
+```
+
+The ultimate requirement is:
+
+> **SpinoML must not silently produce scientifically invalid results while claiming that the experiment succeeded.**
+
+A crash is preferable to a silent incorrect scientific result.
+
+An explicit `FAILED` state is preferable to a false `SUCCESS`.
+
+An explicit `UNKNOWN` state is preferable to an invented value.
+
+An explicit reproducibility limitation is preferable to a false reproducibility claim.
+
+---
+
+# 95. FINAL INSTRUCTION TO THE CODING AGENT
+
+Start with **PHASE 0**.
+
+Do not begin by changing source code.
+
+First:
+
+```text
+Clone/download the repository.
+Install the complete environment.
+Verify all dependencies.
+Run the existing test and verification commands.
+Record the exact baseline.
+```
+
+Then proceed through the phases sequentially.
+
+After every phase:
+
+```text
+Run tests.
+Fix failures.
+Add regression tests.
+Document results.
+```
+
+Do not declare success based on intuition.
+
+Do not declare production readiness based only on the README.
+
+Do not assume existing tests are sufficient.
+
+Do not hide failures.
+
+Do not remove functionality merely to make tests pass.
+
+The final standard is:
+
+> **Scientifically trustworthy, reproducible, fail-safe, test-backed software — not merely software that builds.**
+

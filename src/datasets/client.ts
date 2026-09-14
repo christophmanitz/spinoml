@@ -26,6 +26,24 @@ export async function statsDataset(abspath: string) {
   return post<StatsResult>('/dataset/stats', { abspath })
 }
 
+export type RunScriptResult = {
+  ok: boolean
+  mode?: 'shell' | 'slurm'
+  code?: number
+  stdout?: string
+  stderr?: string
+  job_id?: string | null
+  timed_out?: boolean
+  error?: string
+}
+
+/** Run a data-pipeline script in the workspace WITHOUT the chatbot — the torch
+ *  sidecar (local, or the HPC one via the tunnel) writes `code` to <root>/<relpath>
+ *  and runs it (shell now, or sbatch for slurm), returning captured output. */
+export async function runWorkspaceScript(root: string, relpath: string, code: string, mode: 'shell' | 'slurm') {
+  return post<RunScriptResult>('/run_script', { root, relpath, code, mode })
+}
+
 export type InputOption = {
   features?: string[]; target?: string; field?: string
   // A whole-graph (Graph node) input: assemble a PyG Data from one source;

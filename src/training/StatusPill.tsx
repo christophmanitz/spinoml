@@ -2,11 +2,11 @@
 
 const STYLES: Record<string, string> = {
   queued: 'bg-[#2a2f36] text-[#9aa1a8]',
-  running: 'bg-[#13344f] text-[#6ab7ff]',
+  running: 'bg-[var(--accent-sel)] text-[var(--accent)]',
   done: 'bg-[#143d2a] text-[#5fd39a]',
   failed: 'bg-[#42191c] text-[#ff7a85]',
   cancelled: 'bg-[#3d3414] text-[#e6c34a]',
-  unknown: 'bg-[#2a2f36] text-[#7a8088]',
+  unknown: 'bg-[#2a2f36] text-[#6f767e]',
 }
 
 export default function StatusPill({ status, alive }: { status: string; alive?: boolean }) {

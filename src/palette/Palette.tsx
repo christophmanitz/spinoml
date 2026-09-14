@@ -29,8 +29,8 @@ export default function Palette() {
 
   return (
     <aside className="h-full overflow-y-auto p-2 text-sm">
-      <div className="mb-0.5 text-xs uppercase tracking-wide text-[#7a8088]">Layers</div>
-      <div className="mb-2 text-[10px] text-[#7a8088]">auf den Canvas ziehen</div>
+      <div className="mb-0.5 text-xs uppercase tracking-wide text-[#6f767e]">Layers</div>
+      <div className="mb-2 text-[10px] text-[#6f767e]">auf den Canvas ziehen</div>
       {LAYER_GROUPS.map((group) => {
         const color = colorForCategory(group.name)
         const isOpen = !collapsed.has(group.name)
@@ -52,7 +52,7 @@ export default function Palette() {
                 <CategoryIcon cat={group.name} />
               </span>
               <span className="flex-1 text-left">{group.name}</span>
-              <span className="rounded bg-[#1a1e22] px-1 text-[9px] text-[#7a8088]">{group.layers.length}</span>
+              <span className="rounded bg-[#1a1e22] px-1 text-[9px] text-[#6f767e]">{group.layers.length}</span>
             </button>
             {isOpen && (
               <div className="mt-1 flex flex-col gap-1 pl-[18px]">

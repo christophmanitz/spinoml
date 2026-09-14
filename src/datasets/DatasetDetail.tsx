@@ -39,16 +39,16 @@ export default function DatasetDetail({ relpath }: { relpath: string }) {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
       onClick={(e) => { if (e.target === e.currentTarget) close(null) }}
     >
-      <div className="flex h-full max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-[#1f2429] bg-[#0e1115] shadow-2xl">
+      <div className="flex h-full max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-[#1f2429] bg-[#0e1216] shadow-2xl">
         <div className="flex items-center gap-2 border-b border-[#1f2429] px-4 py-3">
           <span className={`rounded px-1.5 py-0.5 font-mono text-[11px] ${colorFor(kind)}`}>
             {iconFor(kind)}
           </span>
           <span className="flex-1 truncate text-sm text-[#e6e8eb]">{entry.name}</span>
-          <span className="text-[11px] text-[#7a8088]">{formatSize(entry.size_bytes)}</span>
+          <span className="text-[11px] text-[#6f767e]">{formatSize(entry.size_bytes)}</span>
           <button
             onClick={() => close(null)}
-            className="ml-2 rounded px-2 py-0.5 text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#e6e8eb]"
+            className="ml-2 rounded px-2 py-0.5 text-[#6f767e] hover:bg-[#1a1e22] hover:text-[#e6e8eb]"
             title="close (Esc)"
           >
             ×
@@ -63,7 +63,7 @@ export default function DatasetDetail({ relpath }: { relpath: string }) {
                 if (t === 'stats') void loadStats(relpath)
               }}
               className={`px-4 py-2 ${
-                tab === t ? 'border-b border-[#6ab7ff] text-[#e6e8eb]' : 'text-[#7a8088] hover:text-[#9aa1a8]'
+                tab === t ? 'border-b border-[var(--accent)] text-[#e6e8eb]' : 'text-[#6f767e] hover:text-[#9aa1a8]'
               }`}
             >
               {t === 'smoke' ? 'Smoke test' : t === 'overview' ? 'Overview' : 'Stats'}
@@ -71,7 +71,7 @@ export default function DatasetDetail({ relpath }: { relpath: string }) {
           ))}
         </div>
         <div className="min-h-0 flex-1 overflow-auto p-5 text-xs">
-          {inspect?.loading && <div className="text-[#7a8088]">inspecting…</div>}
+          {inspect?.loading && <div className="text-[#6f767e]">inspecting…</div>}
           {inspect?.error && <ErrorBox msg={inspect.error} />}
           {data && !data.ok && <InspectError data={data} />}
           {/* A broken/empty .manifest still gets the editor so it can be fixed/created. */}
@@ -127,7 +127,7 @@ function OverviewBody({ data, relpath }: { data: InspectResult; relpath: string 
     case 'pyg': return <PygOverview d={data} />
     case 'graph_folder': return <GraphFolderOverview d={data} />
     case 'manifest': return <ManifestOverview d={data} relpath={relpath} />
-    default: return <div className="text-[#7a8088]">Unbekanntes Format.</div>
+    default: return <div className="text-[#6f767e]">Unbekanntes Format.</div>
   }
 }
 
@@ -143,7 +143,7 @@ function UseAsInputButton({ shape, label }: { shape: number[]; label?: string })
       }}
       disabled={!has}
       title={has ? 'set shape on the Input node' : 'no Input node in graph'}
-      className="rounded border border-[#2a3038] bg-[#1a1e22] px-2 py-0.5 text-[10px] text-[#9aa1a8] hover:border-[#6ab7ff] hover:text-[#e6e8eb] disabled:opacity-40"
+      className="rounded border border-[#2a3038] bg-[#1a1e22] px-2 py-0.5 text-[10px] text-[#9aa1a8] hover:border-[var(--accent)] hover:text-[#e6e8eb] disabled:opacity-40"
     >
       {label ?? `Use [${shape.join(', ')}] as input`}
     </button>
@@ -158,7 +158,7 @@ function TabularOverview({ d, relpath: _relpath }: { d: TabularInspect; relpath:
       </div>
       <div className="overflow-x-auto">
         <table className="text-[10px]">
-          <thead className="text-[#7a8088]">
+          <thead className="text-[#6f767e]">
             <tr>
               {d.columns.map((c, i) => (
                 <th key={c} className="border-b border-[#1f2429] px-2 py-1 text-left">
@@ -203,17 +203,17 @@ function ImageOverview({ d, relpath: _relpath }: { d: ImageFolderInspect; relpat
               alt={t.name}
               className="h-16 w-16 rounded border border-[#1f2429] object-cover"
             />
-            <span className="text-[9px] text-[#7a8088]">{t.name.split('/')[0]}</span>
+            <span className="text-[9px] text-[#6f767e]">{t.name.split('/')[0]}</span>
           </div>
         ))}
       </div>
       <div>
-        <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">classes</div>
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">classes</div>
         <div className="space-y-0.5">
           {d.classes.map((c) => (
             <div key={c.name} className="flex items-center justify-between">
               <span className="text-[#e6e8eb]">{c.name}</span>
-              <span className="text-[#7a8088]">{c.count}</span>
+              <span className="text-[#6f767e]">{c.count}</span>
             </div>
           ))}
         </div>
@@ -230,7 +230,7 @@ function TensorOverview({ d, relpath: _relpath }: { d: TensorInspect; relpath: s
         <div className="text-[#9aa1a8]">PyTorch-Geometric-Graph · {d.num_nodes} Knoten · {d.num_edges} Kanten</div>
         <GraphFieldTable fields={d.fields ?? []} />
         {d.x_preview && <XPreviewView x={d.x_preview} />}
-        <div className="text-[10px] text-[#7a8088]">
+        <div className="text-[10px] text-[#6f767e]">
           Binde an GNN-Inputs mit passendem <strong>Namen</strong> (<code>x</code>, <code>edge_index</code>,{' '}
           <code>edge_attr</code>, …) — jeder Input zieht das gleichnamige Feld.
         </div>
@@ -246,18 +246,18 @@ function TensorOverview({ d, relpath: _relpath }: { d: TensorInspect; relpath: s
         </div>
       )}
       {d.mean != null && (
-        <div className="text-[#7a8088]">
+        <div className="text-[#6f767e]">
           mean {d.mean.toFixed(4)} · min {d.min?.toFixed(4)} · max {d.max?.toFixed(4)}
         </div>
       )}
       {d.container === 'dict' && d.keys && (
         <div>
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">keys</div>
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">keys</div>
           <div className="space-y-0.5">
             {d.keys.map((k) => (
               <div key={k.key} className="flex justify-between">
                 <span className="text-[#e6e8eb]">{k.key}</span>
-                <span className="text-[#7a8088]">
+                <span className="text-[#6f767e]">
                   {k.shape ? `[${k.shape.join(', ')}]` : k.dtype}
                 </span>
               </div>
@@ -267,11 +267,11 @@ function TensorOverview({ d, relpath: _relpath }: { d: TensorInspect; relpath: s
       )}
       {d.container === 'npz' && d.arrays && (
         <div>
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">arrays</div>
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">arrays</div>
           {Object.entries(d.arrays).map(([k, v]) => (
             <div key={k} className="flex justify-between">
               <span className="text-[#e6e8eb]">{k}</span>
-              <span className="text-[#7a8088]">[{v.join(', ')}]</span>
+              <span className="text-[#6f767e]">[{v.join(', ')}]</span>
             </div>
           ))}
         </div>
@@ -290,11 +290,11 @@ function ProteinOverview({ d, relpath: _relpath }: { d: ProteinInspect; relpath:
       <div className="text-[10px] text-[#5a6068]">parser: {d.parser}</div>
       {d.chain_info && (
         <div>
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">chains</div>
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">chains</div>
           {d.chain_info.map((c) => (
             <div key={c.id} className="flex justify-between">
               <span className="text-[#e6e8eb]">{c.id || '(empty)'}</span>
-              <span className="text-[#7a8088]">{c.residues} res · {c.atoms} atm</span>
+              <span className="text-[#6f767e]">{c.residues} res · {c.atoms} atm</span>
             </div>
           ))}
         </div>
@@ -311,7 +311,7 @@ function MoleculeOverview({ d, relpath: _relpath }: { d: MoleculeInspect; relpat
         {d.n_molecules.toLocaleString()} SMILES · parser: {d.parser}
       </div>
       <div>
-        <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">head</div>
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">head</div>
         <div className="space-y-0.5 font-mono text-[10px]">
           {d.head.slice(0, 8).map((s, i) => (
             <div key={i} className="truncate text-[#e6e8eb]">{s}</div>
@@ -320,26 +320,26 @@ function MoleculeOverview({ d, relpath: _relpath }: { d: MoleculeInspect; relpat
       </div>
       {d.sample_info && d.sample_info.some((m) => m.valid) && (
         <div>
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">rdkit info</div>
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">rdkit info</div>
           {d.sample_info.filter((m) => m.valid).slice(0, 4).map((m, i) => (
             <div key={i} className="flex justify-between text-[10px]">
               <span className="truncate font-mono text-[#e6e8eb]">{m.canonical ?? m.smiles}</span>
-              <span className="ml-2 text-[#7a8088]">{m.atoms}a · {m.bonds}b · MW {m.mw}</span>
+              <span className="ml-2 text-[#6f767e]">{m.atoms}a · {m.bonds}b · MW {m.mw}</span>
             </div>
           ))}
         </div>
       )}
       {d.graph0 && (
         <div>
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">
             erste Struktur als Graph · {d.graph0.n_nodes} Atome
           </div>
           <NodeLinkGraph edges={d.graph0.edges} nNodes={d.graph0.n_nodes} hex="#a78bfa" size={150} />
-          <div className="truncate font-mono text-[10px] text-[#7a8088]">{d.graph0.smiles}</div>
+          <div className="truncate font-mono text-[10px] text-[#6f767e]">{d.graph0.smiles}</div>
         </div>
       )}
       <UseAsInputButton shape={[1, 64]} label="Use [1, 64] byte-encoded as input" />
-      <div className="text-[10px] text-[#7a8088]">
+      <div className="text-[10px] text-[#6f767e]">
         Als Graph nutzbar (RDKit): binde dieselbe Datei an Inputs <code>x</code> (Atom-Merkmale),
         <code> edge_index</code> (Bindungen) und <code>batch</code> für ein GNN.
       </div>
@@ -351,22 +351,22 @@ function HfOverview({ d }: { d: HuggingfaceInspect }) {
   return (
     <div className="space-y-2">
       <div className="text-[#9aa1a8]"><code className="text-[#e6e8eb]">{d.name}</code></div>
-      {d.description && <div className="text-[#7a8088]">{d.description}</div>}
+      {d.description && <div className="text-[#6f767e]">{d.description}</div>}
       <div>
-        <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">splits</div>
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">splits</div>
         {Object.entries(d.splits).map(([k, v]) => (
           <div key={k} className="flex justify-between">
             <span className="text-[#e6e8eb]">{k}</span>
-            <span className="text-[#7a8088]">{v.num_examples?.toLocaleString() ?? '?'}</span>
+            <span className="text-[#6f767e]">{v.num_examples?.toLocaleString() ?? '?'}</span>
           </div>
         ))}
       </div>
       <div>
-        <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">features</div>
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">features</div>
         {Object.entries(d.features).map(([k, v]) => (
           <div key={k} className="flex justify-between text-[10px]">
             <span className="text-[#e6e8eb]">{k}</span>
-            <span className="ml-2 truncate text-[#7a8088]">{v}</span>
+            <span className="ml-2 truncate text-[#6f767e]">{v}</span>
           </div>
         ))}
       </div>
@@ -378,7 +378,7 @@ function XPreviewView({ x }: { x: { rows: number; cols: number; grid: number[][]
   const nCols = x.grid[0]?.length ?? 0
   return (
     <div>
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">
+      <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">
         Werte in x (erste {x.grid.length}/{x.rows} Knoten × {nCols}/{x.cols} Features)
       </div>
       <div className="max-h-48 overflow-auto rounded border border-[#1f2429]">
@@ -394,7 +394,7 @@ function XPreviewView({ x }: { x: { rows: number; cols: number; grid: number[][]
           <tbody>
             {x.grid.map((row, r) => (
               <tr key={r} className="odd:bg-[#0e1216]">
-                <td className="px-1.5 py-0.5 text-[#7a8088]">{r}</td>
+                <td className="px-1.5 py-0.5 text-[#6f767e]">{r}</td>
                 {row.map((v, c) => (
                   <td key={c} className="px-1.5 py-0.5 text-right text-[#e6e8eb]">{v}</td>
                 ))}
@@ -412,12 +412,12 @@ function GraphFieldTable({ fields }: { fields: GraphField[] }) {
   if (!fields.length) return null
   return (
     <div>
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">Felder pro Graph</div>
+      <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">Felder pro Graph</div>
       <div className="space-y-0.5 font-mono text-[10px]">
         {fields.map((f) => (
           <div key={f.name} className="flex justify-between">
             <span className="text-[#e6e8eb]">{f.name}</span>
-            <span className="text-[#7a8088]">[{f.shape.join(', ')}] · {f.dtype.replace('torch.', '')}</span>
+            <span className="text-[#6f767e]">[{f.shape.join(', ')}] · {f.dtype.replace('torch.', '')}</span>
           </div>
         ))}
       </div>
@@ -439,11 +439,11 @@ function GraphFolderOverview({ d }: { d: GraphFolderInspect }) {
       </div>
       {d.preview && d.preview.edges.length > 0 && (
         <div>
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">erster Graph ({d.example})</div>
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">erster Graph ({d.example})</div>
           <NodeLinkGraph edges={d.preview.edges} nNodes={d.preview.n_nodes} hex="#34d399" size={160} />
         </div>
       )}
-      <div className="text-[10px] text-[#7a8088]">
+      <div className="text-[10px] text-[#6f767e]">
         Datensatz = dieser Ordner. Binde ihn an GNN-Inputs mit passendem <strong>Namen</strong>{' '}
         (<code>x</code>, <code>edge_index</code>, <code>edge_attr</code>, <code>y</code>) — jeder Input zieht sein Feld.
       </div>
@@ -456,13 +456,13 @@ function PygOverview({ d }: { d: PygInspect }) {
     <div className="space-y-2">
       <div className="text-[#9aa1a8]"><code className="text-[#e6e8eb]">{d.name}</code></div>
       <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px]">
-        <span className="text-[#7a8088]">Graphen</span><span className="text-[#e6e8eb]">{d.num_graphs.toLocaleString()}</span>
-        <span className="text-[#7a8088]">Knoten</span><span className="text-[#e6e8eb]">{d.num_nodes.toLocaleString()}</span>
-        <span className="text-[#7a8088]">Kanten</span><span className="text-[#e6e8eb]">{d.num_edges.toLocaleString()}</span>
-        <span className="text-[#7a8088]">Merkmale/Knoten</span><span className="text-[#e6e8eb]">{d.num_node_features}</span>
-        <span className="text-[#7a8088]">Klassen</span><span className="text-[#e6e8eb]">{d.num_classes}</span>
+        <span className="text-[#6f767e]">Graphen</span><span className="text-[#e6e8eb]">{d.num_graphs.toLocaleString()}</span>
+        <span className="text-[#6f767e]">Knoten</span><span className="text-[#e6e8eb]">{d.num_nodes.toLocaleString()}</span>
+        <span className="text-[#6f767e]">Kanten</span><span className="text-[#e6e8eb]">{d.num_edges.toLocaleString()}</span>
+        <span className="text-[#6f767e]">Merkmale/Knoten</span><span className="text-[#e6e8eb]">{d.num_node_features}</span>
+        <span className="text-[#6f767e]">Klassen</span><span className="text-[#e6e8eb]">{d.num_classes}</span>
       </div>
-      <div className="text-[10px] text-[#7a8088]">
+      <div className="text-[10px] text-[#6f767e]">
         Als Graph nutzbar: binde dieselbe Datei an Inputs <code>x</code> (Knoten-Merkmale),
         <code> edge_index</code> (Kanten) und <code>batch</code> — jeder Input zieht sein Feld.
       </div>
@@ -534,7 +534,7 @@ function ManifestEditor({ relpath }: { relpath: string }) {
   const columns: string[] = tIns && tIns.ok && tIns.kind === 'tabular' ? tIns.columns : []
   const tableOptions = datasets.filter((e) => /\.(csv|tsv|parquet)$/i.test(e.name)).map((e) => e.name)
 
-  if (!cfg) return <div className="text-[10px] text-[#7a8088]">lädt…</div>
+  if (!cfg) return <div className="text-[10px] text-[#6f767e]">lädt…</div>
 
   const up = (patch: Partial<ManifestCfg>) => { setCfg({ ...cfg, ...patch }); setStatus('') }
   const upBranch = (i: number, patch: Partial<BranchCfg>) =>
@@ -556,7 +556,7 @@ function ManifestEditor({ relpath }: { relpath: string }) {
   const inp = 'rounded border border-[#1f2429] bg-[#0b0e11] px-1.5 py-1 text-[11px] text-[#e6e8eb]'
   return (
     <div className="space-y-2 rounded border border-[#1f2429] bg-[#0d1117] p-2">
-      <div className="text-[10px] uppercase tracking-wider text-[#7a8088]">Manifest bearbeiten</div>
+      <div className="text-[10px] uppercase tracking-wider text-[#6f767e]">Manifest bearbeiten</div>
 
       <label className="flex items-center gap-2 text-[11px] text-[#9aa1a8]">
         <span className="w-16 shrink-0">Tabelle</span>
@@ -567,7 +567,7 @@ function ManifestEditor({ relpath }: { relpath: string }) {
 
       <datalist id="mf-cols">{columns.map((c) => <option key={c} value={c} />)}</datalist>
 
-      <div className="text-[10px] uppercase tracking-wider text-[#7a8088]">Branches (= Encoder-Inputs)</div>
+      <div className="text-[10px] uppercase tracking-wider text-[#6f767e]">Branches (= Encoder-Inputs)</div>
       {cfg.branches.map((b, i) => (
         <div key={i} className="space-y-1 rounded border border-[#1f2429] bg-[#0b0e11] p-1.5">
           <div className="flex items-center gap-1">
@@ -594,7 +594,7 @@ function ManifestEditor({ relpath }: { relpath: string }) {
       ))}
       <button onClick={addBranch} className="rounded border border-[#1f2429] px-2 py-0.5 text-[11px] text-[#9aa1a8] hover:bg-[#13171b]">+ Branch</button>
 
-      <div className="text-[10px] uppercase tracking-wider text-[#7a8088]">Target</div>
+      <div className="text-[10px] uppercase tracking-wider text-[#6f767e]">Target</div>
       <div className="flex items-center gap-1">
         <input className={`${inp} flex-1`} list="mf-cols" value={cfg.target.column}
           onChange={(e) => up({ target: { ...cfg.target, column: e.target.value } })} placeholder="affinity" />
@@ -611,7 +611,7 @@ function ManifestEditor({ relpath }: { relpath: string }) {
       </label>
 
       <div className="flex items-center gap-2 pt-1">
-        <button onClick={() => void save()} className="rounded bg-[#13344f] px-3 py-1 text-[11px] text-[#6ab7ff] hover:bg-[#184466]">Speichern</button>
+        <button onClick={() => void save()} className="rounded bg-[var(--accent-sel)] px-3 py-1 text-[11px] text-[var(--accent)] hover:bg-[var(--accent-sel-hover)]">Speichern</button>
         {status && <span className="text-[10px] text-emerald-300/80">{status}</span>}
       </div>
     </div>
@@ -631,7 +631,7 @@ function ManifestOverview({ d, relpath }: { d: ManifestInspect; relpath: string 
       <div className="text-[#9aa1a8]">
         {d.n_rows.toLocaleString()} Paare · Tabelle <code className="text-[#e6e8eb]">{d.table}</code>
       </div>
-      <div className="text-[10px] text-[#7a8088]">
+      <div className="text-[10px] text-[#6f767e]">
         Jede Zeile koppelt {d.branches.map((b, i) => (
           <span key={b}><code className="text-[#c8cdd3]">{b}</code>{i < d.branches.length - 1 ? ' + ' : ''}</span>
         ))}{d.target ? <> → Ziel <code className="text-[#c8cdd3]">{d.target.column}</code> ({d.target.type})</> : ''}.
@@ -640,12 +640,12 @@ function ManifestOverview({ d, relpath }: { d: ManifestInspect; relpath: string 
       <ManifestEditor relpath={relpath} />
       {[...byBranch.entries()].map(([branch, slots]) => (
         <div key={branch}>
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">{branch}</div>
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">{branch}</div>
           <div className="space-y-0.5">
             {slots.map((s) => (
               <div key={s.field} className="flex items-center justify-between rounded bg-[#0b0e11] px-1.5 py-1 font-mono text-[10px]">
                 <span className="text-[#c8cdd3]">{s.field}</span>
-                <span className="text-[#7a8088]">[{s.shape.join(', ')}] · {s.dtype}</span>
+                <span className="text-[#6f767e]">[{s.shape.join(', ')}] · {s.dtype}</span>
               </div>
             ))}
           </div>
@@ -654,7 +654,7 @@ function ManifestOverview({ d, relpath }: { d: ManifestInspect; relpath: string 
       {d.target && (
         <div className="flex items-center justify-between rounded bg-[#0b0e11] px-1.5 py-1 font-mono text-[10px]">
           <span className="text-emerald-300/90">target</span>
-          <span className="text-[#7a8088]">{d.target.column} · {d.target.type}</span>
+          <span className="text-[#6f767e]">{d.target.column} · {d.target.type}</span>
         </div>
       )}
       {d.notes && d.notes.length > 0 && (
@@ -671,27 +671,27 @@ function ManifestOverview({ d, relpath }: { d: ManifestInspect; relpath: string 
 }
 
 function StatsBody({ loading, error, data, kind }: { loading?: boolean; error?: string | null; data: StatsResult | null; kind: string }) {
-  if (loading) return <div className="text-[#7a8088]">computing stats…</div>
+  if (loading) return <div className="text-[#6f767e]">computing stats…</div>
   if (error) return <ErrorBox msg={error} />
-  if (!data) return <div className="text-[#7a8088]">no stats yet</div>
+  if (!data) return <div className="text-[#6f767e]">no stats yet</div>
   if (!data.ok) return <ErrorBox msg={('error' in data && data.error) || 'stats failed'} />
   if (data.kind === 'tabular') return <TabularStatsView d={data as TabularStats} />
   if (data.kind === 'image_folder') return <ImageStatsView d={data as ImageFolderStats} />
   if (data.kind === 'tensor') return <TensorStatsView d={data as TensorStats} />
   if (data.kind === 'molecule') return <MoleculeStatsView d={data as MoleculeStats} />
-  return <div className="text-[#7a8088]">Stats für {kind} sind aktuell nur in der Übersicht.</div>
+  return <div className="text-[#6f767e]">Stats für {kind} sind aktuell nur in der Übersicht.</div>
 }
 
 function Bar({ frac, max = 1 }: { frac: number; max?: number }) {
   const pct = Math.max(0, Math.min(100, (frac / max) * 100))
   return (
     <div className="h-1.5 w-full overflow-hidden rounded bg-[#1a1e22]">
-      <div className="h-full bg-[#6ab7ff]/70" style={{ width: `${pct}%` }} />
+      <div className="h-full bg-[var(--accent)]/70" style={{ width: `${pct}%` }} />
     </div>
   )
 }
 
-function Hist({ counts, edges, color = '#6ab7ff' }: { counts: number[]; edges: number[]; color?: string }) {
+function Hist({ counts, edges, color = 'var(--accent)' }: { counts: number[]; edges: number[]; color?: string }) {
   const max = Math.max(...counts, 1)
   return (
     <div>
@@ -722,10 +722,10 @@ function TabularStatsView({ d }: { d: TabularStats }) {
           <div key={s.col} className="rounded border border-[#1f2429] p-2">
             <div className="flex items-baseline justify-between">
               <span className="text-[#e6e8eb]">{s.col}</span>
-              <span className="text-[10px] text-[#7a8088]">{s.dtype} · {s.unique} unique · {s.missing} missing</span>
+              <span className="text-[10px] text-[#6f767e]">{s.dtype} · {s.unique} unique · {s.missing} missing</span>
             </div>
             {s.mean != null && (
-              <div className="mt-0.5 text-[10px] text-[#7a8088]">
+              <div className="mt-0.5 text-[10px] text-[#6f767e]">
                 μ {s.mean.toFixed(3)} · σ {s.std?.toFixed(3)} · [{s.min?.toFixed(2)}, {s.max?.toFixed(2)}]
               </div>
             )}
@@ -735,7 +735,7 @@ function TabularStatsView({ d }: { d: TabularStats }) {
       </div>
       {d.corr && d.corr_cols.length > 0 && (
         <div>
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">correlations</div>
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">correlations</div>
           <CorrMatrix corr={d.corr} cols={d.corr_cols} />
         </div>
       )}
@@ -750,22 +750,22 @@ function CorrMatrix({ corr, cols }: { corr: number[][]; cols: string[] }) {
         <tr>
           <th className="px-1"></th>
           {cols.map((c) => (
-            <th key={c} className="rotate-[-30deg] px-1 text-[#7a8088]">{c}</th>
+            <th key={c} className="rotate-[-30deg] px-1 text-[#6f767e]">{c}</th>
           ))}
         </tr>
       </thead>
       <tbody>
         {corr.map((row, i) => (
           <tr key={i}>
-            <td className="pr-1 text-right text-[#7a8088]">{cols[i]}</td>
+            <td className="pr-1 text-right text-[#6f767e]">{cols[i]}</td>
             {row.map((v, j) => {
               const a = Math.abs(v)
               const bg = v >= 0
-                ? `rgba(106, 183, 255, ${a * 0.7})`
+                ? `rgba(36, 200, 219, ${a * 0.7})`
                 : `rgba(248, 113, 113, ${a * 0.7})`
               return (
                 <td key={j} className="border border-[#1f2429] text-center" style={{ background: bg, width: 28, height: 18 }}>
-                  <span className={a > 0.5 ? 'text-[#e6e8eb]' : 'text-[#7a8088]'}>{v.toFixed(2)}</span>
+                  <span className={a > 0.5 ? 'text-[#e6e8eb]' : 'text-[#6f767e]'}>{v.toFixed(2)}</span>
                 </td>
               )
             })}
@@ -781,13 +781,13 @@ function ImageStatsView({ d }: { d: ImageFolderStats }) {
   return (
     <div className="space-y-3">
       <div>
-        <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">class distribution</div>
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">class distribution</div>
         <div className="space-y-1">
           {d.classes.map((c) => (
             <div key={c.name}>
               <div className="flex justify-between text-[10px]">
                 <span className="text-[#e6e8eb]">{c.name}</span>
-                <span className="text-[#7a8088]">{c.count}</span>
+                <span className="text-[#6f767e]">{c.count}</span>
               </div>
               <Bar frac={c.count} max={max} />
             </div>
@@ -795,12 +795,12 @@ function ImageStatsView({ d }: { d: ImageFolderStats }) {
         </div>
       </div>
       <div>
-        <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">image sizes (sample of {d.n_samples_for_size})</div>
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">image sizes (sample of {d.n_samples_for_size})</div>
         <div className="space-y-0.5 text-[10px]">
           {d.size_hist.map((s) => (
             <div key={s.size} className="flex justify-between">
               <span className="text-[#e6e8eb]">{s.size}</span>
-              <span className="text-[#7a8088]">{s.count}</span>
+              <span className="text-[#6f767e]">{s.count}</span>
             </div>
           ))}
         </div>
@@ -813,7 +813,7 @@ function TensorStatsView({ d }: { d: TensorStats }) {
   return (
     <div className="space-y-2">
       {d.shape && <div className="text-[#9aa1a8]">shape [{d.shape.join(', ')}] · dtype {d.dtype}</div>}
-      <div className="text-[10px] text-[#7a8088]">
+      <div className="text-[10px] text-[#6f767e]">
         mean {d.mean?.toFixed(4)} · std {d.std?.toFixed(4)} · min {d.min?.toFixed(4)} · max {d.max?.toFixed(4)}
         {d.zeros_frac != null && ` · zeros ${(d.zeros_frac * 100).toFixed(1)}%`}
       </div>
@@ -825,17 +825,17 @@ function TensorStatsView({ d }: { d: TensorStats }) {
 function MoleculeStatsView({ d }: { d: MoleculeStats }) {
   return (
     <div className="space-y-3">
-      {d.note && <div className="text-[10px] text-[#7a8088]">{d.note}</div>}
+      {d.note && <div className="text-[10px] text-[#6f767e]">{d.note}</div>}
       {d.mw_mean != null && <div className="text-[#9aa1a8]">MW μ {d.mw_mean} · atoms μ {d.atom_mean}</div>}
       {d.mw_hist && (
         <div>
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">molecular weight</div>
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">molecular weight</div>
           <Hist counts={d.mw_hist.counts} edges={d.mw_hist.edges} color="#c084fc" />
         </div>
       )}
       {d.atom_hist && (
         <div>
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">atom count</div>
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">atom count</div>
           <Hist counts={d.atom_hist.counts} edges={d.atom_hist.edges} color="#c084fc" />
         </div>
       )}
@@ -870,18 +870,18 @@ function SmokeBody({
         Schickt einen Sample-Batch aus dem Datensatz durch das aktuelle Modell.
       </div>
       {inputShape && (
-        <div className="text-[10px] text-[#7a8088]">
+        <div className="text-[10px] text-[#6f767e]">
           input shape vom Graph: <code className="text-[#e6e8eb]">[{inputShape.join(', ')}]</code>
         </div>
       )}
       <button
         onClick={() => void runSmoke(relpath, inputShape ?? undefined)}
         disabled={loading || !hasModel}
-        className="rounded border border-[#2a3038] bg-[#1a1e22] px-2 py-1 text-[11px] text-[#e6e8eb] hover:border-[#6ab7ff] disabled:opacity-40"
+        className="rounded border border-[#2a3038] bg-[#1a1e22] px-2 py-1 text-[11px] text-[#e6e8eb] hover:border-[var(--accent)] disabled:opacity-40"
       >
         {loading ? 'running…' : 'Run smoke test'}
       </button>
-      {!hasModel && <div className="text-[10px] text-[#7a8088]">Zieh erst ein paar Layer auf den Canvas.</div>}
+      {!hasModel && <div className="text-[10px] text-[#6f767e]">Zieh erst ein paar Layer auf den Canvas.</div>}
       {error && <ErrorBox msg={error} />}
       {data && data.ok && (
         <div className="rounded border border-emerald-900/40 bg-emerald-900/10 p-2">
@@ -891,7 +891,7 @@ function SmokeBody({
             <div>output: <code className="text-[#e6e8eb]">{data.output_shape ? formatShape(data.output_shape) : '(non-tensor)'}</code></div>
             <div>params: {data.n_params.toLocaleString()}</div>
             <div>timings: sample {data.timings_ms.sample.toFixed(1)}ms · forward {data.timings_ms.forward.toFixed(1)}ms</div>
-            {data.sample_note && <div className="text-[#7a8088]">{data.sample_note}</div>}
+            {data.sample_note && <div className="text-[#6f767e]">{data.sample_note}</div>}
           </div>
         </div>
       )}
@@ -941,19 +941,19 @@ function SmokeError({
         <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[10px] text-[#9aa1a8]">
           {result.input_shape && (
             <>
-              <span className="text-[#7a8088]">tatsächlicher Input:</span>
+              <span className="text-[#6f767e]">tatsächlicher Input:</span>
               <code className="text-[#e6e8eb]">{formatShape(result.input_shape)}</code>
             </>
           )}
           {requestedShape && (
             <>
-              <span className="text-[#7a8088]">erwartete Input-Shape:</span>
+              <span className="text-[#6f767e]">erwartete Input-Shape:</span>
               <code className="text-[#e6e8eb]">[{requestedShape.join(', ')}]</code>
             </>
           )}
           {result.n_params != null && (
             <>
-              <span className="text-[#7a8088]">Modellgröße:</span>
+              <span className="text-[#6f767e]">Modellgröße:</span>
               <span className="text-[#9aa1a8]">{result.n_params.toLocaleString()} Params</span>
             </>
           )}
@@ -982,12 +982,12 @@ function SmokeError({
           <div>
             <button
               onClick={() => setShowTrace((s) => !s)}
-              className="text-[10px] text-[#7a8088] underline-offset-2 hover:text-[#9aa1a8] hover:underline"
+              className="text-[10px] text-[#6f767e] underline-offset-2 hover:text-[#9aa1a8] hover:underline"
             >
               {showTrace ? 'Stacktrace ausblenden' : 'Stacktrace anzeigen'}
             </button>
             {showTrace && (
-              <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap rounded bg-[#0b0d10]/60 p-2 text-[10px] leading-snug text-rose-200/80">
+              <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap rounded bg-[#0a0c0f]/60 p-2 text-[10px] leading-snug text-rose-200/80">
                 {result.trace}
               </pre>
             )}
@@ -1051,7 +1051,7 @@ function sampleNaturalShape(inspect: InspectResult | null | undefined): number[]
 function SmokeHistory({ entries }: { entries: SmokeHistoryEntry[] }) {
   return (
     <div className="mt-3 border-t border-[#1f2429] pt-2">
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-[#7a8088]">previous runs</div>
+      <div className="mb-1 text-[10px] uppercase tracking-wider text-[#6f767e]">previous runs</div>
       <div className="space-y-1">
         {entries.map((e, i) => (
           <div key={i} className="flex items-baseline gap-2 text-[10px]">

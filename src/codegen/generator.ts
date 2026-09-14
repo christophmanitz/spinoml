@@ -164,15 +164,20 @@ function buildClass(
   const issues: string[] = []
   const byId = new Map(nodes.map((n) => [n.id, n]))
 
+  const kindOf = (id: string) => LAYERS[byId.get(id)?.layerType ?? '']?.kind ?? 'module'
+
   const succ = new Map<string, string[]>()
   const pred = new Map<string, string[]>()
   for (const n of nodes) { succ.set(n.id, []); pred.set(n.id, []) }
   for (const e of edges) {
+    // A Manifest node is a data-layer DECLARATION (the pairing), not a forward
+    // source; input nodes (Input/Graph/Sequence) are forward-arg ROOTS. Skip edges
+    // FROM a manifest and edges INTO an input so neither perturbs the forward
+    // graph — the input still becomes a plain forward argument.
+    if (kindOf(e.source) === 'manifest' || kindOf(e.target) === 'input') continue
     succ.get(e.source)?.push(e.target)
     pred.get(e.target)?.push(e.source)
   }
-
-  const kindOf = (id: string) => LAYERS[byId.get(id)?.layerType ?? '']?.kind ?? 'module'
 
   // ─── Inputs ─────────────────────────────────────────────────────────────
   const inputNodes = nodes.filter((n) => kindOf(n.id) === 'input')
@@ -235,7 +240,9 @@ function buildClass(
 
   const reachable = new Set(order)
   for (const n of nodes) {
-    if (!reachable.has(n.id)) {
+    // DataOp nodes are data-stage, not model layers — a standalone one with no
+    // wiring is expected, so don't warn that it's unreachable.
+    if (!reachable.has(n.id) && kindOf(n.id) !== 'dataop' && kindOf(n.id) !== 'manifest') {
       issues.push(`Node ${n.id} (${n.layerType}) has no path from any Input — skipped.`)
     }
   }
@@ -272,6 +279,12 @@ function buildClass(
       varName.set(id, uniq('m_' + toSnake(n.layerType)))
     } else if (k === 'function') {
       varName.set(id, uniq('fx_' + toSnake(n.layerType)))
+    } else if (k === 'dataop') {
+      // Data-stage node: emits nothing into forward(). Alias its variable to its
+      // single predecessor so `Input → DataOp → Layer` stays a valid chain.
+      const p0 = (pred.get(id) ?? [])[0]
+      const pv = p0 ? varName.get(p0) : undefined
+      if (pv) varName.set(id, pv)
     }
   }
 
@@ -358,6 +371,9 @@ function buildClass(
     const spec = LAYERS[n.layerType]
     const k = kindOf(id)
     if (k === 'input') continue
+    // DataOp is a data-stage passthrough — its var was aliased to its predecessor
+    // above; it contributes no forward line.
+    if (k === 'dataop') continue
     if (!spec) continue
     const preds = (pred.get(id) ?? []).map((pid) => varName.get(pid)).filter((v): v is string => !!v)
     if (k === 'module' && spec.pytorchModule) {
@@ -433,7 +449,7 @@ function buildClass(
   // ─── return statement ───────────────────────────────────────────────────
   let returnLine: string
   if (outputCollect.length === 0) {
-    const sinks = order.filter((id) => kindOf(id) !== 'input' && (succ.get(id) ?? []).length === 0)
+    const sinks = order.filter((id) => kindOf(id) !== 'input' && kindOf(id) !== 'dataop' && (succ.get(id) ?? []).length === 0)
     if (sinks.length === 1) returnLine = `        return ${varName.get(sinks[0]) ?? inputs[0].name}`
     else if (sinks.length > 1) returnLine = `        return ${sinks.map((id) => varName.get(id) ?? inputs[0].name).join(', ')}`
     else returnLine = `        return ${inputs[0].name}`

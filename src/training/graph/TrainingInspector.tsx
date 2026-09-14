@@ -4,11 +4,10 @@ import { fs } from '../../connections/backend'
 import { isTauri } from '../../workspace/tauri-fs'
 import { useDatasetsStore } from '../../datasets/store'
 import { compileTrainingGraph } from '../../codegen/trainingGenerator'
-import { useTrainingStore } from '../store'
 import { useTrainingGraphStore } from './store'
 import { TRAINING_NODES, type TrainingFieldSpec } from './registry'
 
-const INPUT = 'w-full rounded border border-[#1f2429] bg-[#0b0e11] px-2 py-1 text-[12px] text-[#e6e8eb] focus:border-[#6ab7ff] focus:outline-none'
+const INPUT = 'w-full rounded border border-[#1f2429] bg-[#0b0e11] px-2 py-1 text-[12px] text-[#e6e8eb] focus:border-[var(--accent)] focus:outline-none'
 
 export default function TrainingInspector() {
   const node = useTrainingGraphStore((s) => s.nodes.find((n) => n.id === s.selectedNodeId) ?? null)
@@ -31,7 +30,7 @@ export default function TrainingInspector() {
     return (
       <div className="flex h-full flex-col">
         <CompilePanel compile={compile} />
-        <div className="p-3 text-[11px] text-[#7a8088]">
+        <div className="p-3 text-[11px] text-[#6f767e]">
           Knoten auswählen, um Parameter zu bearbeiten.
         </div>
       </div>
@@ -41,6 +40,11 @@ export default function TrainingInspector() {
   const spec = TRAINING_NODES[node.data.trainingType]
   if (!spec) return <div className="p-3 text-[11px] text-rose-300">Unbekannter Knoten: {node.data.trainingType}</div>
 
+  // Column fields resolve against the node's own dataset (DatasetSource) or, for
+  // nodes without one (e.g. a Head), the graph's bound DatasetSource.
+  const graphDataset = String(nodes.find((n) => n.data.trainingType === 'DatasetSource')?.data.params.dataset ?? '')
+  const boundDataset = String(node.data.params.dataset ?? '') || graphDataset
+
   return (
     <div className="flex h-full flex-col overflow-auto">
       <CompilePanel compile={compile} />
@@ -48,7 +52,7 @@ export default function TrainingInspector() {
         <span className="flex-1 text-[12px] font-medium text-[#e6e8eb]">{node.data.trainingType}</span>
         <button
           onClick={() => deleteNode(node.id)}
-          className="rounded px-1.5 py-0.5 text-[11px] text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#ff7a85]"
+          className="rounded px-1.5 py-0.5 text-[11px] text-[#6f767e] hover:bg-[#1a1e22] hover:text-[#ff7a85]"
         >
           löschen
         </button>
@@ -56,11 +60,11 @@ export default function TrainingInspector() {
       <div className="space-y-3 p-3">
         {spec.fields.map((field) => (
           <label key={field.name} className="block">
-            <span className="mb-1 block text-[11px] text-[#7a8088]">{field.name}</span>
+            <span className="mb-1 block text-[11px] text-[#6f767e]">{field.name}</span>
             <FieldInput
               field={field}
               value={node.data.params[field.name]}
-              boundDataset={String(node.data.params.dataset ?? '')}
+              boundDataset={boundDataset}
               onChange={(v) => updateNodeParams(node.id, { [field.name]: v })}
             />
           </label>
@@ -71,26 +75,6 @@ export default function TrainingInspector() {
 }
 
 function CompilePanel({ compile }: { compile: ReturnType<typeof compileTrainingGraph> }) {
-  const openNewRun = useTrainingStore((s) => s.openNewRun)
-  const [error, setError] = useState<string | null>(null)
-
-  // Compile the graph and hand the plan to the New-Run dialog pre-filled, so the
-  // graph-driven launch still gets the dialog's backend/SLURM/sweep/resume knobs
-  // (instead of a lesser, instant local-only start).
-  function launch() {
-    if (!compile.plan) return
-    setError(null)
-    const plan = compile.plan
-    openNewRun({
-      label: plan.modelRelpath.split('/').pop()!.replace(/\.spinoml$/i, ''),
-      modelRelpath: plan.modelRelpath,
-      datasetRelpath: plan.datasetRelpath,
-      targetColumn: plan.target,
-      featureColumns: plan.features,
-      training: plan.training,
-    })
-  }
-
   return (
     <div className="space-y-1.5 border-b border-[#1f2429] px-3 py-2 text-[11px]">
       {compile.ok ? (
@@ -111,15 +95,7 @@ function CompilePanel({ compile }: { compile: ReturnType<typeof compileTrainingG
           </ul>
         </div>
       )}
-      <button
-        onClick={launch}
-        disabled={!compile.ok}
-        title="Aus diesem Graph einen Run vorbereiten — öffnet den Dialog mit Backend/SLURM, Sweep und Resume"
-        className="w-full rounded bg-[#13344f] px-2 py-1 text-[11px] text-[#6ab7ff] hover:bg-[#184466] disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        ▶ Run vorbereiten…
-      </button>
-      {error && <div className="text-[#ff7a85]">{error}</div>}
+      <div className="text-[10px] text-[#5a6068]">„▶ Run vorbereiten" oben links auf dem Canvas.</div>
     </div>
   )
 }
@@ -150,7 +126,7 @@ function FieldInput({
           type="checkbox"
           checked={Boolean(value)}
           onChange={(e) => onChange(e.target.checked)}
-          className="h-4 w-4 accent-[#6ab7ff]"
+          className="h-4 w-4 accent-[var(--accent)]"
         />
       )
     case 'select':
@@ -206,28 +182,48 @@ function useColumns(dataset: string): string[] {
   const data = useDatasetsStore((s) => (dataset ? s.inspects[dataset]?.data : undefined))
   const inspect = useDatasetsStore((s) => s.inspect)
   useEffect(() => { if (dataset) void inspect(dataset) }, [dataset, inspect])
-  return data && data.kind === 'tabular' && data.ok ? data.columns : []
+  if (!data || !data.ok) return []
+  if (data.kind === 'tabular') return data.columns
+  if (data.kind === 'manifest') return data.columns ?? []
+  return []
 }
 
 function ColumnSingle({ value, dataset, onChange }: { value: string; dataset: string; onChange: (v: unknown) => void }) {
   const columns = useColumns(dataset)
+  // ALWAYS surface the currently-set value, even if the dataset's column list
+  // hasn't loaded yet or doesn't contain it (manifest table column, stale
+  // inspect, …). Without this, a set target like "value_log10" renders blank
+  // and looks lost although it's stored on the node + shown in the summary.
+  const opts = value && !columns.includes(value) ? [value, ...columns] : columns
+  const missing = !!value && columns.length > 0 && !columns.includes(value)
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className={INPUT} disabled={!columns.length}>
-      <option value="">{columns.length ? '— Spalte —' : '(Datensatz wählen)'}</option>
-      {columns.map((c) => <option key={c} value={c}>{c}</option>)}
-    </select>
+    <>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className={INPUT}>
+        <option value="">{opts.length ? '— Spalte —' : '(Datensatz wählen / lädt…)'}</option>
+        {opts.map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
+      {missing && (
+        <span className="mt-1 block text-[10px] text-[#e6c34a]">
+          „{value}" ist nicht in den Spalten dieses Datensatzes — Tippfehler oder falscher Datensatz?
+        </span>
+      )}
+    </>
   )
 }
 
 function ColumnsMulti({ value, dataset, onChange }: { value: string[]; dataset: string; onChange: (v: unknown) => void }) {
   const columns = useColumns(dataset)
-  if (!columns.length) return <div className="text-[10px] text-[#7a8088]">leer = alle numerischen Spalten</div>
+  // Show fetched columns plus any already-selected ones not in the list, so a
+  // saved selection never silently disappears while the inspect is loading.
+  const extra = value.filter((v) => !columns.includes(v))
+  const all = [...columns, ...extra]
+  if (!all.length) return <div className="text-[10px] text-[#6f767e]">leer = alle numerischen Spalten</div>
   const toggle = (c: string) => onChange(value.includes(c) ? value.filter((x) => x !== c) : [...value, c])
   return (
     <div className="max-h-40 space-y-1 overflow-auto rounded border border-[#1f2429] bg-[#0b0e11] p-1.5">
-      {columns.map((c) => (
+      {all.map((c) => (
         <label key={c} className="flex items-center gap-1.5 text-[11px] text-[#cfd3d8]">
-          <input type="checkbox" checked={value.includes(c)} onChange={() => toggle(c)} className="h-3.5 w-3.5 accent-[#6ab7ff]" />
+          <input type="checkbox" checked={value.includes(c)} onChange={() => toggle(c)} className="h-3.5 w-3.5 accent-[var(--accent)]" />
           {c}
         </label>
       ))}

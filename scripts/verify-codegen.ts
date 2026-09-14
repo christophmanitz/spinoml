@@ -20,7 +20,7 @@ function mkNode(id: string, layerType: string, overrides: Record<string, unknown
   }
 }
 
-type Case = { name: string; nodes: LayerNode[]; edges: Edge[]; expectIssues?: number }
+type Case = { name: string; nodes: LayerNode[]; edges: Edge[]; expectIssues?: number; forbid?: RegExp }
 
 const cases: Case[] = [
   {
@@ -195,6 +195,24 @@ const cases: Case[] = [
     }
   })(),
   {
+    // A DataOp node is a DATA-stage passthrough: it must NOT emit anything into
+    // the model (invariant #1 stays pure) yet must not break the Input→Linear
+    // chain it sits in.
+    name: 'dataop node is a passthrough (emits nothing into forward)',
+    nodes: [
+      mkNode('input', 'Input', { shape: [1, 8], dtype: 'float32' }),
+      mkNode('dop', 'DataOp', { output_name: 'tok', input_dataset: 'datasets/seqs.csv' }),
+      mkNode('lin', 'Linear', { in_features: 8, out_features: 4 }),
+      mkNode('out', 'Output', { name: 'y' }),
+    ],
+    edges: [
+      { id: 'e1', source: 'input', target: 'dop' },
+      { id: 'e2', source: 'dop', target: 'lin' },
+      { id: 'e3', source: 'lin', target: 'out' },
+    ],
+    forbid: /DataOp|data_op/,
+  },
+  {
     name: 'graph with no input (expect 1 issue)',
     nodes: [mkNode('n1', 'Conv2d')],
     edges: [],
@@ -230,6 +248,11 @@ for (const c of cases) {
   }
   if (issues.length > 0) {
     console.log(`  ✗ unexpected issues: ${JSON.stringify(issues)}`)
+    failed++
+    continue
+  }
+  if (c.forbid && c.forbid.test(code)) {
+    console.log(`  ✗ generated code unexpectedly matched ${c.forbid}`)
     failed++
     continue
   }

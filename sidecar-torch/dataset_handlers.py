@@ -75,7 +75,51 @@ def detect_kind(abspath: str) -> str:
     # Directory: image-folder if it has class subdirs with images
     if _looks_like_image_folder(p):
         return "image_folder"
+    # Prepared dataset directory: a folder whose primary content is a table
+    # (pairs.csv / data.csv / the main CSV), optionally with side files
+    # (sequences.csv, per-id embeddings, a prep_card.json) — e.g. a TDC BindingDB
+    # export. Read it as tabular on its inner table; the bundle is surfaced in
+    # inspect so the structure stays visible.
+    if _dir_table(p) is not None:
+        return "tabular"
     return "unknown"
+
+
+# Preferred table filenames inside a prepared dataset directory, in priority order.
+_DIR_TABLE_NAMES = ("pairs.csv", "data.csv", "table.csv", "dataset.csv", "train.csv", "test.csv")
+
+
+def _dir_table(p: Path) -> Path | None:
+    """The primary table file inside a dataset directory (or None). Prefers a
+    conventional name, else the largest tabular file directly under the dir."""
+    try:
+        if not p.is_dir():
+            return None
+        files = [c for c in p.iterdir() if c.is_file() and c.suffix.lower() in TABULAR_EXTS]
+    except OSError:
+        return None
+    if not files:
+        return None
+    by_name = {c.name.lower(): c for c in files}
+    for name in _DIR_TABLE_NAMES:
+        if name in by_name:
+            return by_name[name]
+    # fall back to the biggest table file
+    try:
+        return max(files, key=lambda c: c.stat().st_size)
+    except OSError:
+        return files[0]
+
+
+def _table_path(abspath: str) -> Path:
+    """Resolve a tabular source to its actual file: a directory → its inner table
+    (prepared dataset dir), a file → itself."""
+    p = Path(abspath)
+    if p.is_dir():
+        t = _dir_table(p)
+        if t is not None:
+            return t
+    return p
 
 
 def _looks_like_smiles(token: str) -> bool:
@@ -151,7 +195,8 @@ def _inspect_tabular(abspath: str) -> dict[str, Any]:
         import pandas as pd
     except ImportError:
         return _missing_dep("tabular", "pandas")
-    p = Path(abspath)
+    src = Path(abspath)
+    p = _table_path(abspath)  # a prepared-dataset dir → its inner table
     try:
         if p.suffix.lower() == ".parquet":
             df = pd.read_parquet(p)
@@ -162,7 +207,7 @@ def _inspect_tabular(abspath: str) -> dict[str, Any]:
     except Exception as e:
         return {"kind": "tabular", "ok": False, "error": f"{type(e).__name__}: {e}"}
     head = df.head(10).fillna("").astype(str).values.tolist()
-    return {
+    out: dict[str, Any] = {
         "kind": "tabular",
         "ok": True,
         "rows": int(len(df)),
@@ -172,6 +217,39 @@ def _inspect_tabular(abspath: str) -> dict[str, Any]:
         "head": head,
         "size_bytes": p.stat().st_size,
     }
+    if src.is_dir():
+        out["table"] = p.name  # the table inside the prepared dir
+        out["bundle"] = _describe_dir_bundle(src, p)
+    return out
+
+
+def _describe_dir_bundle(d: Path, table: Path) -> dict[str, Any]:
+    """Summarize a prepared dataset directory's side files so the UI can show that
+    the structure is fully readable (sequences, per-id embeddings, prep card …)."""
+    import json
+    files: list[str] = []
+    subdirs: list[dict[str, Any]] = []
+    card: dict[str, Any] | None = None
+    try:
+        for c in sorted(d.iterdir()):
+            if c.name.startswith("."):
+                continue
+            if c.is_dir():
+                try:
+                    n = sum(1 for _ in c.iterdir())
+                except OSError:
+                    n = 0
+                subdirs.append({"name": c.name, "entries": n})
+            elif c != table:
+                files.append(c.name)
+            if c.name == "prep_card.json":
+                try:
+                    card = json.loads(c.read_text(encoding="utf-8"))
+                except Exception:
+                    card = None
+    except OSError:
+        pass
+    return {"files": files, "subdirs": subdirs, "prep_card": card}
 
 
 def _inspect_image_folder(abspath: str) -> dict[str, Any]:
@@ -608,6 +686,11 @@ def _sample_pyg(abspath: str, target: list[int] | None, options: dict[str, Any] 
 #
 # Reference resolution per branch (all three the user asked for + filename match):
 #   kind=="molecule"  → build a graph from the SMILES cell inline (RDKit, no dir)
+#   kind=="sequence"  → tokenize the string cell → token-id LongTensor (char/byte
+#                       vocab via `vocab`: "protein"/"smiles"/explicit/omit; `max_len`)
+#   kind=="espf"      → ESPF substructure subword tokens from the SMILES/seq cell →
+#                       LongTensor (BPE codebook via `codebook`: "drug"/"protein";
+#                       `max_len`). Interpretable: token id ↔ named substructure.
 #   dir + match=exact → <dir>/<cell><ext>
 #   dir + match=contains → first file in <dir> whose name CONTAINS the cell value
 #                          (e.g. UniProt "P12345" matches "AF-P12345-F1-model_v4.pt")
@@ -693,9 +776,240 @@ def _cached_mol_data(smi: str, cache_dir: Path):
     return d
 
 
+# Built-in vocabularies for sequence branches (manifest kind="sequence").
+# Token 0 = PAD, 1 = UNK, real characters start at 2 — a fixed, deterministic
+# index map so the same string always tokenizes the same way (reproducibility).
+_SEQ_VOCABS = {
+    # 20 standard amino acids + the usual ambiguity/extra codes.
+    "protein": "ACDEFGHIKLMNPQRSTVWYXBZUO",
+    # A broad SMILES character set (case matters: lowercase = aromatic atoms).
+    "smiles": "#%()+-./0123456789=@ABCDEFGHIKLMNOPRSTVZ[\\]abcdefgilmnoprstuy",
+}
+
+
+def _seq_vocab_map(spec: dict[str, Any]) -> dict[str, int] | None:
+    """Resolve a branch's vocab → {char: token_id} (ids start at 2). A preset name
+    ('protein'/'smiles') or an explicit character string both work; None means the
+    byte-level fallback (no fixed vocab, id = clamped ord + 1)."""
+    v = spec.get("vocab")
+    chars = _SEQ_VOCABS.get(v, v) if isinstance(v, str) else None
+    if not chars:
+        return None
+    return {c: i + 2 for i, c in enumerate(chars)}
+
+
+def seq_vocab_size(spec: dict[str, Any]) -> int:
+    """num_embeddings the model's Embedding needs for this branch's vocab."""
+    vmap = _seq_vocab_map(spec)
+    return 257 if vmap is None else len(vmap) + 2  # byte-level: 0=PAD, 1..256=bytes
+
+
+def tokenize_sequence(value: Any, spec: dict[str, Any]) -> "torch.Tensor":
+    """A string cell → 1-D LongTensor [L] of token ids (no graph). Char-level via a
+    fixed vocab (UNK=1) or byte-level fallback; optional `max_len` truncates."""
+    s = str(value).strip()
+    max_len = spec.get("max_len")
+    if isinstance(max_len, int) and max_len > 0:
+        s = s[:max_len]
+    vmap = _seq_vocab_map(spec)
+    if vmap is None:  # byte-level: id = min(ord, 255) + 1, reserving 0 for PAD
+        ids = [min(ord(c), 255) + 1 for c in s]
+    else:
+        ids = [vmap.get(c, 1) for c in s]  # 1 = UNK
+    return torch.tensor(ids or [0], dtype=torch.long)
+
+
+# ─── ESPF tokenization (interpretable substructures) ──────────────────────
+# ESPF (Explainable Substructure Partition Fingerprint, Huang et al. 2019; the
+# tokenizer used in MolTrans) is a chemically-aware *subword* tokenizer: a SMILES
+# (or protein) string is split into frequent SUBSTRUCTURE tokens via a BPE-style
+# codebook, and every token id maps back to a named substructure — that mapping
+# is what makes it "interpretable". The codebooks live (vendored, BSD-3) under
+# sidecar-torch/espf/ (see NOTICE). Token scheme matches the sequence tokenizer:
+# 0 = PAD, 1 = UNK, real substructures start at id 2.
+
+ESPF_DIR = Path(__file__).resolve().parent / "espf"
+_ESPF_FILES = {  # codebook name → (bpe merge rules, subword→index map)
+    "drug": ("drug_codes_chembl.txt", "subword_units_map_chembl.csv"),
+    "protein": ("protein_codes_uniprot.txt", "subword_units_map_uniprot.csv"),
+}
+_ESPF_CACHE: dict[str, dict[str, Any]] = {}  # name → {ranks, subwords, sub2id}
+
+
+def espf_codebook_name(spec: dict[str, Any]) -> str:
+    name = str(spec.get("codebook", "drug")).strip().lower()
+    return name if name in _ESPF_FILES else "drug"
+
+
+def _load_espf_codebook(name: str = "drug") -> dict[str, Any]:
+    """Load (and module-cache) an ESPF codebook from the vendored files: the
+    ordered BPE merge rules and the subword→id map. Raises FileNotFoundError if
+    the codebook isn't vendored (callers degrade to a clear error, never crash)."""
+    name = name if name in _ESPF_FILES else "drug"
+    if name in _ESPF_CACHE:
+        return _ESPF_CACHE[name]
+    codes_file, map_file = _ESPF_FILES[name]
+    codes_path, map_path = ESPF_DIR / codes_file, ESPF_DIR / map_file
+    if not codes_path.exists() or not map_path.exists():
+        raise FileNotFoundError(
+            f"ESPF codebook '{name}' missing under {ESPF_DIR} "
+            f"({codes_file} / {map_file}) — see sidecar-torch/espf/NOTICE")
+    ranks: dict[tuple[str, str], int] = {}
+    with open(codes_path, encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            if i == 0 and line.startswith("#version"):
+                continue
+            parts = line.split()
+            if len(parts) == 2:
+                ranks[(parts[0], parts[1])] = len(ranks)
+    import csv
+    subwords: list[str] = []
+    with open(map_path, encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            subwords.append(str(row.get("index", "")))
+    sub2id = {s: i for i, s in enumerate(subwords)}  # vocab index (0-based)
+    cb = {"ranks": ranks, "subwords": subwords, "sub2id": sub2id}
+    _ESPF_CACHE[name] = cb
+    return cb
+
+
+def _espf_encode(orig: str, ranks: dict[tuple[str, str], int]) -> list[str]:
+    """Pure-Python subword-nmt apply: greedily merge the highest-priority adjacent
+    pair until none remain. Bit-for-bit parity with subword_nmt.apply_bpe (verified
+    against the reference), so no runtime dependency on subword-nmt is needed."""
+    if len(orig) < 2:
+        return [orig] if orig else []
+    word = list(orig[:-1]) + [orig[-1] + "</w>"]
+    while len(word) > 1:
+        pairs = set(zip(word[:-1], word[1:]))
+        cand = [(ranks[p], p) for p in pairs if p in ranks]
+        if not cand:
+            break
+        _, (a, b) = min(cand, key=lambda x: x[0])
+        merged, i = [], 0
+        while i < len(word):
+            if i < len(word) - 1 and word[i] == a and word[i + 1] == b:
+                merged.append(a + b)
+                i += 2
+            else:
+                merged.append(word[i])
+                i += 1
+        word = merged
+    if word and word[-1] == "</w>":
+        word = word[:-1]
+    elif word and word[-1].endswith("</w>"):
+        word[-1] = word[-1][:-4]
+    return word
+
+
+def espf_vocab_size(spec: dict[str, Any]) -> int:
+    """num_embeddings the model's Embedding needs (subwords + PAD + UNK)."""
+    try:
+        cb = _load_espf_codebook(espf_codebook_name(spec))
+    except FileNotFoundError:
+        return 2
+    return len(cb["subwords"]) + 2
+
+
+def espf_substructures(spec: dict[str, Any]) -> list[str]:
+    """id → substructure string (index 0/1 = PAD/UNK), for interpretable labels."""
+    try:
+        cb = _load_espf_codebook(espf_codebook_name(spec))
+    except FileNotFoundError:
+        return []
+    return ["<pad>", "<unk>"] + list(cb["subwords"])
+
+
+def tokenize_espf(value: Any, spec: dict[str, Any]) -> "torch.Tensor":
+    """A SMILES/sequence cell → 1-D LongTensor [L] of ESPF substructure token ids
+    (offset +2 over the codebook index; 0=PAD, 1=UNK). Honors `max_len` (subword
+    count). Falls back to the char/byte sequence tokenizer if the codebook is
+    missing (graceful — a manifest still samples/trains, just not as ESPF)."""
+    try:
+        cb = _load_espf_codebook(espf_codebook_name(spec))
+    except FileNotFoundError:
+        return tokenize_sequence(value, {**spec, "vocab": "smiles"})
+    sub2id = cb["sub2id"]
+    toks = _espf_encode(str(value).strip(), cb["ranks"])
+    ids = [(sub2id[t] + 2) if t in sub2id else 1 for t in toks]  # 1 = UNK
+    max_len = spec.get("max_len")
+    if isinstance(max_len, int) and max_len > 0:
+        ids = ids[:max_len]
+    return torch.tensor(ids or [0], dtype=torch.long)
+
+
+def ensure_espf_cache(base: Path, name: str = "drug") -> Path | None:
+    """Materialize a compact, self-contained ESPF codebook cache next to the
+    manifest (<base>/.espf/<name>.json.gz: {merges, subwords}). A training run is a
+    standalone snapshot that can't see sidecar-torch/espf/, so train.py reads THIS
+    cache instead — analogous to .graphcache. Best-effort; returns the path or None."""
+    try:
+        cb = _load_espf_codebook(name)
+    except FileNotFoundError:
+        return None
+    import gzip
+    import json
+    out_dir = Path(base) / ".espf"
+    fp = out_dir / f"{name}.json.gz"
+    if fp.exists():
+        return fp
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        merges = [f"{a} {b}" for (a, b) in sorted(cb["ranks"], key=lambda p: cb["ranks"][p])]
+        blob = json.dumps({"merges": merges, "subwords": cb["subwords"]}, separators=(",", ":"))
+        with gzip.open(fp, "wt", encoding="utf-8") as f:
+            f.write(blob)
+    except Exception:
+        return None  # caching is best-effort; the sidecar still tokenizes in-memory
+    return fp
+
+
+# Cache for manifest `lookup` side-tables: (abs path, key, value col) → {key: value}.
+_LOOKUP_CACHE: dict[tuple[str, str, str], dict[str, str]] = {}
+
+
+def _lookup_value(base: Path, spec: dict[str, Any], value: Any) -> Any:
+    """A branch may JOIN a side table by key to obtain its real cell value — e.g.
+    a `prot_seq` branch keyed by uniprot pulls the sequence from sequences.csv. The
+    side table is read once and cached. Spec: {lookup: <csv relpath/abs>, lookup_key,
+    lookup_value}. Returns the joined value (or '' if the key isn't found)."""
+    lk = spec.get("lookup")
+    if not lk:
+        return value
+    import pandas as pd
+    key_col = str(spec.get("lookup_key", "")) or "id"
+    val_col = str(spec.get("lookup_value", "")) or "value"
+    lp = Path(os.path.expanduser(str(lk)))
+    if not lp.is_absolute():
+        lp = base / str(lk)
+    ck = (str(lp), key_col, val_col)
+    table = _LOOKUP_CACHE.get(ck)
+    if table is None:
+        if lp.suffix.lower() == ".parquet":
+            df = pd.read_parquet(lp)
+        elif lp.suffix.lower() == ".tsv":
+            df = pd.read_csv(lp, sep="\t")
+        else:
+            df = pd.read_csv(lp)
+        if key_col not in df.columns or val_col not in df.columns:
+            raise ValueError(f"lookup {lp.name}: needs columns {key_col!r} and {val_col!r}, has {list(df.columns)}")
+        table = {str(k): str(v) for k, v in zip(df[key_col], df[val_col])}
+        _LOOKUP_CACHE[ck] = table
+    return table.get(str(value).strip(), "")
+
+
 def _load_branch_graph(base: Path, spec: dict[str, Any], value: Any, cache_dir: Path | None = None):
     """Return ('data', PyG Data) for one branch+row. Molecule branches build the
-    graph from SMILES (RDKit) and, when cache_dir is given, save/reuse it as .pt."""
+    graph from SMILES (RDKit) and, when cache_dir is given, save/reuse it as .pt.
+    Sequence/ESPF branches tokenize the string cell → ('tensor', ids). A `lookup`
+    spec first JOINs a side table by key to resolve the real cell value."""
+    if spec.get("lookup"):
+        value = _lookup_value(base, spec, value)
+    if str(spec.get("kind", "")) == "espf":
+        return ("tensor", tokenize_espf(value, spec))
+    if str(spec.get("kind", "")) == "sequence":
+        return ("tensor", tokenize_sequence(value, spec))
     if str(spec.get("kind", "")) == "molecule":
         d = _cached_mol_data(str(value), cache_dir) if cache_dir is not None else _mol_data(str(value))
         return ("data", d)
@@ -704,15 +1018,44 @@ def _load_branch_graph(base: Path, spec: dict[str, Any], value: Any, cache_dir: 
         raise FileNotFoundError(
             f"no graph file for value {value!r} (dir={spec.get('dir')}, "
             f"match={spec.get('match', 'exact')}, ext={spec.get('ext', '')})")
-    d = _as_pyg_data(torch.load(fp, map_location="cpu", weights_only=False))
-    if d is None:
-        raise ValueError(f"{fp.name} is not a PyG graph")
-    return ("data", d)
+    loaded = torch.load(fp, map_location="cpu", weights_only=False)
+    d = _as_pyg_data(loaded)
+    if d is not None:
+        return ("data", d)
+    # Not a PyG graph — a branch can be ANY type (e.g. protein_seq token tensors).
+    t = _as_branch_tensor(loaded)
+    if t is not None:
+        return ("tensor", t)
+    raise ValueError(f"{fp.name} is neither a PyG graph nor a loadable tensor")
+
+
+def _as_branch_tensor(loaded):
+    """Extract a tensor from a NON-graph branch .pt — a bare tensor, a common
+    token-dict key, or the first tensor in a dict/list. Used for sequence/feature
+    branches (e.g. protein_seq token ids) that aren't PyG graphs."""
+    if isinstance(loaded, torch.Tensor):
+        return loaded
+    if isinstance(loaded, dict):
+        for k in ("input_ids", "tokens", "ids", "x", "seq", "sequence"):
+            v = loaded.get(k)
+            if isinstance(v, torch.Tensor):
+                return v
+        for v in loaded.values():
+            if isinstance(v, torch.Tensor):
+                return v
+    if isinstance(loaded, (list, tuple)):
+        for v in loaded:
+            if isinstance(v, torch.Tensor):
+                return v
+    return None
 
 
 def _branch_field(obj_kind: str, obj, field: str) -> dict[str, Any]:
     if obj_kind == "data":
         return _sample_graph_field(obj, field)
+    if obj_kind == "tensor":
+        # A non-graph branch (token ids / feature tensor): one field, the tensor.
+        return {"ok": True, "tensor": obj, "natural_shape": list(obj.shape)}
     # molecule-graph dict {x, edge_index, n_atoms, ...}
     if field == "edge_index":
         return {"ok": True, "tensor": obj["edge_index"], "natural_shape": list(obj["edge_index"].shape)}
@@ -733,6 +1076,10 @@ def _branch_slots(obj_kind: str, obj, branch: str) -> list[dict[str, Any]]:
         if not any(s["field"] == f"{branch}.batch" for s in slots):
             n = int(getattr(obj, "num_nodes", obj.x.shape[0]))
             slots.append({"field": f"{branch}.batch", "shape": [n], "dtype": "int64"})
+    elif obj_kind == "tensor":
+        # Non-graph branch (e.g. protein_seq token ids): one slot, '<branch>.x'.
+        dt = "int64" if any(s in str(obj.dtype) for s in ("int", "long", "bool")) else "float32"
+        slots.append({"field": f"{branch}.x", "shape": list(obj.shape), "dtype": dt})
     else:
         slots.append({"field": f"{branch}.x", "shape": list(obj["x"].shape), "dtype": "float32"})
         slots.append({"field": f"{branch}.edge_index", "shape": list(obj["edge_index"].shape), "dtype": "int64"})
@@ -788,6 +1135,16 @@ def _inspect_manifest(abspath: str) -> dict[str, Any]:
         try:
             kind, obj = _load_branch_graph(base, spec, row.get(col), cache_dir)
             slots.extend(_branch_slots(kind, obj, str(branch)))
+            if str(spec.get("kind", "")) == "sequence":
+                notes.append(f"branch '{branch}': sequence (vocab='{spec.get('vocab', 'bytes')}', "
+                             f"num_embeddings={seq_vocab_size(spec)})")
+            elif str(spec.get("kind", "")) == "espf":
+                # Prime the .espf cache so a (snapshot) training run can read the
+                # codebook without the vendored files — opening the dataset is enough.
+                ensure_espf_cache(base, espf_codebook_name(spec))
+                notes.append(f"branch '{branch}': ESPF substructures "
+                             f"(codebook='{espf_codebook_name(spec)}', "
+                             f"num_embeddings={espf_vocab_size(spec)})")
         except ImportError:
             return _missing_dep("molecule", "rdkit")
         except Exception as e:
@@ -801,6 +1158,7 @@ def _inspect_manifest(abspath: str) -> dict[str, Any]:
         "kind": "manifest", "ok": True,
         "n_rows": int(len(df)),
         "table": str(cfg["table"]),
+        "columns": [str(c) for c in df.columns],
         "branches": list(cfg["pairs"].keys()),
         "target": ({"column": str(tgt["column"]), "type": str(tgt.get("type", "regression"))} if tgt else None),
         "slots": slots,
@@ -905,7 +1263,7 @@ def _stats_tabular(abspath: str) -> dict[str, Any]:
         import pandas as pd
     except ImportError:
         return _missing_dep("tabular", "pandas")
-    p = Path(abspath)
+    p = _table_path(abspath)  # prepared-dataset dir → its inner table
     try:
         if p.suffix.lower() == ".parquet":
             df = pd.read_parquet(p)
@@ -1109,7 +1467,7 @@ def _sample_tabular(
         import pandas as pd
     except ImportError:
         return _missing_dep("tabular", "pandas")
-    p = Path(abspath)
+    p = _table_path(abspath)  # prepared-dataset dir → its inner table
     if p.suffix.lower() == ".parquet":
         df = pd.read_parquet(p)
     elif p.suffix.lower() == ".tsv":
@@ -1266,7 +1624,7 @@ def _sample_tabular_graph(abspath: str, field: str, smiles_col: str | None) -> d
         from rdkit import Chem  # noqa: F401
     except ImportError:
         return _missing_dep("molecule", "rdkit")
-    p = Path(abspath)
+    p = _table_path(abspath)  # prepared-dataset dir → its inner table
     try:
         if p.suffix.lower() == ".parquet":
             df = pd.read_parquet(p)

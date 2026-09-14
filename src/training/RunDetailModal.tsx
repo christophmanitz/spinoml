@@ -6,6 +6,7 @@ import { type RunConfig, type TrainingEvent, type GpuStat, RUNNING_STATES } from
 import StatusPill from './StatusPill'
 import LineChart from './charts/LineChart'
 import { parseEventLines, lossSeries, lrSeries, metricSeries } from './charts/series'
+import { latestEval, latestEvalHeads, EvalDiagram } from './charts/Evaluation'
 import { runConfigToTrainingSnapshot } from './graph/fromRun'
 import { useTrainingGraphStore } from './graph/store'
 import { useViewModeStore } from './graph/viewMode'
@@ -14,10 +15,16 @@ import { confirmDialog } from '../ui/confirm'
 
 type Tab = 'overview' | 'charts' | 'events' | 'predictions' | 'hardware' | 'logs' | 'script'
 
+const TAB_LABELS: Record<Tab, string> = {
+  overview: 'overview', charts: 'charts', events: 'events', predictions: 'Auswertung',
+  hardware: 'hardware', logs: 'logs', script: 'script',
+}
+
 export default function RunDetailModal({ runId }: { runId: string }) {
   const close = useTrainingStore((s) => s.select)
   const stopRun = useTrainingStore((s) => s.stopRun)
   const deleteRun = useTrainingStore((s) => s.deleteRun)
+  const openEvalRun = useTrainingStore((s) => s.openEvalRun)
   const summary = useTrainingStore((s) => s.runs.find((r) => r.run_id === runId))
 
   const [tab, setTab] = useState<Tab>('overview')
@@ -29,6 +36,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   const [busy, setBusy] = useState(false)
   const [lossLog, setLossLog] = useState(false)
   const [trainSbatch, setTrainSbatch] = useState('')
+  const [slurmJobId, setSlurmJobId] = useState<string | null>(null)
   const [gpu, setGpu] = useState<GpuStat[] | null>(null)
   const [promoteName, setPromoteName] = useState('')
   const [promoted, setPromoted] = useState<string | null>(null)
@@ -37,11 +45,14 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   const status = summary?.status ?? 'unknown'
   const active = RUNNING_STATES.has(status) || (summary?.alive ?? false)
 
-  // Backend (direct vs SLURM) is frozen in run.json.
-  const backend = (() => {
-    try { return (JSON.parse(runJson) as RunConfig).backend } catch { return null }
+  // Frozen run.json (backend, eval-validation metadata).
+  const parsedCfg = (() => {
+    try { return JSON.parse(runJson) as RunConfig } catch { return null }
   })()
+  const backend = parsedCfg?.backend ?? null
   const isSlurm = backend?.kind === 'slurm'
+  const isEvalRun = (summary?.eval_only ?? false) || (parsedCfg?.eval_only ?? false)
+  const validate = parsedCfg?.validate ?? null
 
   // Rebuild this run's training graph onto the canvas, even if its .spinotrain was
   // never saved — run.json carries the full frozen config.
@@ -56,17 +67,30 @@ export default function RunDetailModal({ runId }: { runId: string }) {
     } catch { /* run.json not ready / malformed */ }
   }
 
+  // A SLURM run's stdout/stderr land in slurm-<jobid>.out/.err (the #SBATCH
+  // --output/--error targets), NOT stdout.log/stderr.log (those only exist for
+  // direct/local launches). The job id is frozen in the `pid` file as
+  // `slurm:<jobid>`. Returns the [out, err] file names for THIS run.
+  const logFileNames = (jobId: string | null): [string, string] =>
+    jobId ? [`slurm-${jobId}.out`, `slurm-${jobId}.err`] : ['stdout.log', 'stderr.log']
+
   // Full read — used on open + on status change. Includes the immutable files
   // (run.json, train.py) which never change after the run is created.
   const reload = useCallback(async () => {
     try {
+      // Resolve the log target first: read the pid file to learn whether this is
+      // a SLURM run (`slurm:<jobid>`) so we tail the right files below.
+      const pidRaw = (await training.readFile(runId, 'pid').catch(() => '')).trim()
+      const jobId = pidRaw.startsWith('slurm:') ? pidRaw.slice('slurm:'.length).trim() || null : null
+      setSlurmJobId(jobId)
+      const [outName, errName] = logFileNames(jobId)
       const [ev, rj, tp, sb, so, se] = await Promise.all([
         training.readFile(runId, 'events.jsonl'),
         training.readFile(runId, 'run.json'),
         training.readFile(runId, 'train.py'),
         training.readFile(runId, 'train.sbatch'),
-        training.readFile(runId, 'stdout.log'),
-        training.readFile(runId, 'stderr.log'),
+        training.readFile(runId, outName),
+        training.readFile(runId, errName),
       ])
       setEvents(parseEventLines(ev))
       setRunJson(rj)
@@ -85,15 +109,16 @@ export default function RunDetailModal({ runId }: { runId: string }) {
     try {
       setEvents(parseEventLines(await training.readFile(runId, 'events.jsonl')))
       if (tab === 'logs') {
+        const [outName, errName] = logFileNames(slurmJobId)
         const [so, se] = await Promise.all([
-          training.readFile(runId, 'stdout.log'),
-          training.readFile(runId, 'stderr.log'),
+          training.readFile(runId, outName),
+          training.readFile(runId, errName),
         ])
         setStdout(so)
         setStderr(se)
       }
     } catch { /* file may not exist yet */ }
-  }, [runId, tab])
+  }, [runId, tab, slurmJobId])
 
   // Reload on open AND whenever the status changes. The status-change reload is
   // what catches the final epoch + run.done on the running→done transition: the
@@ -126,7 +151,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
     let timer: ReturnType<typeof setTimeout>
     const delay = getCurrentConnection().kind === 'remote-ssh' ? 6000 : 3000
     const tick = async () => {
-      try { setGpu(await training.gpuStats()) } catch { setGpu([]) }
+      try { setGpu(await training.gpuStats(runId)) } catch { setGpu([]) }
       if (!stopped) timer = setTimeout(tick, delay)
     }
     void tick()
@@ -153,6 +178,31 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   // Latest sample-predictions snapshot (emitted by the trainer on each new best).
   const samplePreds = [...events].reverse().find((e) => e.kind === 'sample.preds')
   const predRows = (samplePreds?.rows as Array<Record<string, unknown>> | undefined) ?? []
+  // Multitask: per-head prediction rows + per-head eval summaries.
+  const predHeads = samplePreds?.heads as Array<{ output: string; task: string; rows: Array<Record<string, unknown>> }> | undefined
+  const evalHeads = latestEvalHeads(events)
+  // Fixed-schema evaluation payload → confusion matrix (classification/binary)
+  // or pred-vs-actual scatter (regression), whichever the trainer emitted.
+  const evalSummary = latestEval(events)
+  const hasEval = !!evalSummary || !!evalHeads || predRows.length > 0 || !!predHeads?.length
+
+  // Multitask/joint detection: run.json flag (chatbot-generated trainers set
+  // `multitask: true`), the new Head-node `training.heads`, OR namespaced
+  // "<output>/<metric>" keys in epoch.end metrics.
+  const isMultitask = (() => {
+    try {
+      const c = JSON.parse(runJson) as RunConfig & { multitask?: boolean }
+      if (c.multitask || (c.training?.heads?.length ?? 0) > 0) return true
+    } catch { /* run.json not ready */ }
+    return epochEvents.some((e) => {
+      const m = e.metrics as Record<string, unknown> | null | undefined
+      return m && Object.keys(m).some((k) => k.includes('/'))
+    })
+  })()
+  // Trainer-emitted context worth surfacing for joint runs.
+  const dsLoaded = events.find((e) => e.kind === 'dataset.loaded')
+  const regStd = events.find((e) => e.kind === 'reg.standardize')
+  const lastMetrics = (last?.metrics as Record<string, unknown> | null | undefined) ?? null
   const canPromote = !active && (summary?.has_checkpoint ?? false)
 
   const totalEpochs = summary?.epochs ?? 0
@@ -179,26 +229,43 @@ export default function RunDetailModal({ runId }: { runId: string }) {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
       onClick={(e) => { if (e.target === e.currentTarget) close(null) }}
     >
-      <div className="flex h-full max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-[#1f2429] bg-[#0e1115] shadow-2xl">
+      <div className="flex h-full max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-[#1f2429] bg-[#0e1216] shadow-2xl">
         <div className="flex items-center gap-2 border-b border-[#1f2429] px-4 py-3">
           <StatusPill status={status} alive={summary?.alive} />
           <span className="truncate text-sm text-[#e6e8eb]">{summary?.run_label || runId}</span>
           <span
-            className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${isSlurm ? 'bg-violet-900/30 text-violet-300' : 'bg-[#1f2429] text-[#7a8088]'}`}
+            className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${isSlurm ? 'bg-violet-900/30 text-violet-300' : 'bg-[#1f2429] text-[#6f767e]'}`}
             title={isSlurm ? `SLURM-Job · Partition ${backend?.kind === 'slurm' ? backend.slurm.partition || '—' : ''}` : 'Direkter Prozess (nohup setsid)'}
           >
             {isSlurm ? 'SLURM' : 'direct'}
           </span>
+          {isMultitask && (
+            <span
+              className="shrink-0 rounded bg-[var(--accent-sel)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--accent)]"
+              title="Multitask / Joint-Run — mehrere Aufgaben (z. B. Klassifikation + Regression) in einem Modell"
+            >
+              multitask
+            </span>
+          )}
           <span className="ml-1 truncate font-mono text-[10px] text-[#5a6068]">{runId}</span>
           <div className="ml-auto flex items-center gap-2">
             <button
               onClick={openOnCanvas}
               disabled={!runJson}
-              className="rounded bg-[#13344f] px-2 py-0.5 text-[11px] text-[#6ab7ff] hover:bg-[#184466] disabled:opacity-40"
+              className="rounded bg-[var(--accent-sel)] px-2 py-0.5 text-[11px] text-[var(--accent)] hover:bg-[var(--accent-sel-hover)] disabled:opacity-40"
               title="Dieses Training als Graph im Training-Canvas öffnen"
             >
               → Training-Canvas
             </button>
+            {!active && !isEvalRun && (summary?.has_checkpoint ?? false) && (
+              <button
+                onClick={() => { openEvalRun(runId); close(null) }}
+                className="rounded bg-[var(--accent-sel)] px-2 py-0.5 text-[11px] text-[var(--accent)] hover:bg-[var(--accent-sel-hover)]"
+                title="Dieses trainierte Modell auf einem externen/Benchmark-Datensatz validieren"
+              >
+                Externe Validierung
+              </button>
+            )}
             {active ? (
               <button
                 onClick={async () => { setBusy(true); try { await stopRun(runId) } finally { setBusy(false) } }}
@@ -210,23 +277,34 @@ export default function RunDetailModal({ runId }: { runId: string }) {
             ) : (
               <button
                 onClick={async () => { if (await confirmDialog('Run löschen?')) { await deleteRun(runId); close(null) } }}
-                className="rounded px-2 py-0.5 text-[11px] text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#ff7a85]"
+                className="rounded px-2 py-0.5 text-[11px] text-[#6f767e] hover:bg-[#1a1e22] hover:text-[#ff7a85]"
               >
                 Löschen
               </button>
             )}
-            <button onClick={() => close(null)} className="rounded px-2 py-0.5 text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#e6e8eb]">×</button>
+            <button onClick={() => close(null)} className="rounded px-2 py-0.5 text-[#6f767e] hover:bg-[#1a1e22] hover:text-[#e6e8eb]">×</button>
           </div>
         </div>
+
+        {isEvalRun && validate && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-[#1f2429] bg-[var(--accent-sel)]/20 px-4 py-1.5 text-[10px] text-[#9aa1a8]">
+            <span className="rounded bg-[var(--accent-sel)] px-1.5 py-0.5 font-semibold text-[var(--accent)]">EXTERNE VALIDIERUNG</span>
+            <span>Modell aus <span className="font-mono text-[#cfd3d8]">{validate.source_run ?? '?'}</span></span>
+            <span>· Datensatz <span className="font-mono text-[#cfd3d8]">{parsedCfg?.dataset.relpath}</span></span>
+            {validate.adapter && Object.keys(validate.adapter.column_map).length > 0 && (
+              <span className="text-[#5a6068]">· {Object.entries(validate.adapter.column_map).map(([role, col]) => `${role}→${col}`).join(', ')}</span>
+            )}
+          </div>
+        )}
 
         <div className="flex border-b border-[#1f2429] text-xs">
           {(['overview', 'charts', 'events', 'predictions', 'hardware', 'logs', 'script'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`px-3 py-1.5 ${tab === t ? 'border-b border-[#6ab7ff] text-[#e6e8eb]' : 'text-[#7a8088] hover:text-[#9aa1a8]'}`}
+              className={`px-3 py-1.5 ${tab === t ? 'border-b border-[var(--accent)] text-[#e6e8eb]' : 'text-[#6f767e] hover:text-[#9aa1a8]'}`}
             >
-              {t}
+              {TAB_LABELS[t]}
             </button>
           ))}
         </div>
@@ -238,13 +316,13 @@ export default function RunDetailModal({ runId }: { runId: string }) {
                 <div className="rounded border border-[#1f2429] bg-[#0a0d10] p-3">
                   <div className="mb-1.5 flex items-center text-[11px] text-[#9aa1a8]">
                     <span>epoch {curEpoch}/{totalEpochs}</span>
-                    <span className="ml-auto font-mono text-[#7a8088]">
+                    <span className="ml-auto font-mono text-[#6f767e]">
                       {etaSec != null ? `ETA ${fmtDuration(etaSec)}` : 'ETA …'}
                       {perEpochSec != null && <span className="ml-2">{perEpochSec.toFixed(1)}s/epoch</span>}
                     </span>
                   </div>
                   <div className="h-1.5 overflow-hidden rounded bg-[#1a1e22]">
-                    <div className="h-full rounded bg-[#6ab7ff] transition-all" style={{ width: `${(progress * 100).toFixed(1)}%` }} />
+                    <div className="h-full rounded bg-[var(--accent)] transition-all" style={{ width: `${(progress * 100).toFixed(1)}%` }} />
                   </div>
                 </div>
               )}
@@ -258,6 +336,42 @@ export default function RunDetailModal({ runId }: { runId: string }) {
                 {done?.total_seconds != null && <Stat label="Dauer" value={`${Number(done.total_seconds).toFixed(0)}s`} />}
               </div>
 
+              {/* Per-task metrics from the latest epoch (joint runs report e.g.
+                  binder accuracy + affinity reg_mae_log10, or "<output>/<metric>"). */}
+              {lastMetrics && Object.keys(lastMetrics).length > 0 && (
+                <div>
+                  <div className="mb-1 text-[11px] text-[#9aa1a8]">Metriken (letzte Epoch)</div>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    {Object.entries(lastMetrics).map(([k, v]) => (
+                      <Stat key={k} label={k} value={typeof v === 'number' ? v.toFixed(4) : String(v)} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Joint-run dataset context: branches + binder count + target
+                  standardization the trainer emitted. */}
+              {(dsLoaded || regStd) && (
+                <div className="rounded border border-[#1f2429] bg-[#0a0d10] p-3 text-[11px] text-[#9aa1a8]">
+                  {dsLoaded && (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      {dsLoaded.n_rows != null && <span>{String(dsLoaded.n_rows)} Zeilen</span>}
+                      {Array.isArray(dsLoaded.branches) && (dsLoaded.branches as unknown[]).length > 0 && (
+                        <span>Branches: <span className="font-mono text-[#cfd3d8]">{(dsLoaded.branches as string[]).join(', ')}</span></span>
+                      )}
+                      {dsLoaded.n_binders != null && <span>{String(dsLoaded.n_binders)} Binder</span>}
+                      {dsLoaded.skipped != null && Number(dsLoaded.skipped) > 0 && <span className="text-[#6f767e]">{String(dsLoaded.skipped)} übersprungen</span>}
+                    </div>
+                  )}
+                  {regStd && (
+                    <div className="mt-1 text-[10px] text-[#6f767e]">
+                      Regressionsziel standardisiert: μ={Number(regStd.mean).toFixed(4)} · σ={Number(regStd.std).toFixed(4)}
+                      {regStd.n_train_binders != null ? ` (n=${String(regStd.n_train_binders)})` : ''}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {failed && (
                 <div className="rounded border border-[#42191c] bg-[#1a0f10] p-3 text-[11px] text-[#ff7a85]">
                   <div className="font-medium">Fehlgeschlagen in „{String(failed.stage)}"</div>
@@ -269,7 +383,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
               {canPromote && (
                 <div className="rounded border border-[#1f2429] bg-[#0a0d10] p-3">
                   <div className="mb-1.5 text-[11px] text-[#9aa1a8]">Bestes Modell übernehmen</div>
-                  <div className="mb-2 text-[10px] text-[#7a8088]">
+                  <div className="mb-2 text-[10px] text-[#6f767e]">
                     Kopiert <code>checkpoints/best.pt</code> nach <code>models/best/&lt;name&gt;.pt</code> —
                     von dort als Pretrained-Gewicht weiterverwendbar.
                   </div>
@@ -278,7 +392,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
                       value={promoteName}
                       onChange={(e) => { setPromoteName(e.target.value); setPromoted(null); setPromoteErr(null) }}
                       placeholder="iris-mlp"
-                      className="min-w-0 flex-1 rounded border border-[#2a3038] bg-[#0e1115] px-2 py-1 text-[11px] text-[#e6e8eb] focus:border-[#6ab7ff] focus:outline-none"
+                      className="min-w-0 flex-1 rounded border border-[#2a3038] bg-[#0e1216] px-2 py-1 text-[11px] text-[#e6e8eb] focus:border-[var(--accent)] focus:outline-none"
                     />
                     <span className="text-[10px] text-[#5a6068]">.pt</span>
                     <button
@@ -292,7 +406,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
                           setPromoteErr(e instanceof Error ? e.message : String(e))
                         } finally { setBusy(false) }
                       }}
-                      className="rounded bg-[#13344f] px-2 py-1 text-[11px] text-[#6ab7ff] hover:bg-[#184466] disabled:opacity-40"
+                      className="rounded bg-[var(--accent-sel)] px-2 py-1 text-[11px] text-[var(--accent)] hover:bg-[var(--accent-sel-hover)] disabled:opacity-40"
                     >
                       Übernehmen
                     </button>
@@ -303,7 +417,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
               )}
 
               <div>
-                <div className="mb-1 text-[11px] text-[#7a8088]">run.json</div>
+                <div className="mb-1 text-[11px] text-[#6f767e]">run.json</div>
                 <pre className="max-h-64 overflow-auto rounded border border-[#1f2429] bg-[#0a0d10] p-2 text-[10px] text-[#9aa1a8]">{runJson || '—'}</pre>
               </div>
             </div>
@@ -311,7 +425,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
 
           {tab === 'charts' && (
             epochEvents.length === 0 ? (
-              <div className="text-[11px] text-[#7a8088]">Noch keine Epoch-Daten zum Plotten.</div>
+              <div className="text-[11px] text-[#6f767e]">Noch keine Epoch-Daten zum Plotten.</div>
             ) : (
               <div className="space-y-5">
                 <ChartCard
@@ -319,7 +433,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
                   right={
                     <button
                       onClick={() => setLossLog((v) => !v)}
-                      className={`rounded px-1.5 py-0.5 text-[10px] ${lossLog ? 'bg-[#13344f] text-[#6ab7ff]' : 'text-[#7a8088] hover:bg-[#1a1e22]'}`}
+                      className={`rounded px-1.5 py-0.5 text-[10px] ${lossLog ? 'bg-[var(--accent-sel)] text-[var(--accent)]' : 'text-[#6f767e] hover:bg-[#1a1e22]'}`}
                     >
                       log
                     </button>
@@ -343,10 +457,10 @@ export default function RunDetailModal({ runId }: { runId: string }) {
 
           {tab === 'events' && (
             epochEvents.length === 0 ? (
-              <div className="text-[11px] text-[#7a8088]">Noch keine Epoch-Events.</div>
+              <div className="text-[11px] text-[#6f767e]">Noch keine Epoch-Events.</div>
             ) : (
               <table className="w-full text-left text-[11px]">
-                <thead className="text-[#7a8088]">
+                <thead className="text-[#6f767e]">
                   <tr><th className="py-1 pr-3">epoch</th><th className="pr-3">train</th><th className="pr-3">val</th><th className="pr-3">acc</th><th>lr</th></tr>
                 </thead>
                 <tbody className="font-mono">
@@ -365,45 +479,59 @@ export default function RunDetailModal({ runId }: { runId: string }) {
           )}
 
           {tab === 'predictions' && (
-            predRows.length === 0 ? (
-              <div className="text-[11px] text-[#7a8088]">
-                Noch keine Sample-Vorhersagen — der Trainer schreibt sie bei jedem neuen Best-Checkpoint
-                (braucht einen Validierungs-Split).
+            !hasEval ? (
+              <div className="space-y-2 text-[11px] text-[#6f767e]">
+                <div>
+                  Noch keine Auswertung — der Trainer schreibt Diagramme + Stichproben bei jedem neuen
+                  Best-Checkpoint (braucht einen Validierungs-Split).
+                </div>
+                {isMultitask && epochEvents.length > 0 && (
+                  <div className="rounded border border-[#1f2429] bg-[#0a0d10] p-2 text-[10px] text-[#9aa1a8]">
+                    Dieser Joint-Run hat <span className="font-mono">keine eval.summary/sample.preds</span>-Events
+                    geschrieben — Fortschritt + Metriken siehst du unter „charts". Für die Diagramme
+                    (Konfusionsmatrix je Klassifikations-Kopf, Scatter je Regressions-Kopf) muss der
+                    Trainer pro Kopf eine <span className="font-mono">eval.summary</span> emittieren.
+                  </div>
+                )}
+              </div>
+            ) : evalHeads || predHeads ? (
+              // Multitask: one section per output head (diagram + sample table).
+              <div className="space-y-6">
+                {(evalHeads ?? predHeads!.map((p) => ({ output: p.output, task: p.task } as typeof p))).map((h) => {
+                  const ph = predHeads?.find((p) => p.output === h.output)
+                  return (
+                    <div key={h.output} className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded bg-[var(--accent-sel)] px-1.5 py-0.5 text-[10px] text-[var(--accent)]">{h.output || 'out'}</span>
+                        <span className="text-[11px] text-[#9aa1a8]">{h.task}</span>
+                      </div>
+                      {evalHeads && (
+                        <div className="rounded border border-[#1f2429] bg-[#0a0d10] p-3">
+                          <EvalDiagram summary={h as Parameters<typeof EvalDiagram>[0]['summary']} />
+                        </div>
+                      )}
+                      {ph && ph.rows.length > 0 && <PredictionTable rows={ph.rows} epoch={samplePreds?.epoch as number | undefined} />}
+                    </div>
+                  )
+                })}
               </div>
             ) : (
-              <div className="space-y-2">
-                <div className="text-[10px] text-[#7a8088]">
-                  Stichprobe aus dem Validierungs-Set beim besten Checkpoint
-                  {samplePreds?.epoch != null ? ` (Epoch ${(samplePreds.epoch as number) + 1})` : ''}.
-                </div>
-                <table className="w-full text-left text-[11px]">
-                  <thead className="text-[#7a8088]">
-                    <tr><th className="py-1 pr-3">#</th><th className="pr-3">Vorhersage</th><th className="pr-3">Wahrheit</th><th className="pr-3">Konfidenz</th><th></th></tr>
-                  </thead>
-                  <tbody className="font-mono">
-                    {predRows.map((r, i) => {
-                      const correct = r.correct as boolean | undefined
-                      return (
-                        <tr key={i} className="border-t border-[#171b1f]">
-                          <td className="py-0.5 pr-3 text-[#5a6068]">{i + 1}</td>
-                          <td className="pr-3 text-[#e6e8eb]">{String(r.pred)}</td>
-                          <td className="pr-3 text-[#9aa1a8]">{String(r.truth)}</td>
-                          <td className="pr-3">{r.conf != null ? Number(r.conf).toFixed(3) : '—'}</td>
-                          <td>{correct === undefined ? '' : correct ? <span className="text-emerald-400">✓</span> : <span className="text-rose-400">✗</span>}</td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+              <div className="space-y-5">
+                {evalSummary && (
+                  <div className="rounded border border-[#1f2429] bg-[#0a0d10] p-3">
+                    <EvalDiagram summary={evalSummary} />
+                  </div>
+                )}
+                {predRows.length > 0 && <PredictionTable rows={predRows} epoch={samplePreds?.epoch as number | undefined} />}
               </div>
             )
           )}
 
           {tab === 'hardware' && (
             gpu === null ? (
-              <div className="text-[11px] text-[#7a8088]">GPU-Status wird abgefragt…</div>
+              <div className="text-[11px] text-[#6f767e]">GPU-Status wird abgefragt…</div>
             ) : gpu.length === 0 ? (
-              <div className="text-[11px] text-[#7a8088]">
+              <div className="text-[11px] text-[#6f767e]">
                 Keine GPU sichtbar (kein <code>nvidia-smi</code> auf dem Ausführungs-Host, oder reines CPU-Training).
               </div>
             ) : (
@@ -414,7 +542,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
                     <div key={g.index} className="rounded border border-[#1f2429] bg-[#0a0d10] p-3">
                       <div className="mb-2 flex items-center text-[11px]">
                         <span className="text-[#e6e8eb]">GPU {g.index} · {g.name}</span>
-                        <span className="ml-auto font-mono text-[#7a8088]">{g.temp_c.toFixed(0)}°C</span>
+                        <span className="ml-auto font-mono text-[#6f767e]">{g.temp_c.toFixed(0)}°C</span>
                       </div>
                       <Meter label="Auslastung" pct={g.util_pct} text={`${g.util_pct.toFixed(0)}%`} />
                       <div className="h-1" />
@@ -469,13 +597,43 @@ function Meter({ label, pct, text }: { label: string; pct: number; text: string 
   const clamped = Math.max(0, Math.min(100, pct))
   return (
     <div>
-      <div className="mb-0.5 flex items-center text-[10px] text-[#7a8088]">
+      <div className="mb-0.5 flex items-center text-[10px] text-[#6f767e]">
         <span>{label}</span>
         <span className="ml-auto font-mono">{text}</span>
       </div>
       <div className="h-1.5 overflow-hidden rounded bg-[#1a1e22]">
-        <div className="h-full rounded bg-[#6ab7ff] transition-all" style={{ width: `${clamped.toFixed(1)}%` }} />
+        <div className="h-full rounded bg-[var(--accent)] transition-all" style={{ width: `${clamped.toFixed(1)}%` }} />
       </div>
+    </div>
+  )
+}
+
+function PredictionTable({ rows, epoch }: { rows: Array<Record<string, unknown>>; epoch?: number }) {
+  return (
+    <div className="space-y-2">
+      <div className="text-[10px] text-[#6f767e]">
+        Stichprobe aus dem Validierungs-Set beim besten Checkpoint
+        {epoch != null ? ` (Epoch ${epoch + 1})` : ''}.
+      </div>
+      <table className="w-full text-left text-[11px]">
+        <thead className="text-[#6f767e]">
+          <tr><th className="py-1 pr-3">#</th><th className="pr-3">Vorhersage</th><th className="pr-3">Wahrheit</th><th className="pr-3">Konfidenz</th><th></th></tr>
+        </thead>
+        <tbody className="font-mono">
+          {rows.map((r, i) => {
+            const correct = r.correct as boolean | undefined
+            return (
+              <tr key={i} className="border-t border-[#171b1f]">
+                <td className="py-0.5 pr-3 text-[#5a6068]">{i + 1}</td>
+                <td className="pr-3 text-[#e6e8eb]">{String(r.pred)}</td>
+                <td className="pr-3 text-[#9aa1a8]">{String(r.truth)}</td>
+                <td className="pr-3">{r.conf != null ? Number(r.conf).toFixed(3) : '—'}</td>
+                <td>{correct === undefined ? '' : correct ? <span className="text-emerald-400">✓</span> : <span className="text-rose-400">✗</span>}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -483,7 +641,7 @@ function Meter({ label, pct, text }: { label: string; pct: number; text: string 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded border border-[#1f2429] bg-[#0a0d10] px-3 py-2">
-      <div className="text-[10px] text-[#7a8088]">{label}</div>
+      <div className="text-[10px] text-[#6f767e]">{label}</div>
       <div className="mt-0.5 font-mono text-[13px] text-[#e6e8eb]">{value}</div>
     </div>
   )
@@ -492,7 +650,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 function LogBlock({ title, text, tone }: { title: string; text: string; tone?: 'err' }) {
   return (
     <div>
-      <div className="mb-1 text-[11px] text-[#7a8088]">{title}</div>
+      <div className="mb-1 text-[11px] text-[#6f767e]">{title}</div>
       <pre className={`max-h-72 overflow-auto rounded border border-[#1f2429] bg-[#0a0d10] p-2 text-[10px] ${tone === 'err' ? 'text-[#b85a62]' : 'text-[#9aa1a8]'}`}>{text || '—'}</pre>
     </div>
   )

@@ -8,9 +8,10 @@ import './chat/store'
 import './history/store'
 import './workspace/store'
 import { readAutosave, startAutosave } from './persistence/file'
-import { readTrainingAutosave, startTrainingAutosave } from './training/graph/autosave'
+import { startTrainingAutosaveToFile } from './training/graph/doc'
+import { startDataAutosaveToFile } from './data/graph/doc'
+import { startArchitectureDocSync } from './canvas/doc'
 import { useGraphStore } from './canvas/GraphStore'
-import { useTrainingGraphStore } from './training/graph/store'
 import { useWorkspaceStore } from './workspace/store'
 
 const ws = useWorkspaceStore.getState()
@@ -23,12 +24,14 @@ if (activeFile && activeFile.kind === 'file') {
 }
 startAutosave()
 
-// Restore the visual training graph (separate store, not file-bound).
-const restoredTraining = readTrainingAutosave()
-if (restoredTraining && restoredTraining.nodes.length > 0) {
-  useTrainingGraphStore.getState().loadSnapshot(restoredTraining)
-}
-startTrainingAutosave()
+// Training + data canvases are file-bound (canvasdoc/CanvasFileGate): they reopen
+// their bound .spinotrain/.spinodata on mount and autosave to it. No localStorage
+// restore here — that produced orphan graphs not tied to any file.
+startTrainingAutosaveToFile()
+startDataAutosaveToFile()
+// Mirror the architecture canvas's file binding to the workspace's active .spinoml
+// so its header/chooser stay correct (the workspace owns load/save).
+startArchitectureDocSync()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

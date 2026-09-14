@@ -46,19 +46,43 @@ PORT = int(os.environ.get("SPINOML_TORCH_PORT", "7421"))
 # data.x, …` — can run, both for synthetic shape inference and real dataset
 # samples. Mirrors the standalone __main__ harness the codegen emits.
 
-def _synth_graph(shape: list[int] | None, n_edges: int = 0, edge_dim: int = 0):
+def _synth_graph(shape: list[int] | None, n_edges: int = 0, edge_dim: int = 0,
+                 max_index: int | None = None):
     """A deterministic stand-in graph for shape inference / preview: x ramp in
-    [-2,2], a random edge_index over the nodes, single-graph batch."""
+    [-2,2], a random edge_index over the nodes, single-graph batch.
+
+    When ``max_index`` is set (the model contains an ``nn.Embedding`` that some
+    graph input feeds), x is built as NON-NEGATIVE integer ids in
+    [0, max_index-1] instead of the float ramp. The float ramp includes
+    negatives, and ``x.long()`` on a token graph would then hand the embedding
+    an out-of-range index → IndexError that crashes shape inference. Bounded ids
+    are valid both as embedding lookups and as GCN float features, so the
+    validator degrades gracefully for token-graph inputs without the user having
+    to clamp inside every encoder."""
     from torch_geometric.data import Data
     n = int(shape[0]) if shape else 1
     fdim = int(shape[1]) if shape and len(shape) > 1 else 1
     e = int(n_edges) if n_edges else max(1, n * 2)
-    x = torch.linspace(-2.0, 2.0, max(1, n * fdim)).reshape(n, fdim) if n * fdim > 0 else torch.zeros((n, fdim))
+    cells = max(1, n * fdim)
+    if max_index is not None and max_index >= 1:
+        # non-negative ids cycling through the safe range [0, max_index-1]
+        x = (torch.arange(cells, dtype=torch.float) % float(max_index)).reshape(n, fdim)
+    else:
+        x = torch.linspace(-2.0, 2.0, cells).reshape(n, fdim) if n * fdim > 0 else torch.zeros((n, fdim))
     edge_index = torch.randint(0, max(1, n), (2, e), dtype=torch.long)
     d = Data(x=x, edge_index=edge_index, batch=torch.zeros((n,), dtype=torch.long))
     if int(edge_dim) > 0:
         d.edge_attr = torch.zeros((e, int(edge_dim)))
     return d
+
+
+def _min_embedding_vocab(model) -> int | None:
+    """Smallest num_embeddings across the model's nn.Embedding modules, or None
+    if there are none. Synthetic graph/token ids must stay below this so the
+    embedding lookup never goes out of range during validation."""
+    vocabs = [m.num_embeddings for _, m in model.named_modules()
+              if isinstance(m, torch.nn.Embedding)]
+    return min(vocabs) if vocabs else None
 
 
 def _sample_graph_data(path: str, options: dict | None):
@@ -149,11 +173,14 @@ def infer(
 
     try:
         dtypes = input_dtypes or []
+        # If any nn.Embedding is present, bound synthetic graph ids to the
+        # smallest vocab so a token-graph input never indexes out of range.
+        max_index = _min_embedding_vocab(model)
         xs = []
         for i, s in enumerate(input_shapes):
             dt = dtypes[i] if i < len(dtypes) else "float32"
             if dt == "graph":
-                xs.append(_synth_graph(s))
+                xs.append(_synth_graph(s, max_index=max_index))
             elif dt in ("int64", "long"):
                 xs.append(torch.zeros(s, dtype=torch.long))
             else:
@@ -409,6 +436,24 @@ def _preview_input(t: torch.Tensor) -> dict | None:
     return _preview_tensor(t[0] if t.dim() >= 1 else t)
 
 
+def _espf_label_preview(prev: dict | None, opt: dict | None) -> dict | None:
+    """If an input is an ESPF token sequence, decode its token ids back to the
+    NAMED substructures (interpretable) and attach them as `labels` next to the
+    `tokens` preview. Best-effort — returns prev unchanged on any miss."""
+    if not (isinstance(prev, dict) and prev.get("kind") == "tokens" and isinstance(opt, dict)):
+        return prev
+    cb = opt.get("espf_codebook")
+    if not cb:
+        return prev
+    try:
+        subs = ds_mod.espf_substructures({"codebook": cb})
+        if subs:
+            prev = {**prev, "labels": [subs[i] if 0 <= i < len(subs) else "?" for i in prev["values"]]}
+    except Exception:
+        pass
+    return prev
+
+
 def _weights_for(mod) -> dict | None:
     if isinstance(mod, nn.Linear):
         return {"kind": "matrix", "shape": list(mod.weight.shape),
@@ -488,10 +533,11 @@ def activations(
                     break
             if n_hint <= 0:
                 n_hint = 10
+            max_index = _min_embedding_vocab(model)
             for i, s in enumerate(input_shapes):
                 dt = dtypes[i] if i < len(dtypes) else "float32"
                 if dt == "graph":
-                    xs.append(_synth_graph(s))
+                    xs.append(_synth_graph(s, max_index=max_index))
                 elif dt in ("int64", "long"):
                     if len(s) == 2 and int(s[0]) == 2:
                         # edge_index → a random graph so the GNN viz is meaningful
@@ -585,7 +631,10 @@ def activations(
     try:
         for i, xi in enumerate(xs):
             if isinstance(xi, torch.Tensor):
-                acts[f"__input_{i}__"] = {"stats": _act_stats(xi), "preview": _preview_input(xi)}
+                opt_i = input_options[i] if (input_options and i < len(input_options)
+                                             and isinstance(input_options[i], dict)) else None
+                prev = _espf_label_preview(_preview_input(xi), opt_i)
+                acts[f"__input_{i}__"] = {"stats": _act_stats(xi), "preview": prev}
             else:
                 # PyG Data/Batch graph input: stats from node features, preview = edges.
                 x = getattr(xi, "x", None)
@@ -686,6 +735,57 @@ def deps_install(specs: list[str]) -> dict:
         return {"ok": False, "error": f"could not run pip: {type(e).__name__}: {e}"}
     return {"ok": r.returncode == 0, "returncode": r.returncode,
             "log": ((r.stdout or "") + (r.stderr or "")).strip()[-8000:]}
+
+
+def run_workspace_script(payload: dict) -> dict:
+    """Run a data-pipeline script in the workspace — the no-chatbot run for the
+    data canvas. Writes `code` to <root>/<relpath>, then mode 'shell' runs it now
+    (cwd=root, captured, ~10 min cap) or 'slurm' submits it via sbatch. Uses the
+    sidecar's OWN interpreter (sys.executable) so the script sees the same
+    torch/rdkit/pyg as inspection. Localhost-only, like the rest of this sidecar."""
+    import subprocess
+    import re as _re
+    root = os.path.expanduser(str(payload.get("root") or ""))
+    rel = str(payload.get("relpath") or "agent/data_pipeline.py").replace("\\", "/").lstrip("/")
+    code = payload.get("code")
+    mode = "slurm" if str(payload.get("mode") or "shell") == "slurm" else "shell"
+    if not root or not os.path.isdir(root):
+        return {"ok": False, "error": f"workspace root not found: {root!r}"}
+    if ".." in rel.split("/"):
+        return {"ok": False, "error": "relpath may not contain '..'"}
+    abspath = os.path.join(root, rel)
+    if isinstance(code, str):
+        try:
+            os.makedirs(os.path.dirname(abspath) or root, exist_ok=True)
+            with open(abspath, "w", encoding="utf-8") as f:
+                f.write(code)
+        except Exception as e:
+            return {"ok": False, "error": f"write failed: {type(e).__name__}: {e}"}
+    elif not os.path.exists(abspath):
+        return {"ok": False, "error": f"no code given and {rel} does not exist"}
+    try:
+        if mode == "slurm":
+            r = subprocess.run(["sbatch", rel], cwd=root, capture_output=True, text=True, timeout=120)
+            m = _re.search(r"Submitted batch job (\d+)", f"{r.stdout}\n{r.stderr}")
+            return {"ok": r.returncode == 0, "mode": "slurm", "code": r.returncode,
+                    "stdout": r.stdout[-8000:], "stderr": r.stderr[-8000:],
+                    "job_id": m.group(1) if m else None}
+        if rel.endswith(".py"):
+            cmd = [sys.executable, "-u", rel]
+        elif rel.endswith(".sh"):
+            cmd = ["bash", rel]
+        else:
+            cmd = ["bash", "-lc", rel]
+        r = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=600)
+        return {"ok": r.returncode == 0, "mode": "shell", "code": r.returncode,
+                "stdout": r.stdout[-16000:], "stderr": r.stderr[-16000:], "timed_out": False}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "mode": mode, "timed_out": True,
+                "error": "Zeitlimit überschritten (shell ~10 min) — für schwere Jobs SLURM nutzen."}
+    except FileNotFoundError as e:
+        return {"ok": False, "mode": mode, "error": f"Befehl nicht gefunden: {e}"}
+    except Exception as e:
+        return {"ok": False, "mode": mode, "error": f"run failed: {type(e).__name__}: {e}"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -800,6 +900,9 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(400, {"ok": False, "error": "expected {specs: str[]}"})
                     return
                 self._json(200, deps_install([str(s) for s in specs]))
+                return
+            if self.path == "/run_script":
+                self._json(200, run_workspace_script(payload))
                 return
         except Exception as e:
             self._json(500, {

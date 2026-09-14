@@ -1,8 +1,9 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import Editor from '@monaco-editor/react'
 import { useGraphStore } from '../canvas/GraphStore'
 import { generate } from './generator'
 import { useInferenceStore } from '../inference/store'
+import ExplainModal from './ExplainModal'
 
 export default function CodePreview() {
   const nodes = useGraphStore((s) => s.nodes)
@@ -14,7 +15,10 @@ export default function CodePreview() {
   const failingNodeId = useInferenceStore((s) => s.failingNodeId)
   const failingLayerType = useInferenceStore((s) => s.failingNodeLayerType)
 
+  const [explaining, setExplaining] = useState(false)
+
   const { code, issues } = useMemo(() => generate(nodes, edges), [nodes, edges])
+  const hasModel = nodes.some((n) => n.data.layerType !== 'Input' && n.data.layerType !== 'Graph')
 
   const showRuntimeError = inferenceStatus === 'error' && inferenceError
   const statusLabel = showRuntimeError
@@ -31,10 +35,21 @@ export default function CodePreview() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-7 shrink-0 items-center justify-between border-b border-[#1f2429] px-3 text-xs uppercase tracking-wide text-[#7a8088]">
+      <div className="flex h-7 shrink-0 items-center justify-between border-b border-[#1f2429] px-3 text-xs uppercase tracking-wide text-[#6f767e]">
         <span>Generated PyTorch</span>
-        <span className={`text-[10px] normal-case ${statusColor}`}>{statusLabel}</span>
+        <div className="flex items-center gap-2">
+          <button
+            className="rounded border border-[#262c33] px-1.5 py-0.5 text-[10px] normal-case text-[#9aa1a8] hover:bg-[#1f2429] hover:text-[#e6e8eb] disabled:opacity-40"
+            onClick={() => setExplaining(true)}
+            disabled={!hasModel}
+            title="Was macht dieses Modell? (kurze Erklärung)"
+          >
+            Erklären
+          </button>
+          <span className={`text-[10px] normal-case ${statusColor}`}>{statusLabel}</span>
+        </div>
       </div>
+      {explaining && <ExplainModal onClose={() => setExplaining(false)} />}
       {showRuntimeError && (
         <div className="shrink-0 border-b border-[#1f2429] bg-rose-950/30 px-3 py-1.5 font-mono text-[10px] leading-snug text-rose-300">
           {failingNodeId && (

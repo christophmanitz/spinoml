@@ -3,6 +3,7 @@ import { isTauri, type DatasetEntry } from '../workspace/tauri-fs'
 import { inspectDataset, statsDataset, smokeDataset } from './client'
 import type { InspectResult, StatsResult, SmokeResult } from './types'
 import { useGraphStore } from '../canvas/GraphStore'
+import { LAYERS } from '../layers/registry'
 import { generate } from '../codegen/generator'
 import { useProjectStore } from '../project/store'
 import { useWorkspaceStore } from '../workspace/store'
@@ -123,8 +124,19 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
     // Input-kind nodes in node order = the codegen forward-arg order. Includes
     // the whole-graph `Graph` node (kind input), which binds 1:1 to a graph
     // dataset / manifest branch.
-    const inputNodes = nodes.filter((n) => n.data.layerType === 'Input' || n.data.layerType === 'Graph')
-    const perInputDatasets = inputNodes.map((n) => String(n.data.params.dataset ?? ''))
+    // Kind-driven so every input-kind node (Input/Graph/Sequence/ESPF/…) is covered.
+    const inputNodes = nodes.filter((n) => LAYERS[n.data.layerType]?.kind === 'input')
+    // A connected Manifest node's dataset (the manifest is its own node now) wins
+    // over the input's own `dataset` (standalone graph dataset).
+    const manifestRelFor = (id: string): string => {
+      for (const e of edges) {
+        if (e.target !== id) continue
+        const src = nodes.find((n) => n.id === e.source)
+        if (src && src.data.layerType === 'Manifest') return String(src.data.params.dataset ?? '')
+      }
+      return ''
+    }
+    const perInputDatasets = inputNodes.map((n) => manifestRelFor(n.id) || String(n.data.params.dataset ?? ''))
     const perInputOptions = inputNodes.map((n) => {
       // A Graph node pulls the WHOLE graph (x/edge_index/batch/edge_attr) from
       // one source; the sidecar assembles a Data. `branch` selects the manifest
@@ -140,13 +152,11 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
       const opt: { features?: string[]; target?: string; field?: string } = {}
       if (Array.isArray(feats) && feats.length) opt.features = feats
       if (target) opt.target = target
-      // For graph datasets (e.g. molecule), the Input's name selects which field
-      // to pull (x / edge_index / batch). Manifest datasets need a fully-qualified
-      // slot ('<branch>.x'), which can't be the codegen-valid Input name, so it's
-      // stored separately in `bind_field` and wins when present. Ignored by
-      // non-graph dataset kinds.
+      // A non-graph input fed by a manifest branch reads '<branch>.x'; else an
+      // explicit bind_field slot, else the Input's name (graph-dataset field).
+      const branch = String(n.data.params.branch ?? '')
       const bindField = n.data.params.bind_field
-      opt.field = bindField ? String(bindField) : String(n.data.params.name ?? 'x')
+      opt.field = bindField ? String(bindField) : branch ? `${branch}.x` : String(n.data.params.name ?? 'x')
       return opt
     })
     const allBound = inputs.length > 1 && perInputDatasets.every((d) => d.length > 0)

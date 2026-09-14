@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -24,11 +24,18 @@ export default function Terminal() {
   // We re-mount when the active connection identity changes; subscribing
   // here keeps the effect dependency simple and avoids hidden coupling.
   const currentId = useConnectionsStore((s) => s.currentId)
+  // Bumping restartNonce re-runs the effect → respawns the PTY. `exited` shows
+  // the reconnect button. Without these a dropped connection left the terminal
+  // dead with no way back short of switching connections.
+  const [restartNonce, setRestartNonce] = useState(0)
+  const [exited, setExited] = useState(false)
+  const reconnect = () => setRestartNonce((n) => n + 1)
 
   useEffect(() => {
     if (!isTauri()) return
     const el = containerRef.current
     if (!el) return
+    setExited(false)
 
     const conn = getCurrentConnection()
     const cwd = useWorkspaceStore.getState().workspaceRoot ?? undefined
@@ -40,9 +47,9 @@ export default function Terminal() {
       fontFamily: 'ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace',
       fontSize: 13,
       theme: {
-        background: '#0b0d10',
+        background: '#0a0c0f',
         foreground: '#e6e8eb',
-        cursor: '#6ab7ff',
+        cursor: 'var(--accent)',
         selectionBackground: '#2a3038',
       },
       convertEol: false,
@@ -87,7 +94,9 @@ export default function Terminal() {
         unlistenExit = await listen<string | null>(`pty:${sessionId}:exit`, (e) => {
           const tail = e.payload ? `\r\n${e.payload}` : ''
           term.writeln(`\r\n\x1b[33m[terminal exited]\x1b[0m${tail}`)
+          term.writeln('\x1b[2mEnter drücken oder „Neu verbinden" klicken, um die Sitzung wiederherzustellen.\x1b[0m')
           sessionId = null
+          setExited(true)
         })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -99,6 +108,10 @@ export default function Terminal() {
     const onData = term.onData((data) => {
       if (sessionId) {
         invoke('pty_write', { id: sessionId, data }).catch(() => {})
+      } else if (data.includes('\r')) {
+        // Session is dead — Enter respawns it (re-reads the current connection,
+        // so it works again once ssh/network has recovered).
+        reconnect()
       }
     })
 
@@ -144,15 +157,26 @@ export default function Terminal() {
       }
       term.dispose()
     }
-  }, [currentId])
+  }, [currentId, restartNonce])
 
   if (!isTauri()) {
     return (
-      <div className="flex h-full items-center justify-center text-xs text-[#7a8088]">
+      <div className="flex h-full items-center justify-center text-xs text-[#6f767e]">
         Das Terminal braucht die Tauri-Desktop-App.
       </div>
     )
   }
 
-  return <div ref={containerRef} className="h-full w-full bg-[#0b0d10]" />
+  return (
+    <div className="relative h-full w-full bg-[#0a0c0f]">
+      <div ref={containerRef} className="h-full w-full" />
+      {exited && (
+        <button
+          className="absolute right-2 top-2 rounded border border-[#3a4148] bg-[#13171b]/90 px-2 py-1 text-xs text-[#e6e8eb] shadow hover:bg-[#1a1f24]"
+          onClick={reconnect}
+          title="PTY-Sitzung neu starten"
+        >↻ Neu verbinden</button>
+      )}
+    </div>
+  )
 }

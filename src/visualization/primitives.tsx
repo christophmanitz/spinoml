@@ -7,7 +7,7 @@ function hexToRgb(hex: string): [number, number, number] {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
 }
 
-const NEG: [number, number, number] = [106, 183, 255] // blue  (#6ab7ff)
+const NEG: [number, number, number] = [106, 183, 255] // blue  (var(--accent))
 const POS: [number, number, number] = [255, 107, 107] // red   (#ff6b6b)
 
 /** Diverging colour: negative → blue, 0 → transparent, positive → red. */
@@ -37,7 +37,7 @@ export function gridExtent(grid: number[][]): { min: number; max: number; absMax
 }
 
 export function Heatmap({
-  grid, cell = 10, gap = 1, mode = 'mono', hex = '#6ab7ff', maxW,
+  grid, cell = 10, gap = 1, mode = 'mono', hex = 'var(--accent)', maxW,
 }: {
   grid: number[][]
   cell?: number
@@ -77,7 +77,7 @@ export function Heatmap({
  *  1D → a strip of cells, 2D → a labelled matrix, 3D → a stack/cube (depth =
  *  channels), 4D → several cubes (batch). The front face is painted with the
  *  real values when a `face` grid is supplied. Axis sizes are drawn on the glyph. */
-export function TensorShape({ shape, face, hex = '#6ab7ff', compact = false }: { shape: number[]; face?: number[][]; hex?: string; compact?: boolean }) {
+export function TensorShape({ shape, face, hex = 'var(--accent)', compact = false }: { shape: number[]; face?: number[][]; hex?: string; compact?: boolean }) {
   if (!shape || shape.length === 0) {
     return <div className="font-mono text-[11px]" style={{ color: hex }}>Skalar</div>
   }
@@ -100,7 +100,7 @@ export function TensorShape({ shape, face, hex = '#6ab7ff', compact = false }: {
         {Array.from({ length: shown }).map((_, i) => (
           <rect key={i} x={i * cs} y={0} width={cs - 0.6} height={cs} fill={hex} fillOpacity={0.14} stroke={hex} strokeWidth={1} />
         ))}
-        {n > shown && <text x={stripW + 2} y={cs - 2} fontSize={9} fill="#7a8088">…</text>}
+        {n > shown && <text x={stripW + 2} y={cs - 2} fontSize={9} fill="#6f767e">…</text>}
         <text x={stripW / 2} y={cs + 10} textAnchor="middle" fontSize={9} fill="#9aa1a8">{n}</text>
       </svg>
     )
@@ -177,7 +177,7 @@ export function TensorShape({ shape, face, hex = '#6ab7ff', compact = false }: {
       {B > 1 && <text x={2} y={10} fontSize={9} fill="#9aa1a8">Batch {B}</text>}
       {blocks}
       {B > drawnB && (
-        <text x={padL + drawnB * (blockW + gap) - gap + 4} y={padT + depthH + sh / 2} fontSize={9} fill="#7a8088">…</text>
+        <text x={padL + drawnB * (blockW + gap) - gap + 4} y={padT + depthH + sh / 2} fontSize={9} fill="#6f767e">…</text>
       )}
     </svg>
   )
@@ -255,7 +255,7 @@ export function NodeLinkGraph({
 /** Tiny colour legend explaining how to read a chart. */
 export function Legend({ items }: { items: { color: string; label: string }[] }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[#7a8088]">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[#6f767e]">
       {items.map((it, i) => (
         <span key={i} className="flex items-center gap-1">
           <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: it.color }} />
@@ -268,7 +268,7 @@ export function Legend({ items }: { items: { color: string; label: string }[] })
 
 export const LEGEND_DIVERGING = [
   { color: '#ff6b6b', label: 'positiv (+)' },
-  { color: '#6ab7ff', label: 'negativ (−)' },
+  { color: 'var(--accent)', label: 'negativ (−)' },
 ]
 export const legendMono = (hex: string) => [{ color: hex, label: 'heller = stärker / aktiver' }]
 
@@ -298,7 +298,7 @@ export function VectorBars({
             y={v >= 0 ? mid - bh : mid}
             width={Math.max(1, bw - 0.5)}
             height={bh}
-            fill={v >= 0 ? hex : '#6ab7ff'}
+            fill={v >= 0 ? hex : 'var(--accent)'}
           />
         )
       })}

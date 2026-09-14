@@ -1009,6 +1009,7 @@ struct ParsedRun {
     status: String,
     run_json: String,
     metrics: String,
+    events: String,
 }
 
 #[tauri::command]
@@ -1039,6 +1040,7 @@ pub async fn ssh_list_training_runs(
              echo MLF_STATUS_BEGIN; cat \"$d/status\" 2>/dev/null; echo; echo MLF_STATUS_END; \
              echo MLF_RUNJSON_BEGIN; cat \"$d/run.json\" 2>/dev/null; echo; echo MLF_RUNJSON_END; \
              echo MLF_METRICS_BEGIN; cat \"$d/metrics.json\" 2>/dev/null; echo; echo MLF_METRICS_END; \
+             echo MLF_EVENTS_BEGIN; grep -hE '\"(epoch.end|run.done)\"' \"$d/events.jsonl\" 2>/dev/null; echo; echo MLF_EVENTS_END; \
            done; \
          fi"
     );
@@ -1059,6 +1061,7 @@ pub async fn ssh_list_training_runs(
                 status: String::new(),
                 run_json: String::new(),
                 metrics: String::new(),
+                events: String::new(),
             });
             section = "";
             continue;
@@ -1079,7 +1082,8 @@ pub async fn ssh_list_training_runs(
             "MLF_STATUS_BEGIN" => { section = "status"; continue; }
             "MLF_RUNJSON_BEGIN" => { section = "runjson"; continue; }
             "MLF_METRICS_BEGIN" => { section = "metrics"; continue; }
-            "MLF_STATUS_END" | "MLF_RUNJSON_END" | "MLF_METRICS_END" => { section = ""; continue; }
+            "MLF_EVENTS_BEGIN" => { section = "events"; continue; }
+            "MLF_STATUS_END" | "MLF_RUNJSON_END" | "MLF_METRICS_END" | "MLF_EVENTS_END" => { section = ""; continue; }
             _ => {}
         }
         if let Some(r) = cur.as_mut() {
@@ -1087,6 +1091,7 @@ pub async fn ssh_list_training_runs(
                 "status" => { r.status.push_str(line); r.status.push('\n'); }
                 "runjson" => { r.run_json.push_str(line); r.run_json.push('\n'); }
                 "metrics" => { r.metrics.push_str(line); r.metrics.push('\n'); }
+                "events" => { r.events.push_str(line); r.events.push('\n'); }
                 _ => {}
             }
         }
@@ -1104,6 +1109,7 @@ pub async fn ssh_list_training_runs(
                 &r.id,
                 r.run_json.trim(),
                 r.metrics.trim(),
+                r.events.trim(),
                 r.status.trim(),
                 r.alive,
                 r.has_checkpoint,
@@ -1190,7 +1196,7 @@ pub async fn ssh_read_training_run_file(
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     training::validate_run_id(&run_id)?;
-    if !training::READABLE.contains(&name.as_str()) {
+    if !training::is_readable(&name) {
         return Err(format!("file {name:?} is not readable from a run dir"));
     }
     let p_q = shell_quote_path(&format!("{}/{}", remote_run_dir(&root, &run_id), name));
@@ -1343,10 +1349,36 @@ pub async fn ssh_promote_checkpoint(
 /// Remote GPU snapshot (empty if no nvidia-smi). Mirror of the local
 /// `gpu_stats`. The hardware strip polls this while a remote run is alive.
 #[tauri::command]
-pub async fn ssh_gpu_stats(alias: String, root: String) -> Result<Vec<training::GpuStat>, String> {
-    let _ = &root;
+pub async fn ssh_gpu_stats(
+    alias: String,
+    root: String,
+    run_id: Option<String>,
+) -> Result<Vec<training::GpuStat>, String> {
     validate_alias(&alias)?;
-    let cmd = format!("{} 2>/dev/null || true", training::NVIDIA_SMI_QUERY);
+    // For a SLURM run the GPU sits on the COMPUTE node, not the login node we ssh
+    // into. Read the run's pid file (frozen `slurm:<jobid>`) and probe the job's
+    // allocation via `srun --overlap --jobid=<id>` so nvidia-smi runs on the right
+    // node. Non-SLURM (or no run id) → the login-node probe (unchanged).
+    let smi = training::NVIDIA_SMI_QUERY;
+    let cmd = if let Some(rid) = run_id {
+        if training::validate_run_id(&rid).is_ok() {
+            validate_remote_root(&root)?;
+            let pid_q = shell_quote_path(&format!("{}/pid", remote_run_dir(&root, &rid)));
+            // jobid = digits after "slurm:"; if present, srun onto the alloc (capped
+            // by `timeout` so a queued/uncooperative step can't hang the poll);
+            // otherwise fall back to the login-node probe.
+            format!(
+                "pid=$(cat {pid_q} 2>/dev/null); jid=${{pid#slurm:}}; \
+                 if [ \"$pid\" != \"$jid\" ] && [ -n \"$jid\" ]; then \
+                   timeout 15 srun --overlap --jobid=\"$jid\" {smi} 2>/dev/null || true; \
+                 else {smi} 2>/dev/null || true; fi"
+            )
+        } else {
+            format!("{smi} 2>/dev/null || true")
+        }
+    } else {
+        format!("{smi} 2>/dev/null || true")
+    };
     let out = ssh_exec(&alias, &cmd, None).await?;
     Ok(training::parse_gpu_stats(&out))
 }

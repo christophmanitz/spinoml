@@ -88,7 +88,7 @@ export default function FileViewerModal({ fileId, onClose }: { fileId: string; o
         </div>
         <div className="min-h-0 flex-1">
           {binary ? (
-            <div className="flex h-full items-center justify-center px-6 text-center text-[12px] text-[#7a8088]">
+            <div className="flex h-full items-center justify-center px-6 text-center text-[12px] text-[#6f767e]">
               <div>
                 <div className="mb-1 text-[#9aa1a8]">Binärdatei (.{ext})</div>
                 <div>Keine Textvorschau verfügbar.</div>
@@ -97,7 +97,7 @@ export default function FileViewerModal({ fileId, onClose }: { fileId: string; o
           ) : error ? (
             <div className="flex h-full items-center justify-center px-6 text-center text-[12px] text-[#ff7a85]">{error}</div>
           ) : text == null ? (
-            <div className="flex h-full items-center justify-center text-[12px] text-[#7a8088]">lade…</div>
+            <div className="flex h-full items-center justify-center text-[12px] text-[#6f767e]">lade…</div>
           ) : (
             <Editor
               height="100%"

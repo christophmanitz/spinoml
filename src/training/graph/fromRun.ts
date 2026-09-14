@@ -32,7 +32,16 @@ export function runConfigToTrainingSnapshot(config: RunConfig): TrainingGraphSna
   const splitId = add('Split', { val_ratio: t.val_split, seed: t.seed })
   const loaderId = add('DataLoader', { batch_size: t.batch_size })
   const modelId = add('ModelSource', { model: config.model_path })
-  const lossId = add('Loss', { kind: t.loss.kind })
+  // Multitask: one Head node per output. Single-task: the legacy Loss node.
+  const objectiveIds: string[] = t.heads && t.heads.length
+    ? t.heads.map((h) => add('Head', {
+        output: h.output,
+        target: h.target,
+        loss: h.loss,
+        weight: h.weight,
+        ...(h.label_smoothing != null ? { label_smoothing: h.label_smoothing } : {}),
+      }))
+    : [add('Loss', { kind: t.loss.kind })]
   const optId = add('Optimizer', {
     kind: t.optimizer.kind,
     lr: t.optimizer.lr,
@@ -52,7 +61,7 @@ export function runConfigToTrainingSnapshot(config: RunConfig): TrainingGraphSna
   edges.push({ source: loaderId, target: loopId })
   // components → loop
   edges.push({ source: modelId, target: loopId })
-  edges.push({ source: lossId, target: loopId })
+  for (const id of objectiveIds) edges.push({ source: id, target: loopId })
   edges.push({ source: optId, target: loopId })
 
   if (t.scheduler && t.scheduler.kind !== 'none') {

@@ -26,7 +26,7 @@ export function colorFor(kind: DatasetKind): string {
     case 'pyg': return 'bg-teal-900/40 text-teal-300'
     case 'graph_folder': return 'bg-teal-900/40 text-teal-300'
     case 'manifest': return 'bg-indigo-900/40 text-indigo-300'
-    default: return 'bg-[#1f2429] text-[#7a8088]'
+    default: return 'bg-[#1f2429] text-[#6f767e]'
   }
 }
 

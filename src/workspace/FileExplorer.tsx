@@ -16,6 +16,23 @@ function pyNameFor(name: string): string {
   return name.replace(/\.spinoml$/i, '').replace(/\W+/g, '_') + '.py'
 }
 
+// Open a training/data graph file onto its file-bound canvas: load it into the
+// store, mark it hydrated + bind it (so the CanvasFileGate shows it instead of the
+// chooser), then switch to that view. Mirrors how .spinoml opens via the workspace.
+async function openGraphOnCanvas(kind: 'training' | 'data', relpath: string, load: () => Promise<unknown>) {
+  try {
+    await load()
+    const [{ useCanvasDocStore }, { markCanvasHydrated }, { useViewModeStore }] = await Promise.all([
+      import('../canvasdoc/store'),
+      import('../canvasdoc/CanvasFileGate'),
+      import('../training/graph/viewMode'),
+    ])
+    markCanvasHydrated(kind, relpath)
+    useCanvasDocStore.getState().setBound(kind, relpath)
+    useViewModeStore.getState().setMode(kind)
+  } catch { /* malformed / not on disk — ignore */ }
+}
+
 // Shared props threaded down to every row.
 type RowCtx = {
   rename: string | null
@@ -107,7 +124,7 @@ export default function FileExplorer() {
   return (
     <div className="flex h-full min-h-0 flex-col text-sm">
       <div className="flex shrink-0 items-center justify-between border-b border-[#1f2429] px-2 py-1">
-        <div className="flex min-w-0 items-center gap-1.5 text-xs uppercase tracking-wide text-[#7a8088]">
+        <div className="flex min-w-0 items-center gap-1.5 text-xs uppercase tracking-wide text-[#6f767e]">
           <span>{mode === 'tauri' ? 'Workspace' : 'Models'}</span>
           {mode === 'tauri' && workspaceRoot && (
             <span className="truncate font-mono text-[10px] normal-case text-[#5b6168]" title={workspaceRoot}>
@@ -115,7 +132,7 @@ export default function FileExplorer() {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-1 text-[#7a8088]">
+        <div className="flex items-center gap-1 text-[#6f767e]">
           {mode === 'tauri' && (
             <IconButton title="Aktualisieren (von Disk neu laden)" onClick={() => { void refreshFromDisk() }}>↻</IconButton>
           )}
@@ -236,11 +253,11 @@ function Section({
     <div className="mb-0.5">
       <button
         onClick={() => toggle(sectionKey)}
-        className="flex w-full items-center gap-1 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#7a8088] hover:text-[#9aa1a8]"
+        className="flex w-full items-center gap-1 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#6f767e] hover:text-[#9aa1a8]"
       >
         <span className="inline-block w-3 text-center">{collapsed ? '▸' : '▾'}</span>
         <span className="flex-1 text-left">{title}</span>
-        {count > 0 && <span className="rounded bg-[#1a1e22] px-1 text-[9px] text-[#7a8088]">{count}</span>}
+        {count > 0 && <span className="rounded bg-[#1a1e22] px-1 text-[9px] text-[#6f767e]">{count}</span>}
       </button>
       {!collapsed && children}
     </div>
@@ -321,7 +338,7 @@ function RunsSection() {
       {runs.length > 12 && (
         <button
           onClick={() => setTab('experiments')}
-          className="px-3 py-1 text-left text-[10px] text-[#6ab7ff] hover:underline"
+          className="px-3 py-1 text-left text-[10px] text-[var(--accent)] hover:underline"
           style={{ paddingLeft: 20 }}
         >
           +{runs.length - 12} weitere → Experiments-Tab
@@ -438,12 +455,16 @@ function Row({
     if (!isFile) return
     const lower = entry.name.toLowerCase()
     if (lower.endsWith('.spinoml')) { open(id); return }
-    // .spinotrain: load the training graph onto the training canvas + switch mode.
+    // .spinotrain / .spinodata: load the graph onto its canvas, BIND the file (so
+    // the CanvasFileGate shows it instead of the chooser) + switch to that mode.
     if (lower.endsWith('.spinotrain')) {
-      void import('../training/graph/files').then(({ loadTrainingGraph }) => loadTrainingGraph(id))
-        .then(() => import('../training/graph/viewMode'))
-        .then(({ useViewModeStore }) => useViewModeStore.getState().setMode('training'))
-        .catch(() => { /* malformed / not on disk */ })
+      void openGraphOnCanvas('training', id, () =>
+        import('../training/graph/files').then(({ loadTrainingGraph }) => loadTrainingGraph(id)))
+      return
+    }
+    if (lower.endsWith('.spinodata')) {
+      void openGraphOnCanvas('data', id, () =>
+        import('../data/graph/files').then(({ openDataGraph }) => openDataGraph(id)))
       return
     }
     // datasets/: hand off to the dataset modal instead of trying to parse.

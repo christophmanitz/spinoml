@@ -6,8 +6,8 @@ export const TRAINING_DRAG_MIME = 'application/spinoml-training'
 export default function TrainingPalette() {
   return (
     <aside className="h-full overflow-y-auto p-2 text-sm">
-      <div className="mb-2 text-xs uppercase tracking-wide text-[#7a8088]">Training</div>
-      <div className="mb-3 text-[10px] text-[#7a8088]">drag onto canvas</div>
+      <div className="mb-2 text-xs uppercase tracking-wide text-[#6f767e]">Training</div>
+      <div className="mb-3 text-[10px] text-[#6f767e]">drag onto canvas</div>
       {TRAINING_GROUPS.map((group) => {
         const color = colorForTrainingCategory(group.name)
         const icon = iconForTrainingCategory(group.name)

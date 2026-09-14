@@ -21,7 +21,7 @@ export default class ErrorBoundary extends Component<Props, State> {
     const message = this.state.error.message ?? String(this.state.error)
     const stack = this.state.error.stack ?? ''
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-[#0b0d10] p-6 text-[#e6e8eb]">
+      <div className="flex h-screen w-screen items-center justify-center bg-[#0a0c0f] p-6 text-[#e6e8eb]">
         <div className="w-full max-w-2xl rounded border border-rose-900/60 bg-rose-950/30 p-4">
           <div className="mb-2 text-sm font-medium text-rose-300">UI crashed — the app stayed alive.</div>
           <pre className="mb-3 max-h-48 overflow-auto rounded bg-[#0e1216] p-2 font-mono text-[11px] leading-snug text-rose-200">
@@ -42,7 +42,7 @@ export default class ErrorBoundary extends Component<Props, State> {
               Reload page
             </button>
           </div>
-          <div className="mt-3 text-[10px] text-[#7a8088]">
+          <div className="mt-3 text-[10px] text-[#6f767e]">
             Tip: most likely cause is a bad layer-param value. Check the chat for the last
             tool call, undo it, or hit “reset” in the chat panel.
           </div>

@@ -4,7 +4,7 @@ import type { Series } from './LineChart'
 // A small, stable palette so the same logical series gets the same colour
 // across charts and across runs in compare-mode.
 export const CHART_COLORS = [
-  '#6ab7ff', '#5fd39a', '#e6c34a', '#ff7a85', '#b98cff', '#4ec9c9', '#ff9f5a', '#9aa1a8',
+  'var(--accent)', '#5fd39a', '#e6c34a', '#ff7a85', '#b98cff', '#4ec9c9', '#ff9f5a', '#9aa1a8',
 ]
 
 export function parseEventLines(text: string): TrainingEvent[] {

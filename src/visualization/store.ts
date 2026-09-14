@@ -161,9 +161,19 @@ export const useVizStore = create<VizState>((set, get) => ({
     let abspaths: string[] | null = null
     let inputOptions: Record<string, unknown>[] | null = null
 
+    // A connected Manifest node's dataset wins over the input's own `dataset`
+    // (mirrors the smoke path in datasets/store.ts).
+    const manifestRelFor = (id: string): string => {
+      for (const e of edges) {
+        if (e.target !== id) continue
+        const src = nodes.find((m) => m.id === e.source)
+        if (src && src.data.layerType === 'Manifest') return String(src.data.params.dataset ?? '')
+      }
+      return ''
+    }
     const perInputRel = inputs.map((inp) => {
       const n = nodes.find((m) => m.id === inp.id)
-      return String(n?.data.params.dataset ?? '')
+      return manifestRelFor(inp.id) || String(n?.data.params.dataset ?? '')
     })
     if (perInputRel.every((r) => r.length > 0)) {
       const paths: string[] = []
@@ -185,11 +195,19 @@ export const useVizStore = create<VizState>((set, get) => ({
             if (branch) opt.branch = branch
             return opt
           }
-          const opt: Record<string, unknown> = { field: String(n?.data.params.name ?? inp.name) }
+          // Non-graph input: a manifest branch reads '<branch>.x', else an explicit
+          // bind_field slot, else the Input's name (mirrors the smoke path).
+          const branch = String(n?.data.params.branch ?? '')
+          const bindField = n?.data.params.bind_field
+          const field = bindField ? String(bindField) : branch ? `${branch}.x` : String(n?.data.params.name ?? inp.name)
+          const opt: Record<string, unknown> = { field }
           const target = n?.data.params.target as string | undefined
           const feats = n?.data.params.features as string[] | undefined
           if (target) opt.target = target
           if (Array.isArray(feats) && feats.length) opt.features = feats
+          // ESPF node: pass the codebook so the sidecar can label token ids with
+          // their NAMED substructures (interpretable preview in the Explain view).
+          if (n?.data.layerType === 'ESPF') opt.espf_codebook = String(n.data.params.codebook ?? 'drug')
           return opt
         })
       }

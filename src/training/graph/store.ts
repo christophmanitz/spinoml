@@ -17,6 +17,7 @@ import {
 } from '@xyflow/react'
 
 import { defaultTrainingParams, coerceTrainingParams } from './registry'
+import { layeredLayout } from '../../canvas/layout'
 
 export type TrainingNodeData = {
   trainingType: string
@@ -37,6 +38,18 @@ function bumpNextIdPast(ids: string[]) {
     const m = id.match(/^t(\d+)$/)
     if (m) nextId = Math.max(nextId, parseInt(m[1], 10) + 1)
   }
+}
+
+// A collision-proof edge id: max existing `e<n>` suffix + 1. Length-based ids
+// (`e${edges.length+1}`) collide after a delete-then-add (e.g. load e1..e10,
+// delete one, add → e10 again) — that dup React key destabilizes React Flow.
+function freshEdgeId(edges: Edge[]): string {
+  let max = 0
+  for (const e of edges) {
+    const m = /^e(\d+)$/.exec(e.id)
+    if (m) max = Math.max(max, parseInt(m[1], 10))
+  }
+  return `e${max + 1}`
 }
 
 type State = {
@@ -65,7 +78,7 @@ export const useTrainingGraphStore = create<State>((set, get) => ({
 
   onNodesChange: (changes) => set({ nodes: applyNodeChanges(changes, get().nodes) }),
   onEdgesChange: (changes) => set({ edges: applyEdgeChanges(changes, get().edges) }),
-  onConnect: (connection) => set({ edges: addEdge({ ...connection, animated: true }, get().edges) }),
+  onConnect: (connection) => set({ edges: addEdge({ ...connection, animated: true, id: freshEdgeId(get().edges) }, get().edges) }),
 
   addNode: (trainingType, position, opts) => {
     const id = opts?.id && !get().nodes.some((n) => n.id === opts.id) ? opts.id : newNodeId()
@@ -103,7 +116,7 @@ export const useTrainingGraphStore = create<State>((set, get) => ({
   connectNodes: (source, target) => {
     const edges = get().edges
     if (edges.some((e) => e.source === source && e.target === target)) return
-    set({ edges: addEdge({ source, target, animated: true, id: `e${edges.length + 1}` }, edges) })
+    set({ edges: addEdge({ source, target, animated: true, id: freshEdgeId(edges) }, edges) })
   },
 
   autoLayout: () => {
@@ -154,13 +167,14 @@ export function captureTrainingSnapshot(state: { nodes: TrainingFlowNode[]; edge
   }
 }
 
-// Sources on the left, the TrainLoop on the right — a simple two-band layout
-// (everything feeds the loop) is clearer here than the architecture topo-walk.
-function layoutTowardLoop(nodes: TrainingFlowNode[], _edges: Edge[]): Map<string, XYPosition> {
-  const out = new Map<string, XYPosition>()
-  const loop = nodes.filter((n) => n.data.trainingType === 'TrainLoop')
-  const rest = nodes.filter((n) => n.data.trainingType !== 'TrainLoop')
-  rest.forEach((n, i) => out.set(n.id, { x: 80, y: 60 + i * 96 }))
-  loop.forEach((n, i) => out.set(n.id, { x: 520, y: 200 + i * 140 }))
-  return out
+// Layered left→right layout (training nodes have fixed Left/Right handles, so
+// the flow reads left→right). Everything feeds the TrainLoop, which therefore
+// lands in the last (rightmost) rank automatically. Disconnected nodes fall in
+// the first rank but still get distinct, non-overlapping slots.
+function layoutTowardLoop(nodes: TrainingFlowNode[], edges: Edge[]): Map<string, XYPosition> {
+  return layeredLayout(
+    nodes.map((n) => ({ id: n.id })),
+    edges.map((e) => ({ source: e.source, target: e.target })),
+    { direction: 'LR' },
+  )
 }

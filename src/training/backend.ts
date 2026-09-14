@@ -64,9 +64,11 @@ export const training = {
       ? tauriSsh.promoteCheckpoint(sshTarget(r), r.root, runId, destName)
       : tauriTraining.promote(runId, destName)
   },
-  /** GPU snapshot on the executor host (empty if no nvidia-smi). */
-  gpuStats: (): Promise<GpuStat[]> => {
+  /** GPU snapshot on the executor host (empty if no nvidia-smi). For a SLURM run
+   *  the remote path uses the run's job id to probe the COMPUTE node (srun) rather
+   *  than the login node, which has no GPU. */
+  gpuStats: (runId?: string): Promise<GpuStat[]> => {
     const r = remote()
-    return r ? tauriSsh.gpuStats(sshTarget(r), r.root) : tauriTraining.gpuStats()
+    return r ? tauriSsh.gpuStats(sshTarget(r), r.root, runId) : tauriTraining.gpuStats()
   },
 }

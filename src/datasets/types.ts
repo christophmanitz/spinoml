@@ -29,6 +29,14 @@ export type TabularInspect = InspectBase & {
   columns: string[]
   dtypes: string[]
   head: string[][]
+  /** When the source was a prepared dataset DIRECTORY: the inner table read, and a
+   *  summary of the bundle (side files / per-id embeddings / prep_card). */
+  table?: string
+  bundle?: {
+    files: string[]
+    subdirs: { name: string; entries: number }[]
+    prep_card?: Record<string, unknown> | null
+  }
 }
 
 export type ImageFolderInspect = InspectBase & {
@@ -132,6 +140,8 @@ export type ManifestInspect = InspectBase & {
   ok: true
   n_rows: number
   table: string
+  /** All columns of the manifest's table — feeds the Head node's target picker. */
+  columns?: string[]
   branches: string[]
   target: { column: string; type: string } | null
   slots: ManifestSlot[]

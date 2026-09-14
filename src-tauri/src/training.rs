@@ -66,6 +66,21 @@ pub(crate) const READABLE: &[&str] = &[
     "pid",
 ];
 
+/// Whether `name` may be read from a run dir. The static READABLE files plus the
+/// per-job SLURM log files `slurm-<jobid>.out` / `slurm-<jobid>.err` (jobid all
+/// digits) — a SLURM run's stdout/stderr land there, not in stdout.log/stderr.log.
+pub(crate) fn is_readable(name: &str) -> bool {
+    if READABLE.contains(&name) {
+        return true;
+    }
+    if let Some(rest) = name.strip_prefix("slurm-") {
+        if let Some(jid) = rest.strip_suffix(".out").or_else(|| rest.strip_suffix(".err")) {
+            return !jid.is_empty() && jid.chars().all(|c| c.is_ascii_digit());
+        }
+    }
+    false
+}
+
 #[derive(Serialize)]
 pub struct RunSummary {
     run_id: String,
@@ -78,6 +93,7 @@ pub struct RunSummary {
     best_val_loss: Option<f64>,
     alive: bool,
     has_checkpoint: bool,
+    eval_only: bool,
 }
 
 /// Reconcile a raw status string against process liveness. A run that claims to
@@ -100,10 +116,18 @@ pub(crate) fn reconcile_status(status_raw: &str, alive: bool) -> String {
 impl RunSummary {
     /// Build a summary from the raw file contents — used by the local executor
     /// (read from disk) and the ssh mirror (read over one ssh round-trip).
+    ///
+    /// `events` holds the run's `epoch.end` / `run.done` lines from
+    /// events.jsonl (newline-delimited JSON, pre-filtered cheaply on the wire).
+    /// It's the fallback that makes EXTERNALLY launched runs (sbatch, a
+    /// hand-written train.py) show progress: such a run writes events.jsonl but
+    /// often no metrics.json, so without this its loss/epochs read empty even
+    /// though the run is healthy. Pass "" when no events are available.
     pub(crate) fn from_parts(
         run_id: &str,
         run_json: &str,
         metrics_json: &str,
+        events: &str,
         status_raw: &str,
         alive: bool,
         has_checkpoint: bool,
@@ -111,28 +135,85 @@ impl RunSummary {
         let cfg: Value = serde_json::from_str(run_json).unwrap_or(Value::Null);
         let metrics: Value = serde_json::from_str(metrics_json).unwrap_or(Value::Null);
         let s = |v: &Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let (events_best, events_done_best, events_max_epoch) = scan_events(events);
+        // Configured epoch count — accept the nested (our schema) OR a flat
+        // `epochs` (a hand-written run.json). 0 only if neither is present.
+        let cfg_epochs = cfg
+            .get("training")
+            .and_then(|t| t.get("epochs"))
+            .or_else(|| cfg.get("epochs"))
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0) as u32;
         RunSummary {
             run_id: run_id.to_string(),
             run_label: s(&cfg, "run_label"),
             model_path: s(&cfg, "model_path"),
             dataset_path: cfg
                 .get("dataset")
-                .and_then(|d| d.get("path"))
+                .and_then(|d| d.get("path").or_else(|| d.get("relpath")))
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string(),
             created_at: s(&cfg, "created_at"),
             status: reconcile_status(status_raw, alive),
-            epochs: cfg
-                .get("training")
-                .and_then(|t| t.get("epochs"))
-                .and_then(|x| x.as_u64())
-                .unwrap_or(0) as u32,
-            best_val_loss: metrics.get("best_val_loss").and_then(|x| x.as_f64()),
+            // Fall back to the highest completed epoch (+1) seen in events when
+            // the config carries no epoch count.
+            epochs: if cfg_epochs > 0 {
+                cfg_epochs
+            } else {
+                events_max_epoch.map(|e| e + 1).unwrap_or(0)
+            },
+            // Loss precedence: metrics.json → run.json → run.done event →
+            // min(val_loss) across epoch.end events. Any one of these is enough
+            // for the run to show its loss in the viewer.
+            best_val_loss: metrics
+                .get("best_val_loss")
+                .and_then(|x| x.as_f64())
+                .or_else(|| cfg.get("best_val_loss").and_then(|x| x.as_f64()))
+                .or(events_done_best)
+                .or(events_best),
             alive,
             has_checkpoint,
+            eval_only: cfg.get("eval_only").and_then(|x| x.as_bool()).unwrap_or(false),
         }
     }
+}
+
+/// Scan pre-filtered events.jsonl lines, returning
+/// (min val_loss over epoch.end, run.done's best_val_loss, max epoch.end epoch).
+/// Tolerant of unparseable lines and missing fields — never panics.
+fn scan_events(events: &str) -> (Option<f64>, Option<f64>, Option<u32>) {
+    let mut min_val: Option<f64> = None;
+    let mut done_best: Option<f64> = None;
+    let mut max_epoch: Option<u32> = None;
+    for line in events.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let e: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        match e.get("kind").and_then(|k| k.as_str()) {
+            Some("epoch.end") => {
+                if let Some(v) = e.get("val_loss").and_then(|x| x.as_f64()) {
+                    min_val = Some(min_val.map_or(v, |m: f64| m.min(v)));
+                }
+                if let Some(ep) = e.get("epoch").and_then(|x| x.as_u64()) {
+                    let ep = ep as u32;
+                    max_epoch = Some(max_epoch.map_or(ep, |m: u32| m.max(ep)));
+                }
+            }
+            Some("run.done") => {
+                if let Some(v) = e.get("best_val_loss").and_then(|x| x.as_f64()) {
+                    done_best = Some(v);
+                }
+            }
+            _ => {}
+        }
+    }
+    (min_val, done_best, max_epoch)
 }
 
 #[derive(Serialize)]
@@ -218,9 +299,26 @@ fn summarize(dir: &Path, run_id: &str) -> RunSummary {
     let run_json = fs::read_to_string(dir.join("run.json")).unwrap_or_default();
     let metrics_json = fs::read_to_string(dir.join("metrics.json")).unwrap_or_default();
     let status_raw = fs::read_to_string(dir.join("status")).unwrap_or_default();
+    // Keep only the epoch.end / run.done lines so a run with a huge per-batch
+    // events.jsonl stays cheap to summarize (mirror of the ssh-side grep).
+    let events = fs::read_to_string(dir.join("events.jsonl"))
+        .map(|s| filter_summary_events(&s))
+        .unwrap_or_default();
     let alive = pid_of(dir).map(is_alive).unwrap_or(false);
     let has_checkpoint = dir.join("checkpoints").join("best.pt").exists();
-    RunSummary::from_parts(run_id, &run_json, &metrics_json, &status_raw, alive, has_checkpoint)
+    RunSummary::from_parts(
+        run_id, &run_json, &metrics_json, &events, &status_raw, alive, has_checkpoint,
+    )
+}
+
+/// Drop everything but the epoch.end / run.done lines of an events.jsonl. These
+/// carry the loss/epoch summary; the per-step `batch` lines (the bulk) are not
+/// needed and would make the scan O(steps) instead of O(epochs).
+pub(crate) fn filter_summary_events(raw: &str) -> String {
+    raw.lines()
+        .filter(|l| l.contains("epoch.end") || l.contains("run.done"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[tauri::command]
@@ -333,7 +431,7 @@ pub fn read_training_run_file(
     name: String,
 ) -> Result<String, String> {
     validate_run_id(&run_id)?;
-    if !READABLE.contains(&name.as_str()) {
+    if !is_readable(&name) {
         return Err(format!("file {name:?} is not readable from a run dir"));
     }
     let root = current_root(&state)?;
@@ -477,4 +575,55 @@ pub fn delete_training_run(state: State<WorkspaceState>, run_id: String) -> Resu
         return Err("run is still alive — stop it before deleting".into());
     }
     fs::remove_dir_all(&dir).map_err(|e| format!("rmdir {}: {e}", dir.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // An externally-launched run: events.jsonl present, no metrics.json, run.json
+    // carries a flat `epochs`. Loss + epochs must still surface (C-3 regression).
+    #[test]
+    fn external_run_falls_back_to_events() {
+        let run_json = r#"{"run_label":"affbind","model_path":"affbind.spinoml","epochs":40}"#;
+        let events = "\
+{\"kind\":\"epoch.end\",\"epoch\":0,\"val_loss\":0.31}\n\
+{\"kind\":\"batch\",\"step\":1}\n\
+{\"kind\":\"epoch.end\",\"epoch\":1,\"val_loss\":0.22}\n\
+{\"kind\":\"epoch.end\",\"epoch\":2,\"val_loss\":0.25}";
+        let s = RunSummary::from_parts("r1", run_json, "", events, "running", true, false);
+        assert_eq!(s.best_val_loss, Some(0.22));
+        assert_eq!(s.epochs, 40); // configured count wins
+    }
+
+    #[test]
+    fn run_done_event_beats_epoch_min() {
+        let events = "\
+{\"kind\":\"epoch.end\",\"epoch\":0,\"val_loss\":0.30}\n\
+{\"kind\":\"run.done\",\"best_val_loss\":0.18}";
+        let s = RunSummary::from_parts("r2", "{}", "", events, "completed", false, true);
+        assert_eq!(s.best_val_loss, Some(0.18));
+        assert_eq!(s.epochs, 1); // no config → highest completed epoch + 1
+    }
+
+    #[test]
+    fn metrics_json_still_wins() {
+        let s = RunSummary::from_parts(
+            "r3",
+            r#"{"training":{"epochs":10}}"#,
+            r#"{"best_val_loss":0.05}"#,
+            "{\"kind\":\"epoch.end\",\"epoch\":0,\"val_loss\":0.9}",
+            "completed", false, true,
+        );
+        assert_eq!(s.best_val_loss, Some(0.05));
+        assert_eq!(s.epochs, 10);
+    }
+
+    #[test]
+    fn filter_keeps_only_summary_lines() {
+        let raw = "{\"kind\":\"batch\"}\n{\"kind\":\"epoch.end\"}\n{\"kind\":\"run.done\"}";
+        let f = filter_summary_events(raw);
+        assert!(!f.contains("batch"));
+        assert!(f.contains("epoch.end") && f.contains("run.done"));
+    }
 }

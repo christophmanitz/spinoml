@@ -95,6 +95,19 @@ export const TRAINING_NODES: Record<string, TrainingNodeSpec> = {
     ],
     summary: (p) => String(get(p, 'kind', 'CrossEntropyLoss')),
   },
+  Head: {
+    type: 'Head', category: 'Objective', multi: true,
+    fields: [
+      // `output` matches a model Output node's name (the dict key forward()
+      // returns). Same option set as the architecture Output node.
+      f.select('output', ['out', 'logits', 'embedding', 'mu', 'sigma', 'aux'], 'out'),
+      { name: 'target', type: 'column-single', default: '' },
+      f.select('loss', ['CrossEntropyLoss', 'BCEWithLogitsLoss', 'MSELoss', 'L1Loss'], 'CrossEntropyLoss'),
+      f.float('weight', 1, { min: 0, step: 0.1 }),
+      f.float('label_smoothing', 0, { min: 0, max: 0.9, step: 0.01 }),
+    ],
+    summary: (p) => `${get(p, 'output', 'out')} → ${get(p, 'target', '?') || '?'} · ${get(p, 'loss', 'CrossEntropyLoss')}`,
+  },
   Optimizer: {
     type: 'Optimizer', category: 'Objective',
     fields: [

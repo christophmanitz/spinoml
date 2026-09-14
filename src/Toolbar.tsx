@@ -187,7 +187,7 @@ function Item({
       disabled={disabled}
     >
       <span>{children}</span>
-      {hint && <span className="text-[10px] text-[#7a8088]">{hint}</span>}
+      {hint && <span className="text-[10px] text-[#6f767e]">{hint}</span>}
     </button>
   )
 }

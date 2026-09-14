@@ -7,6 +7,7 @@ import { isTauri, tauriFs } from './tauri-fs'
 import { fs as fsBackend } from '../connections/backend'
 import { useConnectionsStore } from '../connections/store'
 import { confirmDialog } from '../ui/confirm'
+import { setActiveWorkspace, setActiveFile } from './recentWorkspaces'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -450,6 +451,8 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     useConnectionsStore.getState().setCurrent('local')
     const picked = await tauriFs.pickDir()
     if (!picked) return false
+    // Remember it so a later app restart re-opens it (mirrors project store).
+    setActiveWorkspace(picked)
     const rootName = picked.split('/').pop() || picked.split('\\').pop() || 'workspace'
     set({
       mode: 'tauri',
@@ -467,6 +470,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
 
   closeDirectory: async () => {
     if (isTauri()) { try { await tauriFs.closeDir() } catch { /* ignore */ } }
+    setActiveWorkspace(null) // explicit close → don't auto-reopen next launch
     const re = hydrate()
     set({
       mode: 'browser',
@@ -509,6 +513,16 @@ export const useWorkspaceStore = create<State>((set, get) => ({
 
 // Persist to localStorage only when in browser mode (Tauri mode lives on disk).
 useWorkspaceStore.subscribe((s) => { if (s.mode === 'browser') persist(s) })
+
+// Tauri mode doesn't persist the whole store, but we DO remember which file is
+// open (per workspace root) so a webview reload / remote re-check can restore the
+// binding instead of dropping the canvas to the file chooser. See restore in
+// project/store.ts bootstrapWorkspace.
+useWorkspaceStore.subscribe((s, prev) => {
+  if (s.mode !== 'tauri') return
+  if (s.activeFileId === prev.activeFileId && s.workspaceRoot === prev.workspaceRoot) return
+  setActiveFile(s.workspaceRoot, s.activeFileId)
+})
 
 // Track dirty: any structural change to the graph after the last save/load
 // marks the active file dirty. Compares fingerprints to the last persisted

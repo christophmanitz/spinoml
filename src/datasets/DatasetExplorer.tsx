@@ -18,7 +18,7 @@ export default function DatasetExplorer() {
 
   if (!isTauri()) {
     return (
-      <div className="flex h-full items-center justify-center px-4 text-center text-xs text-[#7a8088]">
+      <div className="flex h-full items-center justify-center px-4 text-center text-xs text-[#6f767e]">
         Datensätze brauchen einen echten Workspace-Ordner — öffne SpinoML in Tauri.
       </div>
     )
@@ -26,7 +26,7 @@ export default function DatasetExplorer() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center justify-between border-b border-[#1f2429] px-3 py-2 text-xs uppercase tracking-wider text-[#7a8088]">
+      <div className="flex items-center justify-between border-b border-[#1f2429] px-3 py-2 text-xs uppercase tracking-wider text-[#6f767e]">
         <span>Datasets</span>
         <button
           onClick={() => void refresh()}
@@ -42,9 +42,9 @@ export default function DatasetExplorer() {
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-auto">
-        {loading && <div className="px-3 py-4 text-xs text-[#7a8088]">loading…</div>}
+        {loading && <div className="px-3 py-4 text-xs text-[#6f767e]">loading…</div>}
         {!loading && entries.length === 0 && (
-          <div className="px-3 py-4 text-xs leading-relaxed text-[#7a8088]">
+          <div className="px-3 py-4 text-xs leading-relaxed text-[#6f767e]">
             Leg Dateien in <code className="text-[#9aa1a8]">datasets/</code> deines
             Workspace-Ordners ab — CSV, .pt, ImageFolder, .pdb, .smi oder
             eine <code>name.hf</code>-Textdatei mit <code>hf:dataset_name</code>.
@@ -67,7 +67,7 @@ export default function DatasetExplorer() {
                 {iconFor(kind)}
               </span>
               <span className="flex-1 truncate text-[#e6e8eb]">{entry.name}</span>
-              <span className="text-[10px] text-[#7a8088]">{formatSize(entry.size_bytes)}</span>
+              <span className="text-[10px] text-[#6f767e]">{formatSize(entry.size_bytes)}</span>
             </button>
           )
         })}

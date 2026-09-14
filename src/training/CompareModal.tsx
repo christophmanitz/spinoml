@@ -91,7 +91,7 @@ export default function CompareModal() {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
       onClick={(e) => { if (e.target === e.currentTarget) close() }}
     >
-      <div className="flex h-full max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-[#1f2429] bg-[#0e1115] shadow-2xl">
+      <div className="flex h-full max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-[#1f2429] bg-[#0e1216] shadow-2xl">
         <div className="flex items-center gap-2 border-b border-[#1f2429] px-4 py-3">
           <span className="text-sm text-[#e6e8eb]">Vergleich · {loaded.length} Runs</span>
           <button
@@ -102,7 +102,7 @@ export default function CompareModal() {
           >
             CSV
           </button>
-          <button onClick={close} className="rounded px-2 py-0.5 text-[#7a8088] hover:bg-[#1a1e22] hover:text-[#e6e8eb]">×</button>
+          <button onClick={close} className="rounded px-2 py-0.5 text-[#6f767e] hover:bg-[#1a1e22] hover:text-[#e6e8eb]">×</button>
         </div>
 
         <div className="min-h-0 flex-1 space-y-5 overflow-auto p-4 text-[12px] text-[#cfd3d8]">
@@ -112,7 +112,7 @@ export default function CompareModal() {
               <span className="text-[11px] text-[#9aa1a8]">Loss (val, sonst train)</span>
               <button
                 onClick={() => setLossLog((v) => !v)}
-                className={`ml-auto rounded px-1.5 py-0.5 text-[10px] ${lossLog ? 'bg-[#13344f] text-[#6ab7ff]' : 'text-[#7a8088] hover:bg-[#1a1e22]'}`}
+                className={`ml-auto rounded px-1.5 py-0.5 text-[10px] ${lossLog ? 'bg-[var(--accent-sel)] text-[var(--accent)]' : 'text-[#6f767e] hover:bg-[#1a1e22]'}`}
               >
                 log
               </button>
@@ -122,9 +122,9 @@ export default function CompareModal() {
 
           {/* final metrics table */}
           <div>
-            <div className="mb-1 text-[11px] text-[#7a8088]">Finale Metriken</div>
+            <div className="mb-1 text-[11px] text-[#6f767e]">Finale Metriken</div>
             <table className="w-full text-left text-[11px]">
-              <thead className="text-[#7a8088]">
+              <thead className="text-[#6f767e]">
                 <tr>
                   <th className="py-1 pr-3">Run</th>
                   <th className="pr-3">best val</th>
@@ -154,12 +154,12 @@ export default function CompareModal() {
 
           {/* config diff */}
           <div>
-            <div className="mb-1 text-[11px] text-[#7a8088]">Config-Unterschiede</div>
+            <div className="mb-1 text-[11px] text-[#6f767e]">Config-Unterschiede</div>
             {diff.length === 0 ? (
-              <div className="text-[11px] text-[#7a8088]">Identische Trainings-Configs.</div>
+              <div className="text-[11px] text-[#6f767e]">Identische Trainings-Configs.</div>
             ) : (
               <table className="w-full text-left text-[11px]">
-                <thead className="text-[#7a8088]">
+                <thead className="text-[#6f767e]">
                   <tr>
                     <th className="py-1 pr-3">Feld</th>
                     {loaded.map((l) => <th key={l.runId} className="pr-3">{l.label}</th>)}

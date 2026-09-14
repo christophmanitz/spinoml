@@ -17,7 +17,7 @@ export default function ShapeEdge({
   return (
     <>
       <BaseEdge id={id} path={path} markerEnd={markerEnd}
-        style={lit ? { stroke: '#6ab7ff', strokeWidth: 2.5 } : undefined} />
+        style={lit ? { stroke: 'var(--accent)', strokeWidth: 2.5 } : undefined} />
       {d?.shape && d.shape.length > 0 && (
         <EdgeLabelRenderer>
           <div
@@ -29,7 +29,7 @@ export default function ShapeEdge({
             }}
           >
             <div style={{ background: '#0e1216ee', border: '1px solid #1f2429', borderRadius: 5, padding: 2 }}>
-              <TensorShape shape={d.shape} face={d.face} hex={lit ? '#6ab7ff' : '#7a8088'} compact />
+              <TensorShape shape={d.shape} face={d.face} hex={lit ? 'var(--accent)' : '#6f767e'} compact />
             </div>
           </div>
         </EdgeLabelRenderer>

@@ -19,6 +19,9 @@ import ShapeEdge from './ShapeEdge'
 import { LAYERS } from '../layers/registry'
 import { useVizStore } from '../visualization/store'
 import type { EdgeTypes } from '@xyflow/react'
+import CanvasFileGate from '../canvasdoc/CanvasFileGate'
+import ReloadCanvasButton from '../canvasdoc/ReloadCanvasButton'
+import { architectureDocAdapter } from './doc'
 
 const DRAG_MIME = 'application/spinoml-layer'
 
@@ -116,8 +119,9 @@ function CanvasInner() {
       >
         <Background gap={16} size={1} />
         <Controls />
-        <MiniMap pannable zoomable nodeColor="#3a4148" maskColor="#0b0d1099" />
+        <MiniMap pannable zoomable nodeColor="#3a4148" maskColor="#0a0c0f99" />
         <Panel position="top-right" className="!m-2 flex gap-1">
+          <ReloadCanvasButton adapter={architectureDocAdapter} />
           <button
             className="rounded border border-[#1f2429] bg-[#13171b] px-2 py-1 text-[11px] text-[#9aa1a8] hover:border-[#3a4148] hover:bg-[#1a1f24] hover:text-[#e6e8eb]"
             onClick={() => {
@@ -168,7 +172,7 @@ function Breadcrumb() {
           <button
             onClick={() => go(i + 1)}
             className={`rounded px-1.5 py-0.5 ${
-              i === stack.length - 1 ? 'bg-[#13344f] text-[#6ab7ff]' : 'text-[#9aa1a8] hover:bg-[#1a1e22] hover:text-[#e6e8eb]'
+              i === stack.length - 1 ? 'bg-[var(--accent-sel)] text-[var(--accent)]' : 'text-[#9aa1a8] hover:bg-[#1a1e22] hover:text-[#e6e8eb]'
             }`}
             title={`${f.label} — Subcanvas`}
           >
@@ -190,7 +194,9 @@ function Breadcrumb() {
 export default function Canvas() {
   return (
     <ReactFlowProvider>
-      <CanvasInner />
+      <CanvasFileGate adapter={architectureDocAdapter}>
+        <CanvasInner />
+      </CanvasFileGate>
     </ReactFlowProvider>
   )
 }

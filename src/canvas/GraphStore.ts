@@ -10,8 +10,9 @@ import {
   applyEdgeChanges,
   addEdge,
 } from '@xyflow/react'
-import { defaultParamsFor, coerceParams } from '../layers/registry'
+import { defaultParamsFor, coerceParams, LAYERS } from '../layers/registry'
 import { useLayoutStore, type FlowDir } from './layoutStore'
+import { layeredLayout } from './layout'
 import { reconcileSubgraphPorts } from './subgraphPorts'
 
 export type LayerNodeData = {
@@ -80,7 +81,9 @@ export const useGraphStore = create<State>((set, get) => ({
     set({ edges, nodes: reconcileSubgraphPorts(get().nodes, edges) })
   },
   onConnect: (connection) => {
-    const edges = addEdge({ ...connection, animated: true }, get().edges)
+    if (!connection.source || !connection.target) return
+    const base = baseForConnect(get().nodes, get().edges, connection.target)
+    const edges = addEdge({ ...connection, animated: true }, base)
     set({ edges, nodes: reconcileSubgraphPorts(get().nodes, edges) })
   },
 
@@ -143,7 +146,8 @@ export const useGraphStore = create<State>((set, get) => ({
   connectNodes: (source, target) => {
     const cur = get().edges
     if (cur.some((e) => e.source === source && e.target === target)) return
-    const edges = addEdge({ source, target, animated: true, id: `e${cur.length + 1}` }, cur)
+    const base = baseForConnect(get().nodes, cur, target)
+    const edges = addEdge({ source, target, animated: true, id: `e${cur.length + 1}` }, base)
     set({ edges, nodes: reconcileSubgraphPorts(get().nodes, edges) })
   },
 
@@ -220,81 +224,36 @@ export function captureStructuralSnapshot(state: { nodes: LayerNode[]; edges: Ed
   }
 }
 
-const COL_W = 240
-const ROW_H = 110
-const MAX_ROWS = 8
-const ORIGIN_X = 100
-const ORIGIN_Y = 60
+// Layer kinds that genuinely fan in (accept ≥2 incoming edges): Merge
+// (Concat/Add/Multiply/Stack), Custom (user-written forward) and Subgraph.
+// Everything else (module/function/output/io) is single-input.
+const MULTI_INPUT_KINDS = new Set(['merge', 'custom', 'group'])
 
 /**
- * Topo-walk from Input, packing into vertical columns of MAX_ROWS, wrapping
- * to the right when a column fills. Forks (multiple successors) keep the
- * first child in the same column and put siblings in adjacent columns at
- * the same depth. Nodes unreachable from Input get parked in a trailing
- * column so they're at least visible.
+ * The edge list a new connection into `target` should be added on top of. For a
+ * single-input target that's already fed, the existing incoming edge is dropped
+ * so the new wire REPLACES it (rewire) — instead of the connection being
+ * silently swallowed as a duplicate or piling up an invalid 2-input layer. This
+ * is what lets you drag a fresh source into an already-connected Linear/
+ * activation/etc. Merge/Custom/Subgraph keep accepting multiple inputs.
+ */
+function baseForConnect(nodes: LayerNode[], edges: Edge[], target: string): Edge[] {
+  const tNode = nodes.find((n) => n.id === target)
+  const tKind = tNode ? LAYERS[tNode.data.layerType]?.kind : undefined
+  return tKind && MULTI_INPUT_KINDS.has(tKind) ? edges : edges.filter((e) => e.target !== target)
+}
+
+/**
+ * Layered DAG layout (see canvas/layout.ts): ranks by longest path so edges
+ * always flow with the chosen direction, barycenter-orders each rank to reduce
+ * crossings, and gives every node a distinct cross slot so nothing overlaps.
  */
 function computeLayout(nodes: LayerNode[], edges: Edge[], direction: FlowDir = 'TB'): Map<string, XYPosition> {
-  const out = new Map<string, XYPosition>()
-  if (nodes.length === 0) return out
-
-  // `p` = position along the chain, `s` = branch / wrap index. The two map to
-  // x/y depending on direction: TB chains downward (p→y), LR rightward (p→x).
-  const pos = (p: number, s: number): XYPosition =>
-    direction === 'LR'
-      ? { x: ORIGIN_X + p * COL_W, y: ORIGIN_Y + s * ROW_H }
-      : { x: ORIGIN_X + s * COL_W, y: ORIGIN_Y + p * ROW_H }
-
-  const succ = new Map<string, string[]>()
-  for (const n of nodes) succ.set(n.id, [])
-  for (const e of edges) succ.get(e.source)?.push(e.target)
-
-  const input = nodes.find((n) => n.data.layerType === 'Input')
-  const visited = new Set<string>()
-  let col = 0
-  let row = 0
-  let maxCol = 0
-
-  function place(id: string) {
-    if (visited.has(id)) return
-    visited.add(id)
-    if (row >= MAX_ROWS) { row = 0; col++ }
-    out.set(id, pos(row, col))
-    row++
-    if (col > maxCol) maxCol = col
-    const next = succ.get(id) ?? []
-    if (next.length === 0) return
-    place(next[0])
-    for (let i = 1; i < next.length; i++) {
-      const branchCol = col + i
-      const startRow = Math.max(0, row - 1)
-      placeBranch(next[i], branchCol, startRow)
-    }
-  }
-
-  function placeBranch(id: string, startCol: number, startRow: number) {
-    if (visited.has(id)) return
-    visited.add(id)
-    let bcol = startCol
-    let brow = startRow
-    if (brow >= MAX_ROWS) { brow = 0; bcol++ }
-    out.set(id, pos(brow, bcol))
-    if (bcol > maxCol) maxCol = bcol
-    const next = succ.get(id) ?? []
-    for (const nxt of next) placeBranch(nxt, bcol, brow + 1)
-  }
-
-  if (input) place(input.id)
-
-  let orphanCol = maxCol + 2
-  let orphanRow = 0
-  for (const n of nodes) {
-    if (visited.has(n.id)) continue
-    if (orphanRow >= MAX_ROWS) { orphanRow = 0; orphanCol++ }
-    out.set(n.id, pos(orphanRow, orphanCol))
-    orphanRow++
-  }
-
-  return out
+  return layeredLayout(
+    nodes.map((n) => ({ id: n.id })),
+    edges.map((e) => ({ source: e.source, target: e.target })),
+    { direction },
+  )
 }
 
 export function autoPositionAfter(nodes: LayerNode[], afterId?: string): XYPosition {

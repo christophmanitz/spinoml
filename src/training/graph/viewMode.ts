@@ -4,7 +4,7 @@
 
 import { create } from 'zustand'
 
-export type ViewMode = 'architecture' | 'training'
+export type ViewMode = 'architecture' | 'training' | 'data'
 
 type State = {
   mode: ViewMode

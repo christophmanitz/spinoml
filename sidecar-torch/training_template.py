@@ -20,8 +20,10 @@ Contract (see TODO.md "Phase 13"):
     checkpoints/    best.pt + last.pt
 
 Supported dataset kinds: 'tabular' (csv/tsv/parquet → feature/target columns)
-and 'manifest' (paired PyG graphs, e.g. ligand+protein → a model with one graph
-input per branch, trained with a PyG-Batch collate). Other kinds fail loudly.
+and 'manifest' (paired branches, e.g. ligand+protein → a model with one input per
+branch; each branch is a PyG graph, an inline molecule graph, or a tokenized
+sequence — graphs batch via PyG Batch, sequences via padded [B, Lmax] LongTensors).
+Other kinds fail loudly.
 """
 
 from __future__ import annotations
@@ -72,28 +74,137 @@ def fail(stage: str, msg: str, tb: str | None = None) -> None:
     sys.exit(1)
 
 
-# ─── Dataset loading (tabular only in Phase 13) ────────────────────────────
+# ─── Multitask plumbing ─────────────────────────────────────────────────────
+# The trainer is uniformly multi-head: a list of "heads", each binding one model
+# output → a target column + loss + weight. A single-task run is just one head
+# (output '' = the model's sole output). The combined objective is the weighted
+# sum of the per-head losses; metrics/eval are reported per head.
 
-def load_tabular(cfg: dict):
-    """Returns (X: FloatTensor [N, F], y: Tensor [N], n_classes|None, classes|None)."""
+LOSS_TASK = {
+    "CrossEntropyLoss": "classification",
+    "BCEWithLogitsLoss": "binary",
+    "MSELoss": "regression",
+    "L1Loss": "regression",
+}
+
+
+def make_loss_fn(kind: str, label_smoothing: float = 0.0):
+    import torch
+
+    ls = float(label_smoothing or 0)
+    if kind == "CrossEntropyLoss":
+        return torch.nn.CrossEntropyLoss(label_smoothing=ls)
+    if kind == "BCEWithLogitsLoss":
+        return torch.nn.BCEWithLogitsLoss()
+    if kind == "MSELoss":
+        return torch.nn.MSELoss()
+    if kind == "L1Loss":
+        return torch.nn.L1Loss()
+    raise ValueError(f"unknown loss kind: {kind}")
+
+
+def resolve_heads(train_cfg: dict, ds_cfg: dict):
+    """Returns (heads, multitask). Each head dict has output/target/loss_kind/
+    task/weight/label_smoothing/loss_fn. Single-task synthesises one head from
+    the legacy `loss` + dataset.target_column."""
+    raw = train_cfg.get("heads")
+    multitask = bool(raw)
+    if not raw:
+        lcfg = train_cfg.get("loss", {}) or {}
+        raw = [{
+            "output": "",
+            "target": ds_cfg.get("target_column"),
+            "loss": lcfg.get("kind", "CrossEntropyLoss"),
+            "label_smoothing": lcfg.get("label_smoothing", 0),
+        }]
+    heads = []
+    for h in raw:
+        kind = h.get("loss", "CrossEntropyLoss")
+        heads.append({
+            "output": str(h.get("output", "") or ""),
+            "target": h.get("target"),
+            "loss_kind": kind,
+            "task": LOSS_TASK.get(kind, "classification"),
+            "weight": float(h.get("weight", 1.0)),
+            "label_smoothing": float(h.get("label_smoothing", 0) or 0),
+            "loss_fn": make_loss_fn(kind, h.get("label_smoothing", 0)),
+        })
+    return heads, multitask
+
+
+def encode_target(series, task: str, known_classes: list | None = None):
+    """pandas Series → (y_tensor[N], classes|None, n_classes|None) for a head.
+
+    MISSING values become NaN (regression/binary) or the -1 code (classification)
+    so the trainer can MASK them out per head — this is what lets a head be
+    defined for only some rows (e.g. an affinity-regression head valid only for
+    real binders; decoy rows have an empty target and simply don't contribute).
+
+    `known_classes` (external validation): encode against the TRAINED class order
+    so codes match the model the checkpoint came from; labels unseen in training
+    get the -1 code (masked, not silently misclassified to a wrong index)."""
     import numpy as np
     import pandas as pd
     import torch
 
-    path = os.path.expanduser(cfg["path"])
-    suffix = Path(path).suffix.lower()
+    if task == "regression":
+        # coerce → NaN for empty/non-numeric cells (masked out in the loss)
+        vals = pd.to_numeric(series, errors="coerce").to_numpy(dtype="float32")
+        return torch.from_numpy(np.ascontiguousarray(vals)), None, None
+    # classification + binary: map labels → integer codes; missing → -1 code.
+    if known_classes:
+        classes = [str(c) for c in known_classes]
+        codes = pd.Categorical(series.astype(str), categories=classes).codes  # -1 = unseen
+    else:
+        # default (training): sorted categories from the data itself.
+        cat = series.astype("category")
+        classes = [str(c) for c in cat.cat.categories.tolist()]
+        codes = cat.cat.codes.to_numpy()
+    if task == "binary":
+        # BCEWithLogits wants float {0,1}; >2 categories is a config error.
+        if len(classes) > 2:
+            raise ValueError(f"binary head got {len(classes)} categories {classes[:5]}… — use CrossEntropyLoss")
+        vals = codes.astype("float32")
+        vals[codes < 0] = np.nan  # missing → NaN so it's masked, not trained as 0
+        return torch.from_numpy(np.ascontiguousarray(vals)), classes, len(classes)
+    return torch.from_numpy(np.ascontiguousarray(codes.astype("int64"))), classes, len(classes)
+
+
+# ─── Dataset loading ────────────────────────────────────────────────────────
+
+def load_tabular(cfg: dict, heads: list[dict], known_classes_by_head: dict | None = None):
+    """Returns (X: FloatTensor [N, F], targets, feature_cols) where targets maps
+    each head's output name → {y, classes, n_classes}. For external validation,
+    `known_classes_by_head` pins each head's class order to the trained model."""
+    import numpy as np
+    import pandas as pd
+    import torch
+
+    path = Path(os.path.expanduser(cfg["path"]))
+    # A prepared dataset DIRECTORY (e.g. a TDC BindingDB export: pairs.csv +
+    # sequences.csv + embeddings) → read its inner table file.
+    if path.is_dir():
+        prefer = ("pairs.csv", "data.csv", "table.csv", "dataset.csv", "train.csv", "test.csv")
+        tables = [c for c in path.iterdir() if c.is_file() and c.suffix.lower() in (".csv", ".tsv", ".parquet")]
+        by_name = {c.name.lower(): c for c in tables}
+        path = next((by_name[n] for n in prefer if n in by_name),
+                    max(tables, key=lambda c: c.stat().st_size) if tables else path)
+    suffix = path.suffix.lower()
     if suffix == ".parquet":
         df = pd.read_parquet(path)
-    elif suffix in (".tsv",):
+    elif suffix == ".tsv":
         df = pd.read_csv(path, sep="\t")
     else:
         df = pd.read_csv(path)
 
-    target_col = cfg.get("target_column")
-    if not target_col:
-        raise ValueError("tabular training needs a target_column")
-    if target_col not in df.columns:
-        raise ValueError(f"target column {target_col!r} not in dataset columns {list(df.columns)}")
+    target_cols = []
+    for h in heads:
+        col = h["target"]
+        if not col:
+            raise ValueError("tabular training needs a target column for every head")
+        if col not in df.columns:
+            raise ValueError(f"target column {col!r} not in dataset columns {list(df.columns)}")
+        target_cols.append(col)
 
     feature_cols = cfg.get("feature_columns")
     if feature_cols:
@@ -101,9 +212,9 @@ def load_tabular(cfg: dict):
         if missing:
             raise ValueError(f"feature columns not in dataset: {missing}")
     else:
-        # default: all numeric columns except the target
+        # default: all numeric columns except any target
         feature_cols = [
-            c for c in df.select_dtypes(include="number").columns if c != target_col
+            c for c in df.select_dtypes(include="number").columns if c not in target_cols
         ]
     if not feature_cols:
         raise ValueError("no usable feature columns")
@@ -111,24 +222,19 @@ def load_tabular(cfg: dict):
     X_np = df[feature_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0).to_numpy(dtype="float32")
     X = torch.from_numpy(np.ascontiguousarray(X_np))
 
-    tgt = df[target_col]
-    classes = None
-    n_classes = None
-    if cfg.get("task") == "regression":
-        y = torch.from_numpy(np.ascontiguousarray(tgt.apply(lambda v: float(v)).to_numpy(dtype="float32")))
-    else:
-        # classification: map labels → integer codes
-        cat = tgt.astype("category")
-        classes = [str(c) for c in cat.cat.categories.tolist()]
-        n_classes = len(classes)
-        y = torch.from_numpy(np.ascontiguousarray(cat.cat.codes.to_numpy(dtype="int64")))
-    return X, y, n_classes, classes, feature_cols
+    targets = {}
+    for h in heads:
+        y, classes, n_classes = encode_target(
+            df[h["target"]], h["task"], (known_classes_by_head or {}).get(h["output"]))
+        targets[h["output"]] = {"y": y, "classes": classes, "n_classes": n_classes}
+    return X, targets, feature_cols
 
 
 # ── manifest (paired graph) datasets — self-contained, no dataset_handlers ──
 # The run is a standalone snapshot (train.py + model.py), so the manifest logic
-# is inlined here. Builds one PyG Data per branch per row; molecule branches
-# come from SMILES (RDKit, cached as .pt), file branches from .pt on disk.
+# is inlined here. Builds one item per branch per row: a PyG Data (file branches
+# from .pt on disk, molecule branches from SMILES via RDKit cached as .pt) or a
+# token-id LongTensor (sequence branches tokenized from a string column).
 
 def _manifest_mol_graph(smi: str, cache_dir):
     import hashlib
@@ -166,6 +272,155 @@ def _manifest_mol_graph(smi: str, cache_dir):
     return d
 
 
+# Sequence branches (manifest kind="sequence"): tokenize a string cell → a 1-D
+# LongTensor of token ids, NO graph. Token 0 = PAD, 1 = UNK, real chars start at 2
+# (fixed vocab → deterministic). Kept in sync with dataset_handlers.tokenize_sequence.
+_SEQ_VOCABS = {
+    "protein": "ACDEFGHIKLMNPQRSTVWYXBZUO",
+    "smiles": "#%()+-./0123456789=@ABCDEFGHIKLMNOPRSTVZ[\\]abcdefgilmnoprstuy",
+}
+
+
+def _manifest_tokenize(value, spec):
+    import torch
+    s = str(value).strip()
+    max_len = spec.get("max_len")
+    if isinstance(max_len, int) and max_len > 0:
+        s = s[:max_len]
+    v = spec.get("vocab")
+    chars = _SEQ_VOCABS.get(v, v) if isinstance(v, str) else None
+    if not chars:  # byte-level fallback: id = min(ord, 255) + 1 (0 = PAD)
+        ids = [min(ord(c), 255) + 1 for c in s]
+    else:
+        vmap = {c: i + 2 for i, c in enumerate(chars)}
+        ids = [vmap.get(c, 1) for c in s]  # 1 = UNK
+    return torch.tensor(ids or [0], dtype=torch.long)
+
+
+# ESPF branches (manifest kind="espf"): ESPF substructure subword tokens (MolTrans).
+# The run is a standalone snapshot, so it can't read sidecar-torch/espf/; instead it
+# reads the compact codebook the sidecar cached next to the manifest in <base>/.espf/
+# (primed when the dataset is inspected). Token 0 = PAD, 1 = UNK, subwords start at 2.
+_ESPF_CACHE = {}  # name → {ranks, sub2id}
+
+
+def _load_espf_codebook(base, name="drug"):
+    import gzip
+    import json
+    name = str(name or "drug")
+    if name in _ESPF_CACHE:
+        return _ESPF_CACHE[name]
+    fp = Path(base) / ".espf" / f"{name}.json.gz"
+    if not fp.exists():
+        raise FileNotFoundError(
+            f"ESPF codebook cache {fp} not found — open this dataset once in the "
+            f"Datasets tab (inspect/smoke-test) so the sidecar materializes .espf/, "
+            f"then re-run training.")
+    with gzip.open(fp, "rt", encoding="utf-8") as f:
+        cb = json.load(f)
+    ranks = {}
+    for line in cb["merges"]:
+        parts = line.split()
+        if len(parts) == 2:
+            ranks[(parts[0], parts[1])] = len(ranks)
+    sub2id = {s: i for i, s in enumerate(cb["subwords"])}
+    out = {"ranks": ranks, "sub2id": sub2id}
+    _ESPF_CACHE[name] = out
+    return out
+
+
+def _espf_encode(orig, ranks):
+    if len(orig) < 2:
+        return [orig] if orig else []
+    word = list(orig[:-1]) + [orig[-1] + "</w>"]
+    while len(word) > 1:
+        pairs = set(zip(word[:-1], word[1:]))
+        cand = [(ranks[p], p) for p in pairs if p in ranks]
+        if not cand:
+            break
+        _, (a, b) = min(cand, key=lambda x: x[0])
+        merged, i = [], 0
+        while i < len(word):
+            if i < len(word) - 1 and word[i] == a and word[i + 1] == b:
+                merged.append(a + b)
+                i += 2
+            else:
+                merged.append(word[i])
+                i += 1
+        word = merged
+    if word and word[-1] == "</w>":
+        word = word[:-1]
+    elif word and word[-1].endswith("</w>"):
+        word[-1] = word[-1][:-4]
+    return word
+
+
+def _manifest_espf_tokenize(base, value, spec, cache_dir=None):
+    import hashlib
+    import torch
+    name = str(spec.get("codebook", "drug")).strip().lower() or "drug"
+    max_len = spec.get("max_len")
+    s = str(value).strip()
+    # Disk cache (cross-run): ESPF BPE on long protein sequences is pure-Python
+    # and slow; the token ids are deterministic for (codebook, max_len, value), so
+    # cache them next to the mol-graph cache. Mirrors _manifest_mol_graph.
+    fp = None
+    if cache_dir is not None:
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            ml = max_len if (isinstance(max_len, int) and max_len > 0) else 0
+            h = hashlib.sha1(f"{name}|{ml}|{s}".encode("utf-8")).hexdigest()[:16]
+            fp = cache_dir / f"espf_{name}_{h}.pt"
+            if fp.exists():
+                t = torch.load(fp, map_location="cpu", weights_only=False)
+                if hasattr(t, "dtype"):
+                    return t
+        except Exception:
+            fp = None
+    cb = _load_espf_codebook(base, name)
+    toks = _espf_encode(s, cb["ranks"])
+    ids = [(cb["sub2id"][t] + 2) if t in cb["sub2id"] else 1 for t in toks]  # 1 = UNK
+    if isinstance(max_len, int) and max_len > 0:
+        ids = ids[:max_len]
+    t = torch.tensor(ids or [0], dtype=torch.long)
+    if fp is not None:
+        try:
+            torch.save(t, fp)
+        except Exception:
+            pass
+    return t
+
+
+_MANIFEST_LOOKUP_CACHE = {}
+
+
+def _manifest_lookup(base, spec, value):
+    """JOIN a side table by key to resolve a branch's real cell value (e.g. a
+    prot_seq branch keyed by uniprot pulls the sequence from sequences.csv).
+    Cached. Kept in sync with dataset_handlers._lookup_value."""
+    import pandas as pd
+    lk = spec.get("lookup")
+    if not lk:
+        return value
+    key_col = str(spec.get("lookup_key", "")) or "id"
+    val_col = str(spec.get("lookup_value", "")) or "value"
+    lp = Path(os.path.expanduser(str(lk)))
+    if not lp.is_absolute():
+        lp = base / str(lk)
+    ck = (str(lp), key_col, val_col)
+    table = _MANIFEST_LOOKUP_CACHE.get(ck)
+    if table is None:
+        if lp.suffix.lower() == ".parquet":
+            df = pd.read_parquet(lp)
+        elif lp.suffix.lower() == ".tsv":
+            df = pd.read_csv(lp, sep="\t")
+        else:
+            df = pd.read_csv(lp)
+        table = {str(k): str(v) for k, v in zip(df[key_col], df[val_col])}
+        _MANIFEST_LOOKUP_CACHE[ck] = table
+    return table.get(str(value).strip(), "")
+
+
 def _manifest_resolve_file(base, spec, value):
     value = str(value).strip()
     if "dir" not in spec:  # the column holds a path
@@ -185,11 +440,16 @@ def _manifest_resolve_file(base, spec, value):
     return cand if cand.exists() else (d / value if (d / value).exists() else cand)
 
 
-def load_manifest_graphs(ds_cfg: dict, task: str):
-    """Returns (rows, branches) where rows = [([Data per branch], y_scalar), …]."""
+def load_manifest_graphs(ds_cfg: dict, heads: list[dict], known_classes_by_head: dict | None = None):
+    """Returns (graphs_list, targets, branches, skipped). graphs_list[i] is the
+    list of per-branch items for kept row i (a PyG Data for graph/molecule
+    branches, a token-id LongTensor for sequence/ESPF branches); targets maps head →
+    {y, classes, n_classes} aligned to graphs_list. A head with no target falls
+    back to the manifest's own target column (single-task manifest). For external
+    validation, `known_classes_by_head` pins each head's class order to the model."""
     import json
-    import torch
     import pandas as pd
+    import torch
     man = Path(os.path.expanduser(ds_cfg["path"]))
     base = man.resolve().parent
     cfg = json.loads(man.read_text(encoding="utf-8"))
@@ -199,54 +459,181 @@ def load_manifest_graphs(ds_cfg: dict, task: str):
           else pd.read_csv(tp, sep="\t") if suffix == ".tsv" else pd.read_csv(tp))
     branches = list(cfg["pairs"].keys())
     cache_dir = (base / ".graphcache") if cfg.get("cache", True) else None
-    tgt = cfg.get("target") or {}
-    tcol = tgt.get("column")
-    rows = []
+    man_tcol = (cfg.get("target") or {}).get("column")
+
+    # Pre-load ESPF codebooks so a missing .espf cache fails loudly with an
+    # actionable message instead of silently skipping every row in the loop below.
+    for b in branches:
+        spec = cfg["pairs"][b]
+        if str(spec.get("kind", "")) == "espf":
+            _load_espf_codebook(base, str(spec.get("codebook", "drug")).strip().lower() or "drug")
+
+    # Resolve each head's column (head target wins; manifest target is the fallback).
+    head_cols = []
+    for h in heads:
+        col = h["target"] or man_tcol
+        if not col:
+            raise ValueError("manifest training needs a target column (set one on each Head, or a `target` in the manifest)")
+        if col not in df.columns:
+            raise ValueError(f"target column {col!r} not in manifest table columns {list(df.columns)}")
+        head_cols.append(col)
+
+    # Per-branch in-memory dedup: the same value (e.g. a uniprot or canonical
+    # SMILES) recurs across many rows, so memoize each branch's result keyed by the
+    # raw cell value. Collapses the expensive ESPF tokenization / torch.load /
+    # lookup from #rows down to #unique-values (often 10-50x on dual-encoder
+    # datasets like BindingDB). Results are shared by reference — safe because the
+    # collate/batch path reads them read-only (it never mutates an item in place).
+    _MISS, _FAIL = object(), object()
+    memo = {b: {} for b in branches}
+
+    def resolve_branch(b, spec, raw):
+        if spec.get("lookup"):  # JOIN a side table by key → real value
+            raw = _manifest_lookup(base, spec, raw)
+        kind = str(spec.get("kind", ""))
+        if kind == "espf":
+            return _manifest_espf_tokenize(base, raw, spec, cache_dir)  # ESPF ids
+        if kind == "sequence":
+            return _manifest_tokenize(raw, spec)  # 1-D LongTensor, not a graph
+        if kind == "molecule":
+            return _manifest_mol_graph(str(raw), cache_dir)
+        fp = _manifest_resolve_file(base, spec, raw)
+        if fp is None or not Path(fp).exists():
+            raise FileNotFoundError(f"no graph file for {raw!r}")
+        return torch.load(fp, map_location="cpu", weights_only=False)
+
+    graphs_list = []
+    kept_idx = []
     skipped = 0
-    for i in range(len(df)):
+    n_rows = len(df)
+    emit("dataset.preprocess", done=0, total=n_rows, kept=0, skipped=0)
+    for i in range(n_rows):
         r = df.iloc[i]
         graphs = []
         ok = True
         for b in branches:
             spec = cfg["pairs"][b]
-            val = r[spec["column"]]
+            key = str(r[spec["column"]])
+            hit = memo[b].get(key, _MISS)
+            if hit is _FAIL:
+                ok = False
+                break
+            if hit is not _MISS:
+                graphs.append(hit)
+                continue
             try:
-                if str(spec.get("kind", "")) == "molecule":
-                    g = _manifest_mol_graph(str(val), cache_dir)
-                else:
-                    fp = _manifest_resolve_file(base, spec, val)
-                    if fp is None or not Path(fp).exists():
-                        raise FileNotFoundError(f"no graph file for {val!r}")
-                    g = torch.load(fp, map_location="cpu", weights_only=False)
+                g = resolve_branch(b, spec, r[spec["column"]])
+                memo[b][key] = g
                 graphs.append(g)
             except Exception:
+                memo[b][key] = _FAIL
                 ok = False
                 break
         if not ok:
             skipped += 1
-            continue
-        if tcol is None:
-            y = torch.zeros((), dtype=torch.float32)
-        elif task in ("classification",):
-            y = torch.tensor(int(r[tcol]), dtype=torch.long)
         else:
-            y = torch.tensor(float(r[tcol]), dtype=torch.float32)
-        rows.append((graphs, y))
-    if not rows:
+            graphs_list.append(graphs)
+            kept_idx.append(i)
+        # Periodic progress so the run doesn't look frozen during a long single-
+        # threaded preprocess (the UI tails events.jsonl; no event ≈ "stuck").
+        if (i + 1) % 2000 == 0 or (i + 1) == n_rows:
+            emit("dataset.preprocess", done=i + 1, total=n_rows,
+                 kept=len(kept_idx), skipped=skipped)
+    if not graphs_list:
         raise ValueError("manifest produced no usable paired rows (check branch columns / file paths)")
-    return rows, branches, skipped
+
+    kept_df = df.iloc[kept_idx].reset_index(drop=True)
+    targets = {}
+    for h, col in zip(heads, head_cols):
+        y, classes, n_classes = encode_target(
+            kept_df[col], h["task"], (known_classes_by_head or {}).get(h["output"]))
+        targets[h["output"]] = {"y": y, "classes": classes, "n_classes": n_classes}
+    return graphs_list, targets, branches, skipped
 
 
-def graph_collate(batch):
-    """Collate [( [Data,…], y ), …] → ( (Batch per branch…), y_stacked )."""
+class MultiTaskDataset:
+    """Yields (x, ydict): a feature row (tabular) or a per-branch Data list
+    (graph), paired with {head_output → target scalar}. Plain Dataset protocol so
+    random_split / DataLoader work unchanged."""
+
+    def __init__(self, xs, targets: dict):
+        self.xs = xs  # FloatTensor [N,F] (tabular) or list[list[Data]] (graph)
+        self.ys = {k: v["y"] for k, v in targets.items()}
+        self.n = xs.shape[0] if hasattr(xs, "shape") else len(xs)
+
+    def __len__(self):
+        return self.n
+
+    def __getitem__(self, i):
+        return self.xs[i], {k: v[i] for k, v in self.ys.items()}
+
+
+def _pad_stack(seqs):
+    """A list of variable-length tensors → a padded batch, right-padded with 0 along
+    dim 0. 1-D token sequences → [B, Lmax] (PAD=0); 2-D per-residue/atom features or
+    embeddings ([L, D]) → [B, Lmax, D]. Equal-length items just stack."""
     import torch
-    from torch_geometric.data import Batch
-    n_branches = len(batch[0][0])
-    branch_batches = tuple(
-        Batch.from_data_list([item[0][k] for item in batch]) for k in range(n_branches)
-    )
-    ys = torch.stack([item[1] for item in batch])
-    return branch_batches, ys
+    lmax = max(int(s.shape[0]) for s in seqs)
+    rest = tuple(seqs[0].shape[1:])
+    out = torch.zeros((len(seqs), lmax, *rest), dtype=seqs[0].dtype)
+    for i, s in enumerate(seqs):
+        out[i, : s.shape[0]] = s
+    return out
+
+
+def make_collate(is_graph: bool, head_names: list[str]):
+    """Collate [(x, ydict), …] → (xb, {out → stacked y}). For a manifest, xb is a
+    tuple with one element PER BRANCH: a PyG Batch for graph branches, a padded
+    [B, Lmax] LongTensor for sequence branches (each branch handled by its type)."""
+    import torch
+
+    def collate(batch):
+        ys = {k: torch.stack([item[1][k] for item in batch]) for k in head_names}
+        if is_graph:
+            from torch_geometric.data import Batch
+            n_branches = len(batch[0][0])
+            cols = []
+            for k in range(n_branches):
+                items = [item[0][k] for item in batch]
+                if isinstance(items[0], torch.Tensor):  # sequence branch
+                    cols.append(_pad_stack(items))
+                else:                                    # graph branch (PyG Data)
+                    cols.append(Batch.from_data_list(items))
+            xb = tuple(cols)
+        else:
+            xb = torch.stack([item[0] for item in batch])
+        return xb, ys
+
+    return collate
+
+
+def resolve_outputs(out, heads: list[dict]) -> dict:
+    """Normalise a model forward() return → {head_output → tensor}. The generated
+    model returns a dict (named Output nodes), a tuple (multiple terminal nodes),
+    or a single tensor (one output). Single-head is forgiving (takes the first);
+    multi-head must supply one value per head (by name for a dict, by order for a
+    tuple) — a single tensor with >1 head is a model/config mismatch."""
+    names = [h["output"] for h in heads]
+    if isinstance(out, dict):
+        if len(heads) == 1:
+            n = names[0]
+            return {n: out[n] if n in out else next(iter(out.values()))}
+        missing = [n for n in names if n not in out]
+        if missing:
+            raise ValueError(f"model output dict has keys {list(out.keys())} but heads need {missing} — "
+                             f"name an Output node for each head")
+        return {n: out[n] for n in names}
+    if isinstance(out, (tuple, list)):
+        if len(heads) == 1:
+            return {names[0]: out[0]}
+        if len(out) < len(heads):
+            raise ValueError(f"model returns {len(out)} outputs but {len(heads)} heads are configured")
+        return {names[i]: out[i] for i in range(len(heads))}
+    # single tensor
+    if len(heads) > 1:
+        raise ValueError(f"model returns a single tensor but {len(heads)} heads are configured — "
+                         "give each head its own Output node")
+    return {names[0]: out}
 
 
 def build_optimizer(cfg: dict, params):
@@ -264,21 +651,6 @@ def build_optimizer(cfg: dict, params):
     if kind == "RMSprop":
         return torch.optim.RMSprop(params, lr=lr, weight_decay=wd)
     raise ValueError(f"unknown optimizer kind: {kind}")
-
-
-def build_loss(cfg: dict):
-    import torch
-
-    kind = cfg.get("kind", "CrossEntropyLoss")
-    if kind == "CrossEntropyLoss":
-        return torch.nn.CrossEntropyLoss(), "classification"
-    if kind == "BCEWithLogitsLoss":
-        return torch.nn.BCEWithLogitsLoss(), "binary"
-    if kind == "MSELoss":
-        return torch.nn.MSELoss(), "regression"
-    if kind == "L1Loss":
-        return torch.nn.L1Loss(), "regression"
-    raise ValueError(f"unknown loss kind: {kind}")
 
 
 def build_scheduler(cfg: dict, optimizer, epochs: int):
@@ -404,6 +776,150 @@ def sample_predictions(task: str, out, y, classes, k: int = 12) -> list[dict]:
     return rows
 
 
+def eval_summary(task: str, out, y, classes, max_points: int = 2000) -> dict:
+    """Full-val-set evaluation payload that drives the Run-Detail diagrams. The
+    SHAPE is fixed by the task (decided by the loss): classification/binary →
+    a confusion matrix (rows = truth, cols = pred) + class labels; regression →
+    (pred, truth) scatter points (bounded) + the total count. Pure torch, no
+    sklearn. Returns just {"task": …} when there's nothing meaningful to plot."""
+    import torch
+
+    n = int(out.shape[0])
+    if n == 0:
+        return {"task": task}
+    with torch.no_grad():
+        if task == "regression":
+            pred = out.float().view(-1)
+            tgt = y.float().view(-1)
+            if n > max_points:  # evenly subsample so the scatter stays light
+                idx = torch.linspace(0, n - 1, max_points).round().long()
+                pred, tgt = pred[idx], tgt[idx]
+            pts = [[round(float(pred[i]), 5), round(float(tgt[i]), 5)] for i in range(pred.shape[0])]
+            return {"task": "regression",
+                    "scatter": {"points": pts, "n_total": n,
+                                "pred_label": "Vorhersage", "truth_label": "Wahrheit"}}
+        # classification / binary → confusion matrix
+        if task == "binary":
+            pred = (out.view(-1) > 0).long()
+            n_classes = 2
+        else:
+            pred = out.argmax(dim=-1)
+            n_classes = int(out.shape[-1])
+        tgt = y.long().view(-1)
+        n_classes = max(n_classes, (int(tgt.max().item()) + 1) if tgt.numel() else n_classes, 2)
+        if n_classes > 100:  # too many classes for a readable matrix
+            return {"task": task}
+        # Vectorized confusion matrix via bincount over flattened (truth, pred).
+        flat = tgt.clamp(0, n_classes - 1) * n_classes + pred.clamp(0, n_classes - 1)
+        cm = torch.bincount(flat, minlength=n_classes * n_classes).reshape(n_classes, n_classes)
+        labels = [str(classes[c]) if classes and c < len(classes) else str(c)
+                  for c in range(n_classes)]
+        return {"task": task, "confusion": {"labels": labels, "matrix": cm.tolist()}}
+
+
+def to_device(obj, device):
+    """Move a batch to `device`, recursing into the shapes our loaders yield:
+    a bare tensor (non-graph xb), a tuple of branches (graph xb — each a PyG
+    Batch or padded tensor), or a dict (yb, name → target tensor). PyG Batch and
+    plain tensors both expose ``.to``. No-op on CPU so we never pay a copy."""
+    if device.type == "cpu":
+        return obj
+    if isinstance(obj, (list, tuple)):
+        return type(obj)(to_device(o, device) for o in obj)
+    if isinstance(obj, dict):
+        return {k: to_device(v, device) for k, v in obj.items()}
+    if hasattr(obj, "to"):
+        return obj.to(device)
+    return obj
+
+
+def evaluate(model, loader, heads, head_names, multitask, forward_loss, batch_len, metric_kinds, device):
+    """Run `model` over `loader` once → (val_loss, val_acc, extra, val_cat). Pure:
+    no events, no checkpoints. val_cat[output] = (cat_out, cat_y) over that head's
+    LABELED rows, feeding eval_summary / sample_predictions. Shared by the training
+    per-epoch validation AND eval-only external validation."""
+    import torch
+
+    model.eval()
+    vrun, vseen = 0.0, 0
+    hloss = {n: 0.0 for n in head_names}
+    hcorrect = {n: 0 for n in head_names}
+    hcount = {n: 0 for n in head_names}   # labeled rows per head
+    houts = {n: [] for n in head_names}
+    hys = {n: [] for n in head_names}
+    with torch.no_grad():
+        for xb, yb in loader:
+            xb, yb = to_device(xb, device), to_device(yb, device)
+            per, loss = forward_loss(xb, yb)
+            bs = batch_len(xb)
+            vrun += float(loss.item()) * bs
+            vseen += bs
+            for h in heads:
+                n = h["output"]
+                o, l, valid = per[n]
+                nv = int(valid.sum().item())
+                hloss[n] += float(l.item()) * max(1, nv)
+                hcount[n] += nv
+                if nv == 0:
+                    continue
+                ov, yv = o[valid], yb[n][valid]
+                houts[n].append(ov.float())
+                hys[n].append(yv)
+                if h["task"] == "classification":
+                    hcorrect[n] += int((ov.argmax(dim=-1) == yv.long()).sum().item())
+                elif h["task"] == "binary":
+                    hcorrect[n] += int(((ov > 0).long() == yv.long()).sum().item())
+    val_loss = vrun / max(1, vseen)
+    val_acc = None
+    extra: dict = {}
+    val_cat: dict = {}
+    for h in heads:
+        n = h["output"]
+        # Back to CPU: the metric/summary helpers index with CPU linspace tensors
+        # and the eval payloads serialize to JSON — keep them off the GPU.
+        cat_out = torch.cat(houts[n]).cpu() if houts[n] else None
+        cat_y = torch.cat(hys[n]).cpu() if hys[n] else None
+        if cat_out is not None:
+            val_cat[n] = (cat_out, cat_y)
+        denom = max(1, hcount[n])  # over LABELED rows for this head
+        acc = hcorrect[n] / denom if h["task"] in ("classification", "binary") else None
+        hl = hloss[n] / denom
+        hm = compute_metrics(h["task"], cat_out, cat_y, metric_kinds) if (cat_out is not None and metric_kinds) else {}
+        if multitask:
+            extra[f"{n}/loss"] = round(hl, 6)
+            if acc is not None:
+                extra[f"{n}/acc"] = round(acc, 6)
+            for k, v in hm.items():
+                extra[f"{n}/{k}"] = round(v, 6)
+        else:
+            val_acc = acc
+            extra = {k: round(v, 6) for k, v in hm.items()}
+    return val_loss, val_acc, extra, val_cat
+
+
+def emit_eval(epoch, heads, head_names, multitask, head_classes, val_cat):
+    """Emit sample.preds + eval.summary for the per-head (cat_out, cat_y) from
+    evaluate(). The Run-Detail UI renders these (confusion/scatter + predictions)."""
+    if not val_cat:
+        return
+    task_of = {h["output"]: h["task"] for h in heads}
+    if multitask:
+        emit("sample.preds", epoch=epoch, heads=[
+            {"output": n, "task": task_of[n],
+             "rows": sample_predictions(task_of[n], val_cat[n][0], val_cat[n][1], head_classes.get(n))}
+            for n in head_names if n in val_cat])
+        emit("eval.summary", epoch=epoch, heads=[
+            {"output": n, **eval_summary(task_of[n], val_cat[n][0], val_cat[n][1], head_classes.get(n))}
+            for n in head_names if n in val_cat])
+    else:
+        n = head_names[0]
+        t = heads[0]["task"]
+        emit("sample.preds", epoch=epoch,
+             rows=sample_predictions(t, val_cat[n][0], val_cat[n][1], head_classes.get(n)))
+        emit("eval.summary", epoch=epoch,
+             **eval_summary(t, val_cat[n][0], val_cat[n][1], head_classes.get(n)))
+
+
 def main() -> None:
     set_status("running")
     t0 = time.time()
@@ -422,37 +938,69 @@ def main() -> None:
     val_split = float(train_cfg.get("val_split", 0.2))
     seed = int(train_cfg.get("seed", 42))
     log_every = int(train_cfg.get("log_every_n_steps", 10))
+    shuffle = bool(train_cfg.get("shuffle", True))
+    num_workers = int(train_cfg.get("num_workers", 0))
+    drop_last = bool(train_cfg.get("drop_last", False))
+    val_every = max(1, int(train_cfg.get("val_every_n_epochs", 1)))
+    accum_steps = max(1, int(train_cfg.get("gradient_accumulation_steps", 1)))
 
     # ── imports (heavy) ──
     try:
         import torch
-        from torch.utils.data import DataLoader, TensorDataset, random_split
+        from torch.utils.data import DataLoader, random_split
     except Exception as e:  # noqa: BLE001
         fail("import-torch", f"torch import failed: {e}", traceback.format_exc())
 
     torch.manual_seed(seed)
 
+    # ── external validation (eval-only): load the SOURCE checkpoint up-front so the
+    #    external target is encoded against the model's TRAINED class order. ──
+    eval_only = bool(cfg.get("eval_only"))
+    eval_ckpt = None
+    known_classes_by_head = None
+    if eval_only:
+        try:
+            ck = (cfg.get("validate") or {}).get("checkpoint_from")
+            if not ck:
+                fail("validate", "eval_only run has no validate.checkpoint_from")
+            cp = Path(os.path.expanduser(str(ck)))
+            if not cp.is_absolute():
+                cp = WORKSPACE_ROOT / str(ck)
+            eval_ckpt = torch.load(cp, map_location="cpu", weights_only=False)
+            if isinstance(eval_ckpt, dict):
+                known_classes_by_head = eval_ckpt.get("head_classes") or None
+        except Exception as e:  # noqa: BLE001
+            fail("validate", f"cannot read checkpoint for validation: {e}", traceback.format_exc())
+
+    # ── heads (multitask) — one head per model output, single-task = one head ──
+    heads, multitask = resolve_heads(train_cfg, ds_cfg)
+    head_names = [h["output"] for h in heads]
+    # classes per head, filled by dataset loading (None for regression heads).
+    head_classes: dict = {h["output"]: None for h in heads}
+
     # ── dataset ──
     is_graph = False
-    classes = None
     try:
-        loss_fn, task = build_loss(train_cfg.get("loss", {}))
-        ds_cfg = {**ds_cfg, "task": "regression" if task == "regression" else "classification"}
         kind = ds_cfg.get("kind", "tabular")
         if kind == "manifest":
             # Paired graph dataset (e.g. ligand + protein) → a model with one
             # graph input per branch (forward(self, branch0, branch1, …)).
             is_graph = True
-            rows, branches, skipped = load_manifest_graphs(ds_cfg, task)
-            full = rows
-            emit("dataset.loaded", n_rows=len(rows), branches=branches, task=task, skipped=skipped)
+            graphs_list, targets, branches, skipped = load_manifest_graphs(ds_cfg, heads, known_classes_by_head)
+            full = MultiTaskDataset(graphs_list, targets)
+            emit("dataset.loaded", n_rows=len(graphs_list), branches=branches,
+                 heads=[{"output": h["output"], "task": h["task"]} for h in heads], skipped=skipped)
         elif kind == "tabular":
-            X, y, n_classes, classes, feature_cols = load_tabular(ds_cfg)
-            full = TensorDataset(X, y)
+            X, targets, feature_cols = load_tabular(ds_cfg, heads, known_classes_by_head)
+            full = MultiTaskDataset(X, targets)
             emit("dataset.loaded", n_rows=int(X.shape[0]), n_features=int(X.shape[1]),
-                 task=task, n_classes=n_classes, features=feature_cols)
+                 heads=[{"output": h["output"], "task": h["task"],
+                         "n_classes": targets[h["output"]]["n_classes"]} for h in heads],
+                 features=feature_cols)
         else:
             raise ValueError(f"unsupported dataset kind {kind!r} — use 'tabular' or 'manifest'.")
+        for h in heads:
+            head_classes[h["output"]] = targets[h["output"]]["classes"]
     except Exception as e:  # noqa: BLE001
         fail("dataset", str(e), traceback.format_exc())
 
@@ -466,9 +1014,9 @@ def main() -> None:
         train_ds, val_ds = random_split(full, [n_train, n_val], generator=gen)
     else:
         train_ds, val_ds = full, None
-    collate = graph_collate if is_graph else None
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, collate_fn=collate) if val_ds is not None else None
+    collate = make_collate(is_graph, head_names)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, drop_last=drop_last, collate_fn=collate)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, num_workers=num_workers, collate_fn=collate) if val_ds is not None else None
 
     # ── model + optimizer ──
     try:
@@ -476,19 +1024,28 @@ def main() -> None:
         from model import Model  # type: ignore
 
         model = Model()
+        # Pick the compute device once and move the model onto it BEFORE the dummy
+        # forward and the optimizer — so lazy layers materialize their params on
+        # the GPU and the optimizer binds the on-device params. Without this the
+        # whole run silently stays on CPU even with gpu:1 + a CUDA module loaded.
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model.to(device)
         # Lazy layers (in_channels=-1) only materialize their params on the first
         # forward — run one dummy batch BEFORE building the optimizer (else those
         # params are never registered with it) and before counting params.
         try:
             xb0, _ = next(iter(train_loader))
+            xb0 = to_device(xb0, device)
             with torch.no_grad():
                 model(*xb0) if is_graph else model(xb0)
+            model.to(device)  # re-pin lazily-materialized params onto the device
         except StopIteration:
             pass
         optimizer = build_optimizer(train_cfg.get("optimizer", {}), model.parameters())
         scheduler = build_scheduler(train_cfg.get("scheduler", {}), optimizer, epochs)
         n_params = sum(p.numel() for p in model.parameters())
-        emit("model.built", n_params=int(n_params))
+        gpu_name = torch.cuda.get_device_name(0) if device.type == "cuda" else None
+        emit("model.built", n_params=int(n_params), device=device.type, gpu=gpu_name)
     except Exception as e:  # noqa: BLE001
         fail("model", str(e), traceback.format_exc())
 
@@ -501,35 +1058,100 @@ def main() -> None:
     if cb["amp"]:
         amp_dtype = torch.bfloat16 if cb["amp"] == "bf16" else torch.float16
     use_amp = amp_dtype is not None
-    device_type = "cuda" if torch.cuda.is_available() else "cpu"
+    device_type = device.type
     if metric_kinds or grad_clip or early or use_amp:
         emit("config.extras", metrics=metric_kinds, grad_clip=grad_clip,
              early_stopping=early, amp=cb["amp"])
     es_best = float("inf") if (early and early["mode"] == "min") else float("-inf")
     es_wait = 0
 
-    def prep_target(t):
-        if task == "regression":
-            return t.float()
-        if task == "binary":
-            return t.float()
-        return t.long()
+    def prep_target(t, task):
+        return t.long() if task == "classification" else t.float()
+
+    def shape_out(o, task):
+        # squeeze a trailing singleton for regression/binary so [N,1] matches [N].
+        if task in ("regression", "binary"):
+            return o.squeeze(-1) if o.dim() > 1 and o.shape[-1] == 1 else o
+        return o
 
     def batch_len(xb):
-        # graph mode: xb is a tuple of PyG Batches → count graphs, not tensor rows.
-        return xb[0].num_graphs if is_graph else xb.shape[0]
+        # manifest mode: xb is a tuple with one element PER BRANCH — a PyG Batch
+        # (graph) OR a padded tensor (sequence/embedding). Read the batch size from
+        # whichever the first branch is (all branches share it).
+        if not is_graph:
+            return xb.shape[0]
+        first = xb[0]
+        return first.num_graphs if hasattr(first, "num_graphs") else int(first.shape[0])
 
     def forward_loss(xb, yb):
+        """Returns (per, total) where per[output] = (shaped_out, head_loss,
+        valid_mask) and total is the weighted sum the optimizer steps on. Each
+        head's loss is computed ONLY over rows that have a target for it
+        (masked / partial-label multitask), so e.g. an affinity head trains on
+        binders while decoys (empty target) are skipped."""
         out = model(*xb) if is_graph else model(xb)
-        if isinstance(out, tuple):
-            out = out[0]
-        if task == "regression":
-            out = out.squeeze(-1) if out.dim() > 1 and out.shape[-1] == 1 else out
-        elif task == "binary":
-            out = out.squeeze(-1) if out.dim() > 1 and out.shape[-1] == 1 else out
-        return out, loss_fn(out, prep_target(yb))
+        outs = resolve_outputs(out, heads)
+        total = None
+        per = {}
+        for h in heads:
+            name, task = h["output"], h["task"]
+            o = shape_out(outs[name], task)
+            t = prep_target(yb[name], task)
+            # rows with a missing target for this head don't contribute to it
+            valid = (t >= 0) if task == "classification" else ~torch.isnan(t)
+            if bool(valid.all()):
+                l = h["loss_fn"](o, t)
+            elif bool(valid.any()):
+                l = h["loss_fn"](o[valid], t[valid])
+            else:
+                l = o.sum() * 0.0  # nothing labeled this batch → no contribution
+            contrib = l * h["weight"]
+            total = contrib if total is None else total + contrib
+            per[name] = (o, l, valid)
+        return per, total
 
     CKPT_DIR.mkdir(exist_ok=True)
+
+    # ── eval-only (external validation) ──────────────────────────────────────
+    # Load the source checkpoint into the model and evaluate the WHOLE external
+    # dataset once — emit the same eval.summary/sample.preds the Run-Detail UI
+    # renders, write metrics.json, and return. No optimizer/scheduler/training.
+    if eval_only:
+        try:
+            state = eval_ckpt.get("model_state", eval_ckpt) if isinstance(eval_ckpt, dict) else eval_ckpt
+            msd = model.state_dict()
+            compat = {k: v for k, v in state.items()
+                      if k in msd and hasattr(v, "shape") and tuple(v.shape) == tuple(msd[k].shape)}
+            model.load_state_dict(compat, strict=False)
+            n_missing = len(msd) - len(compat)
+            emit("checkpoint.loaded", source=str((cfg.get("validate") or {}).get("checkpoint_from")),
+                 loaded=len(compat), missing=n_missing)
+            if n_missing:
+                emit("validation.warning",
+                     message=f"{n_missing} model tensors had no matching checkpoint weight "
+                             f"(architecture mismatch) — they stayed at their init values.")
+            eval_loader = DataLoader(full, batch_size=batch_size, num_workers=num_workers, collate_fn=collate)
+            val_loss, val_acc, extra, val_cat = evaluate(
+                model, eval_loader, heads, head_names, multitask, forward_loss, batch_len, metric_kinds, device)
+            emit("epoch.end", epoch=0, train_loss=0.0,
+                 val_loss=round(val_loss, 6), val_acc=None if val_acc is None else round(val_acc, 6),
+                 metrics=extra or None,
+                 **({"heads": [{"output": h["output"], "task": h["task"]} for h in heads]} if multitask else {}),
+                 lr=0.0)
+            emit_eval(0, heads, head_names, multitask, head_classes, val_cat)
+            emit("validation.summary", n_rows=len(full), val_loss=round(val_loss, 6), metrics=extra or None)
+            total = time.time() - t0
+            emit("run.done", total_seconds=round(total, 2), best_val_loss=round(val_loss, 6))
+            METRICS.write_text(json.dumps({
+                "status": "done", "eval_only": True, "total_seconds": round(total, 2),
+                "best_val_loss": round(val_loss, 6), "n_rows": len(full),
+                "n_params": int(n_params), "metrics": extra or None,
+            }, indent=2))
+            set_status("done")
+            return
+        except Exception as e:  # noqa: BLE001
+            fail("validate", str(e), traceback.format_exc())
+
     best_val = float("inf")
     start_epoch = 0
 
@@ -566,14 +1188,19 @@ def main() -> None:
             running = 0.0
             n_seen = 0
             step = 0
+            optimizer.zero_grad()
             for xb, yb in train_loader:
-                optimizer.zero_grad()
+                xb, yb = to_device(xb, device), to_device(yb, device)
                 with torch.autocast(device_type=device_type, dtype=amp_dtype, enabled=use_amp):
                     _, loss = forward_loss(xb, yb)
-                loss.backward()
-                if grad_clip:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-                optimizer.step()
+                # Accumulate over accum_steps batches → larger effective batch on
+                # limited memory; step (and zero) only at the window boundary.
+                (loss / accum_steps).backward()
+                if (step + 1) % accum_steps == 0:
+                    if grad_clip:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                    optimizer.step()
+                    optimizer.zero_grad()
                 bs = batch_len(xb)
                 running += float(loss.item()) * bs
                 n_seen += bs
@@ -581,41 +1208,25 @@ def main() -> None:
                 if step % log_every == 0:
                     lr = optimizer.param_groups[0]["lr"]
                     emit("batch", epoch=epoch, step=step, loss=round(float(loss.item()), 6), lr=lr)
+            # Flush a trailing partial accumulation window.
+            if step % accum_steps != 0:
+                if grad_clip:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                optimizer.step()
+                optimizer.zero_grad()
             train_loss = running / max(1, n_seen)
 
-            # ── validation ──
-            val_loss = None
-            val_acc = None
-            extra: dict = {}
-            val_cat = None
-            if val_loader is not None:
-                model.eval()
-                vrun = 0.0
-                vseen = 0
-                correct = 0
-                outs = []
-                ys = []
-                with torch.no_grad():
-                    for xb, yb in val_loader:
-                        with torch.autocast(device_type=device_type, dtype=amp_dtype, enabled=use_amp):
-                            out, loss = forward_loss(xb, yb)
-                        bs = batch_len(xb)
-                        vrun += float(loss.item()) * bs
-                        vseen += bs
-                        outs.append(out.float())
-                        ys.append(yb)
-                        if task == "classification":
-                            correct += int((out.argmax(dim=-1) == yb.long()).sum().item())
-                        elif task == "binary":
-                            correct += int(((out > 0).long() == yb.long()).sum().item())
-                val_loss = vrun / max(1, vseen)
-                if task in ("classification", "binary"):
-                    val_acc = correct / max(1, vseen)
-                if outs:
-                    val_cat = (torch.cat(outs), torch.cat(ys))
-                    if metric_kinds:
-                        extra = {k: round(v, 6) for k, v in
-                                 compute_metrics(task, val_cat[0], val_cat[1], metric_kinds).items()}
+            # ── validation ── (shared evaluate(); also used by eval-only runs)
+            val_loss = None   # combined (weighted) val loss — the monitored metric
+            val_acc = None    # single-task convenience (top-level); None in multitask
+            extra: dict = {}  # per-metric floats (multitask keys are "<output>/<metric>")
+            val_cat = None     # per-head {output → (cat_out, cat_y)} for eval payloads
+            # Validate every val_every epochs (always on the final epoch). On a
+            # skipped epoch val_loss stays None — handled like the no-val-split case.
+            do_val = (epoch + 1) % val_every == 0 or epoch == end_epoch - 1
+            if val_loader is not None and do_val:
+                val_loss, val_acc, extra, val_cat = evaluate(
+                    model, val_loader, heads, head_names, multitask, forward_loss, batch_len, metric_kinds, device)
 
             monitor = val_loss if val_loss is not None else train_loss
             if scheduler is not None:
@@ -628,6 +1239,7 @@ def main() -> None:
                  val_loss=None if val_loss is None else round(val_loss, 6),
                  val_acc=None if val_acc is None else round(val_acc, 6),
                  metrics=extra or None,
+                 **({"heads": [{"output": h["output"], "task": h["task"]} for h in heads]} if multitask else {}),
                  lr=optimizer.param_groups[0]["lr"])
 
             # ── checkpoint best ──
@@ -636,14 +1248,15 @@ def main() -> None:
                 torch.save({"epoch": epoch, "model_state": model.state_dict(),
                             "optim_state": optimizer.state_dict(),
                             "sched_state": scheduler.state_dict() if scheduler is not None else None,
-                            "best_val": best_val,
-                            "val_loss": val_loss, "classes": classes},
+                            "best_val": best_val, "val_loss": val_loss,
+                            # single-task keeps the flat `classes` (Explain viz reads it);
+                            # multitask records per-head class lists too.
+                            "classes": (None if multitask else head_classes.get(head_names[0])),
+                            "head_classes": head_classes},
                            CKPT_DIR / "best.pt")
                 emit("checkpoint", epoch=epoch, path="checkpoints/best.pt",
                      val_loss=None if val_loss is None else round(val_loss, 6), is_best=True)
-                if val_cat is not None:
-                    emit("sample.preds", epoch=epoch,
-                         rows=sample_predictions(task, val_cat[0], val_cat[1], classes))
+                emit_eval(epoch, heads, head_names, multitask, head_classes, val_cat)
 
             # ── early stopping ──
             if early is not None:
@@ -662,7 +1275,9 @@ def main() -> None:
         torch.save({"epoch": end_epoch - 1, "model_state": model.state_dict(),
                     "optim_state": optimizer.state_dict(),
                     "sched_state": scheduler.state_dict() if scheduler is not None else None,
-                    "best_val": best_val, "classes": classes},
+                    "best_val": best_val,
+                    "classes": (None if multitask else head_classes.get(head_names[0])),
+                    "head_classes": head_classes},
                    CKPT_DIR / "last.pt")
     except Exception as e:  # noqa: BLE001
         fail("train", str(e), traceback.format_exc())
@@ -675,6 +1290,8 @@ def main() -> None:
         "best_val_loss": round(best_val, 6),
         "epochs": epochs,
         "n_params": int(n_params),
+        "device": device.type,
+        "gpu": gpu_name,
     }, indent=2))
     set_status("done")
 

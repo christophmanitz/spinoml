@@ -13,12 +13,15 @@ import {
   type OptimizerKind,
   type SchedulerKind,
   type CallbackConfig,
+  type Head,
   defaultTrainingConfig,
 } from '../training/types'
 
 export type TrainingPlan = {
   modelRelpath: string
   datasetRelpath: string
+  /** Single-task target column. Empty in multitask mode (targets live in
+   *  training.heads, one per output). */
   target: string
   features: string[] | null
   training: TrainingConfig
@@ -58,10 +61,16 @@ export function compileTrainingGraph(snapshot: TrainingGraphSnapshot): TrainingC
     return hits[0]
   }
 
+  // Multitask: each Head node binds a model output → target column + loss +
+  // weight. When ≥1 Head node is present the run is multitask and the single
+  // Loss node + DatasetSource.target become optional (heads carry both).
+  const headNodes = byType('Head')
+  const multitask = headNodes.length > 0
+
   const loop = one('TrainLoop')
   const dataset = one('DatasetSource')
   const model = one('ModelSource')
-  const loss = one('Loss')
+  const loss = one('Loss', !multitask)
   const optimizer = one('Optimizer')
   const split = one('Split', false)
   const loader = one('DataLoader', false)
@@ -85,6 +94,19 @@ export function compileTrainingGraph(snapshot: TrainingGraphSnapshot): TrainingC
     schedulerCfg.patience = num(sc, 'patience', 10)
   }
 
+  // Build the heads array (multitask). Each head needs a target column; the
+  // output name defaults to 'out' (the model's sole/default output key).
+  const heads: Head[] = headNodes.map((n) => {
+    const p = paramsOf(n)
+    return {
+      output: String(p.output ?? 'out'),
+      target: String(p.target ?? ''),
+      loss: (p.loss as LossKind) ?? 'CrossEntropyLoss',
+      weight: num(p, 'weight', 1),
+      label_smoothing: num(p, 'label_smoothing', 0),
+    }
+  })
+
   const metrics = byType('Metric').map((n) => String(paramsOf(n).kind)).filter(Boolean)
 
   const callbacks: CallbackConfig[] = []
@@ -105,13 +127,22 @@ export function compileTrainingGraph(snapshot: TrainingGraphSnapshot): TrainingC
     val_split: num(sp, 'val_ratio', base.val_split),
     seed: Math.trunc(num(lp, 'seed', base.seed)),
     log_every_n_steps: Math.trunc(num(lp, 'log_every_n_steps', base.log_every_n_steps)),
+    val_every_n_epochs: Math.max(1, Math.trunc(num(lp, 'val_every_n_epochs', 1))),
+    gradient_accumulation_steps: Math.max(1, Math.trunc(num(lp, 'gradient_accumulation_steps', 1))),
+    // DataLoader knobs only when a DataLoader node is present (else sidecar defaults).
+    ...(loader ? {
+      shuffle: Boolean(dl.shuffle),
+      num_workers: Math.max(0, Math.trunc(num(dl, 'num_workers', 0))),
+      drop_last: Boolean(dl.drop_last),
+    } : {}),
     optimizer: {
       kind: (op.kind as OptimizerKind) ?? base.optimizer.kind,
       lr: num(op, 'lr', base.optimizer.lr),
       weight_decay: num(op, 'weight_decay', 0),
       momentum: num(op, 'momentum', 0.9),
     },
-    loss: { kind: (lo.kind as LossKind) ?? base.loss.kind },
+    loss: { kind: (lo.kind as LossKind) ?? base.loss.kind, ...(loss ? { label_smoothing: num(lo, 'label_smoothing', 0) } : {}) },
+    ...(multitask ? { heads } : {}),
     scheduler: schedulerCfg,
     metrics: metrics.length ? metrics : undefined,
     callbacks: callbacks.length ? callbacks : undefined,
@@ -127,8 +158,15 @@ export function compileTrainingGraph(snapshot: TrainingGraphSnapshot): TrainingC
   // A .manifest (paired graph dataset) carries its own target → no column needed.
   const isManifest = datasetRelpath.toLowerCase().endsWith('.manifest')
   if (dataset && !datasetRelpath) issues.push('DatasetSource hat keinen Datensatz gewählt.')
-  if (dataset && !isManifest && !target) issues.push('DatasetSource braucht eine Ziel-Spalte (target).')
+  // Single-task needs the DatasetSource target; multitask gets targets from heads.
+  if (dataset && !isManifest && !multitask && !target) issues.push('DatasetSource braucht eine Ziel-Spalte (target).')
   if (model && !modelRelpath) issues.push('ModelSource hat kein Modell gewählt.')
+  // Each head needs a target column (the output name defaults to 'out').
+  if (multitask) {
+    if (heads.some((h) => !h.target)) issues.push('Jeder Head-Knoten braucht eine Ziel-Spalte (target).')
+    const dupOut = heads.map((h) => h.output).filter((o, i, a) => a.indexOf(o) !== i)
+    if (dupOut.length) issues.push(`Doppelter Head-Output „${dupOut[0]}" — Output-Namen müssen eindeutig sein.`)
+  }
 
   // Edge validation (advisory): each core component should reach the TrainLoop
   // along the graph's edges. The compiler assembles the config from node types,
@@ -162,6 +200,7 @@ export function compileTrainingGraph(snapshot: TrainingGraphSnapshot): TrainingC
     wired(dataset, 'DatasetSource')
     wired(model, 'ModelSource')
     wired(loss, 'Loss')
+    for (const h of headNodes) wired(h, 'Head')
     wired(optimizer, 'Optimizer')
     wired(scheduler, 'Scheduler')
     for (const m of byType('Metric')) wired(m, 'Metric')
@@ -171,11 +210,15 @@ export function compileTrainingGraph(snapshot: TrainingGraphSnapshot): TrainingC
   }
 
   const ok = issues.every((m) => m.includes('Mehrere')) &&
-    !!loop && !!dataset && !!model && !!loss && !!optimizer && !!datasetRelpath && !!modelRelpath &&
-    (isManifest || !!target)
+    !!loop && !!dataset && !!model && !!optimizer && !!datasetRelpath && !!modelRelpath &&
+    (multitask
+      ? heads.length > 0 && heads.every((h) => !!h.target)
+      : !!loss && (isManifest || !!target))
 
+  // Multitask carries targets in training.heads; the single-task `target` slot
+  // is then empty so nothing downstream mistakes one head's column for THE target.
   const plan: TrainingPlan | null = ok
-    ? { modelRelpath, datasetRelpath, target, features, training }
+    ? { modelRelpath, datasetRelpath, target: multitask ? '' : target, features, training }
     : null
 
   return { ok, issues, warnings, plan }
