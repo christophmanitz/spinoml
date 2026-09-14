@@ -13,7 +13,7 @@
 | R004   | Training  | Failed training reported successful                                 | CRITICAL | T001    | OPEN     | §30 local job state machine |
 | R005   | Checkpoint| Corrupted checkpoint accepted                                        | CRITICAL | T002    | OPEN     | §26/27/28 checkpoint correctness/atomicity/crash |
 | R006   | Dataset   | Split leakage (train/val/test)                                       | CRITICAL | D001    | OPEN     | §19 train/val/test integrity |
-| R007   | Async     | Stale inference/response overwrites state                            | HIGH     | A001    | OPEN     | §10 async races |
+| R007   | Async     | Stale inference/response overwrites state                            | HIGH     | A001    | ADDRESSED | §10 async races (staleness guard + abort verified by test:races 2026-09-14) |
 | R008   | Sidecar   | Sidecar crash leaves application inconsistent                        | HIGH     | P001    | OPEN     | §11/12/13 sidecar robustness/crash/ports |
 | R009   | SSH       | Connection failure produces wrong state (silent local fallback)      | HIGH     | R001    | OPEN     | §34/35 SSH reliability & credential safety |
 | R010   | SLURM     | Wrong remote job state reported                                       | HIGH     | R002    | OPEN     | §36/37 SLURM reliability & job recovery |
