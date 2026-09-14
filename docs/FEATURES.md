@@ -294,6 +294,14 @@ chatbot knows about it — recipe in CLAUDE.md "Add a new LLM tool".
   `run.determinism` event; the CUDA `atomicAdd` caveat is recorded rather than
   silently claiming bit-level reproducibility.
 
+- 2026-09-14 — **Scientific smoke test (Phase 23)**: new `npm run verify:smoke`
+  script trains a tiny MLP (10→64→2, Linear-ReLU-Linear) on a synthetic 100-sample
+  10-feature binary-classification dataset for 5 epochs and asserts: loss
+  decreasing + finite, accuracy finite ∈ [0,1], checkpoint/best.pt exists,
+  metrics.json present with correct fields, and `run.provenance` +
+  `run.determinism` events emitted — a fast CI-compatible end-to-end sanity
+  gate.
+
 - 2026-09-14 — **Training environment record (Phase 21)**: `train.py` emits a
   `config.env` event at launch recording the runtime stack (python/torch/cuda/
   numpy versions, device + GPU/VRAM, compute dtype, CPU count, RAM, workspace

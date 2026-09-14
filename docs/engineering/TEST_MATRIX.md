@@ -43,6 +43,7 @@ Security (sidecars)    | none (known open: CORS `*`, no auth)           | auth +
 | `npm run lint`          | all TS (eslint)                     | FAIL 49e/4w (gate no-op) |
 | `npm run verify:codegen`| generator (13 graphs, exec-ed)      | PASS 13/13  |
 | `npm run verify:traingen`| training codegen (compile + 2 e2e + strategy guard + snapshot + env + determinism) | PASS         |
+| `npm run verify:smoke`| scientific smoke test (synthetic data, 5 epochs, checkpoint + metrics) | PASS 15 checks |
 | `npm run verify:sidecar`| torch sidecar (autostart)           | PASS 6/6+activations |
 | `npm run verify:opencode`| LLM sidecar opencode provider      | PASS         |
 | `cargo check` (src-tauri)| Rust                                | SKIPPED (no toolchain) |

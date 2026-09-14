@@ -1923,6 +1923,20 @@ Training exits successfully
 
 This test must be fast enough for regular CI execution.
 
+> **2026-09-14 — implemented.** `npm run verify:smoke` (`scripts/verify-smoke.ts`)
+> generates a synthetic 100-sample, 10-feature, 2-class tabular CSV (seeded
+> xorshift PRNG — reproducible), trains a Linear(10,64)→ReLU→Linear(64,2) model
+> for 5 epochs (Adam, CrossEntropyLoss, accuracy metric, 0.2 random val split),
+> runs the REAL `train.py` end-to-end, then asserts:
+> - training exits `done`, 5 `epoch.end`s emitted
+> - train → val loss finite; loss strictly decreases across epochs
+> - accuracy finite and in [0,1]
+> - `checkpoints/best.pt` exists; `metrics.json` present with
+>   `status=done` + `best_val_loss` + `epochs` + `n_params`
+> - `run.provenance` + `run.determinism` events emitted
+>
+> ~4s total in CI — fast enough for regular execution.
+
 ---
 
 # 25. PHASE 24 – TRAINING FAILURE TESTS

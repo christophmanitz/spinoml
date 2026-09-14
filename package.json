@@ -14,6 +14,7 @@
     "verify:codegen": "tsx scripts/verify-codegen.ts",
     "verify:traingen": "tsx scripts/verify-traingen.ts",
     "verify:sidecar": "tsx scripts/verify-sidecar.ts",
+    "verify:smoke": "tsx scripts/verify-smoke.ts",
     "verify:opencode": "tsx scripts/verify-opencode.ts",
     "test:graphstore": "tsx scripts/test-graphstore.ts",
     "test:persistence": "tsx scripts/test-persistence.ts",
