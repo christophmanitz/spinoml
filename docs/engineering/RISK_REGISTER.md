@@ -17,7 +17,7 @@
 | R008   | Sidecar   | Sidecar crash leaves application inconsistent                        | HIGH     | P001    | OPEN     | §11/12/13 sidecar robustness/crash/ports |
 | R009   | SSH       | Connection failure produces wrong state (silent local fallback)      | HIGH     | R001    | OPEN     | §34/35 SSH reliability & credential safety |
 | R010   | SLURM     | Wrong remote job state reported                                       | HIGH     | R002    | OPEN     | §36/37 SLURM reliability & job recovery |
-| R011   | Persistence| Graph corruption on save/autosave                                    | CRITICAL | P001    | OPEN     | §4.3/5 persistence + schema versioning |
+| R011   | Persistence| Graph corruption on save/autosave                                    | CRITICAL | P001    | ADDRESSED | §4.3/5 persistence + schema versioning (round-trip + fail-closed tests landed 2026-09-14) |
 | R012   | Security  | Command/path injection (ssh, run_script)                             | CRITICAL | SEC001  | OPEN     | §44/45/46/47 injection + path security |
 | R013   | Security  | Sidecar CSRF via CORS `*` — arbitrary website executes code/files      | CRITICAL | SEC002  | OPEN     | AUDIT §1.1/1.3, plan §77 |
 | R014   | Security  | LLM `/respond` + auto-approve paths unauthenticated                   | CRITICAL | SEC003  | OPEN     | AUDIT §1.2, plan §14/15 |

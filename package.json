@@ -16,6 +16,7 @@
     "verify:sidecar": "tsx scripts/verify-sidecar.ts",
     "verify:opencode": "tsx scripts/verify-opencode.ts",
     "test:graphstore": "tsx scripts/test-graphstore.ts",
+    "test:persistence": "tsx scripts/test-persistence.ts",
     "sidecar:torch": "python sidecar-torch/main.py",
     "sidecar:llm": "node sidecar-llm/main.mjs"
   },

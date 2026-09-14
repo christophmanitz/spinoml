@@ -361,7 +361,9 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       }
       const snap = parseFile(content)
       useScopeStore.getState().reset()
-      useGraphStore.getState().loadSnapshot(snap)
+      if (!useGraphStore.getState().loadSnapshot(snap)) {
+        throw new Error('graph validation failed — this file contains an invalid model and was NOT opened')
+      }
       set({ activeFileId: id, dirty: false })
       return true
     } catch (err) {

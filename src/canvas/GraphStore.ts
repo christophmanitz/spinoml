@@ -35,6 +35,9 @@ let nextId = 1
 const newNodeId = () => `n${nextId++}`
 function bumpNextIdPast(ids: string[]) {
   for (const id of ids) {
+    // Defensive: junk file entries may carry non-string ids — skip, never throw.
+    // loadSnapshot validates ids afterwards and rejects cleanly.
+    if (typeof id !== 'string') continue
     const m = id.match(/^n(\d+)$/)
     if (m) nextId = Math.max(nextId, parseInt(m[1], 10) + 1)
   }

@@ -4,11 +4,31 @@ import { captureRootSnapshot } from '../canvas/scopeStore'
 
 export const FORMAT_VERSION = 1
 
+// Explicit schema migrations, keyed by the version they upgrade FROM.
+// Future schema changes add an entry here (v1 → v2, …) instead of branching
+// in parseFile. The graph payload shape itself stays a GraphSnapshot; anything
+// that reshapes it goes through this map so old files keep opening.
+const MIGRATIONS: Record<number, (file: unknown) => unknown> = {}
+
 export type SpinoMLFile = {
   format: 'spinoml'
   version: number
   savedAt: string
   graph: GraphSnapshot
+}
+
+function migrateFile(file: SpinoMLFile): SpinoMLFile {
+  let version = file.version
+  let out: unknown = file
+  while (version < FORMAT_VERSION) {
+    const migrate = MIGRATIONS[version]
+    if (!migrate) {
+      throw new Error(`file format v${version} is too old to open (no migration path to v${FORMAT_VERSION})`)
+    }
+    out = migrate(out)
+    version += 1
+  }
+  return out as SpinoMLFile
 }
 
 export function serializeCurrent(): string {
@@ -28,11 +48,14 @@ export function parseFile(text: string): GraphSnapshot {
   if (!obj || typeof obj !== 'object') throw new Error('expected a JSON object')
   const file = obj as Partial<SpinoMLFile>
   if (file.format !== 'spinoml') throw new Error('not a spinoml file (missing format)')
-  if (typeof file.version !== 'number') throw new Error('missing version')
+  if (typeof file.version !== 'number' || !Number.isInteger(file.version)) {
+    throw new Error(`invalid version: expected an integer, got ${String(file.version)}`)
+  }
   if (file.version > FORMAT_VERSION) {
     throw new Error(`file format v${file.version} is newer than this app (v${FORMAT_VERSION})`)
   }
-  const graph = file.graph
+  const current = migrateFile(file as SpinoMLFile)
+  const graph = current.graph
   if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) {
     throw new Error('graph payload missing nodes/edges')
   }

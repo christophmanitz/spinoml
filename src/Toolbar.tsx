@@ -70,7 +70,10 @@ export default function Toolbar() {
         )}
         <Item onSelect={() => pickAndLoad((snap) => {
           useScopeStore.getState().reset()
-          useGraphStore.getState().loadSnapshot(snap)
+          if (!useGraphStore.getState().loadSnapshot(snap)) {
+            alert('Couldn\'t load: this file contains an invalid model (graph validation failed). It was not opened.')
+            return
+          }
           useWorkspaceStore.getState().closeActive()
         })}>
           Open file from disk…

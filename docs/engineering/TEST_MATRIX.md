@@ -15,7 +15,7 @@ Shape inference        | `verify-sidecar` (synthetic /infer) ✓          | fail
 Dataset handling       | `verify-sidecar` (inspect/stats/smoke) ✓       | per-kind handlers, leak tests| §17/18, §19
 Training runs (local)  | `verify-traingen` e2e (2-head, external-val) ✓ | local job state machine     | §30/31/32/33
 Training runs (remote) | none                                          | ssh + slurm run tests        | §34/35/36/37
-Persistence            | none (manual smoke mandated in CLAUDE.md)      | round-trip + schema tests    | §4.3, §5
+Persistence            | `npm run test:persistence` ✓ (P001/P011: round-trip, malformed-file matrix, schema versions, fail-closed) | autosave (localStorage) browser smoke | §4.3, §5
 Torch sidecar          | `verify-sidecar` 6/6+activations ✓             | auth/path-scope tests        | §77/78 security
 LLM sidecar            | `verify-opencode` ✓ (+manual ask/confirm)      | `/respond`/auto-approve auth | §14/15, §77
 MCP                    | `verify-opencode` (via opencode bridge) ✓      | spec-parity across providers | §16 MCP validation
@@ -34,6 +34,7 @@ Security (sidecars)    | none (known open: CORS `*`, no auth)           | auth +
 | ----------------------- | ----------------------------------- | --------------- |
 | `npm run build`         | all TS                              | PASS (2 warnings) |
 | `npm run test:graphstore` | GraphStore invariants + mutation guards        | PASS         |
+| `npm run test:persistence` | persistence round-trip + malformed-file fail-safety | PASS         |
 | `npm run lint`          | all TS (eslint)                     | FAIL 49e/4w (gate no-op) |
 | `npm run verify:codegen`| generator (13 graphs, exec-ed)      | PASS 13/13  |
 | `npm run verify:traingen`| training codegen (compile + 2 e2e) | PASS         |
