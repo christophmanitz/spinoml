@@ -1824,6 +1824,16 @@ Software versions
 Hardware information
 ```
 
+> **2026-09-14 — implemented.** The run-time configuration is emitted once
+> `train.py` emits `config.env` after the model builds, with `python`,
+> `torch`, `cuda`, `numpy` versions, `device`, `gpu`/`gpu_mem_mb`, `dtype`,
+> `cpus`, `ram_bytes`, and best-effort `git_commit` (workspace root; absent
+> when not a git repo). The same snapshot is written into `metrics.json` at
+> `run.done`. verify:traingen now asserts `config.env` is present and carries
+> `python`/`torch`/`device`/`dtype` strings. The full training configuration
+> (graph/model/seed/optimizer/loss/metrics/split/preprocessing) was already
+> frozen into `run.json` by Phases 18–20.
+
 Use the actual fields supported by the project.
 
 ---

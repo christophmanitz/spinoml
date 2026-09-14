@@ -31,6 +31,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
+import subprocess
 import sys
 import time
 import traceback
@@ -175,6 +177,56 @@ def _verify_snapshot(cfg: dict) -> dict:
         "model_py": {"expected": snap.get("model_py_sha256"), "actual": actual_model, "matches": actual_model == snap.get("model_py_sha256")},
         "preprocessing": snap.get("preprocessing", []),
     }
+
+
+def _env_info(torch_mod, device, amp: str | None, git_root: Path | None = None) -> dict:
+    """Phase 21 — record the RUNTIME environment the experiment actually ran on:
+    software versions, device/dtype, hardware. Fired once right after the model
+    is built so a bad run can be blamed on (or exonerated from) the environment.
+    Best-effort: git commit omitted when the workspace isn't a git repo."""
+    info: dict = {
+        "python": platform.python_version(),
+        "python_exe": sys.executable,
+    }
+    try:
+        info["torch"] = torch_mod.__version__
+        info["cuda"] = torch_mod.version.cuda or None
+        try:
+            info["cudnn"] = torch_mod.backends.cudnn.version()
+        except Exception:  # noqa: BLE001
+            pass
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import numpy as np
+        info["numpy"] = np.__version__
+    except Exception:  # noqa: BLE001
+        pass
+    info["device"] = device.type
+    if device.type == "cuda":
+        try:
+            info["gpu"] = torch_mod.cuda.get_device_name(0)
+            info["gpu_mem_mb"] = round(torch_mod.cuda.get_device_properties(0).total_memory / 1e6)
+        except Exception:  # noqa: BLE001
+            pass
+    info["dtype"] = "bf16" if amp == "bf16" else ("fp16" if amp else "fp32")
+    info["cpus"] = os.cpu_count()
+    try:
+        page = os.sysconf("SC_PAGESIZE")
+        info["ram_bytes"] = os.sysconf("SC_PHYS_PAGES") * page
+    except Exception:  # noqa: BLE001
+        pass
+    if git_root is not None:
+        try:
+            out = subprocess.check_output(
+                ["git", "-C", str(git_root), "rev-parse", "--short", "HEAD"],
+                stderr=subprocess.DEVNULL, timeout=2,
+            ).decode().strip()
+            if out:
+                info["git_commit"] = out
+        except Exception:  # noqa: BLE001
+            pass
+    return info
 
 
 # ─── Multitask plumbing ─────────────────────────────────────────────────────
@@ -1223,6 +1275,13 @@ def main() -> None:
     if metric_kinds or grad_clip or early or use_amp:
         emit("config.extras", metrics=metric_kinds, grad_clip=grad_clip,
              early_stopping=early, amp=cb["amp"])
+    # Phase 21 — record the RUNTIME environment once (software versions, device/
+    # dtype, hardware, optional workspace git commit) so a run's outcome can be
+    # attributed to the exact stack it actually executed on.
+    try:
+        emit("config.env", **_env_info(torch, device, cb["amp"], WORKSPACE_ROOT))
+    except Exception as e:  # noqa: BLE001
+        emit("config.env", error=str(e))
     es_best = float("inf") if (early and early["mode"] == "min") else float("-inf")
     es_wait = 0
 
@@ -1445,6 +1504,10 @@ def main() -> None:
 
     total = time.time() - t0
     emit("run.done", total_seconds=round(total, 2), best_val_loss=round(best_val, 6))
+    try:
+        env_summary = _env_info(torch, device, cb["amp"], WORKSPACE_ROOT)
+    except Exception:  # noqa: BLE001
+        env_summary = {}
     METRICS.write_text(json.dumps({
         "status": "done",
         "total_seconds": round(total, 2),
@@ -1453,6 +1516,7 @@ def main() -> None:
         "n_params": int(n_params),
         "device": device.type,
         "gpu": gpu_name,
+        "env": env_summary,
     }, indent=2))
     set_status("done")
 

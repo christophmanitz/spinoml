@@ -146,6 +146,15 @@ if (!existsSync(template)) {
       && (si as any).train_size > 0 && typeof (si as any).val_size === 'number'
       && (si as any).train_size + (si as any).val_size > 0,
       JSON.stringify(si ?? 'no split.integrity event'))
+    // Phase 21: the runtime environment is recorded once at launch — software
+    // versions + device/dtype must be present for a real (non-mock) stack.
+    const envEv = events.find((e) => e.kind === 'config.env')
+    check('config.env records software + device (Phase 21)',
+      !!envEv && typeof (envEv as any).python === 'string'
+      && typeof (envEv as any).torch === 'string'
+      && typeof (envEv as any).device === 'string'
+      && typeof (envEv as any).dtype === 'string',
+      JSON.stringify(envEv))
     // The provenance split.strategy must match what was frozen into run.json
     const provEv = events.find((e) => e.kind === 'run.provenance')
     check('split.strategy frozen into provenance (Phase 19)',

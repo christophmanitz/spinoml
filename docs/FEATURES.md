@@ -94,6 +94,18 @@ scripts. `train.py` re-hashes the run-dir copies at startup and emits
 halting failure BEFORE training — the executed artifacts are provably the
 launch-time bytes.
 
+### Training configuration & environment record (Phase 21)
+
+`run.json` already froze the full training configuration at launch (graph,
+generated model, dataset identifier + split + preprocessing + seed + optimizer/
+lr/scheduler/batch/epochs/loss/metrics — see Phases 18–20). Phase 21 adds the
+RUNTIME half of the record: once the model builds, `train.py` emits a
+`config.env` event with software versions (python/torch/cuda/numpy), compute
+device + GPU/VRAM, precision dtype (fp32/fp16/bf16), CPU count, RAM, and the
+workspace git commit when it's a repo. The same summary is written into
+`metrics.json` at the end, so a run's outcome can be attributed to the exact
+stack it executed on — not just the config the user set.
+
 ## 4. Datasets
 
 Kinds + handlers live in **`sidecar-torch/dataset_handlers.py`** (and the UI types in
@@ -260,6 +272,11 @@ chatbot knows about it — recipe in CLAUDE.md "Add a new LLM tool".
   `agent/`, run via `run_script`; write outputs under `datasets/`.
 
 ## Changelog (append one dated line per feature; newest first)
+
+- 2026-09-14 — **Training environment record (Phase 21)**: `train.py` emits a
+  `config.env` event at launch recording the runtime stack (python/torch/cuda/
+  numpy versions, device + GPU/VRAM, compute dtype, CPU count, RAM, workspace
+  git commit) and copies it into `metrics.json` at run end.
 
 - 2026-09-14 — **Training snapshot (Phase 20)**: every `run.json` now carries an
   immutable `snapshot` section — sha256 of the frozen `model.spinoml` graph +
