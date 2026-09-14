@@ -12,7 +12,7 @@ Layer registry         | `verify-codegen` (13 graphs via generator) + G001 param
 Code generation        | `verify-codegen` 13/13 ✓ + `test:determinism` ✓ (repeatability, shuffled arrays) | golden outputs, multi-input  | §6 golden tests
 Training codegen       | `verify-traingen` ✓ (compile, multitask, eval-only) | immersive failure tests | §24 training failure tests
 Shape inference        | `verify-sidecar` (synthetic /infer) ✓ + `test:verifier` ✓ (fail-closed gate, INVALID/UNKNOWN/VALID decision matrix, end-to-end with sidecar when reachable) + `test:races` ✓ (stale-response replay via fetch mock) | live multi-request interleaving on real sidecar | §8/9/10
-Dataset handling       | `verify-sidecar` (inspect/stats/smoke) ✓ + `test:datasets` ✓ (per-kind §18 matrix: valid/empty/missing/corrupt/wrong-dtype/NaN/Inf/single/large/unicode/spaces/relative — explicit-error, never-silently-empty) | leak tests, parquet (pyarrow absent env) | §18/19
+Dataset handling       | `verify-sidecar` (inspect/stats/smoke) ✓ + `test:datasets` ✓ (per-kind §18 matrix: valid/empty/missing/corrupt/wrong-dtype/NaN/Inf/single/large/unicode/spaces/relative — explicit-error, never-silently-empty + Phase-18 fingerprint: determinism, copy-stability, content-change) | leak tests, parquet (pyarrow absent env), remote pre-12b (no sidecar → no fingerprint) | §19
 Training runs (local)  | `verify-traingen` e2e (2-head, external-val) ✓ | local job state machine     | §30/31/32/33
 Training runs (remote) | none                                          | ssh + slurm run tests        | §34/35/36/37
 Persistence            | `npm run test:persistence` ✓ (P001/P011: round-trip, malformed-file matrix, schema versions, fail-closed) | autosave (localStorage) browser smoke | §4.3, §5
@@ -39,7 +39,7 @@ Security (sidecars)    | none (known open: CORS `*`, no auth)           | auth +
 | `npm run test:verifier` | fail-closed model gate (decision matrix + e2e) | PASS         |
 | `npm run test:races`  | async inference staleness guard (fetch mock) | PASS         |
 | `npm run test:robustness` | torch sidecar robustness + crash recovery (isolated instance) | PASS         |
-| `npm run test:datasets` | dataset handlers per-kind reliability matrix + hang regression (Python) | PASS 84 checks |
+| `npm run test:datasets` | dataset handlers per-kind reliability matrix + hang regression + Phase-18 fingerprint (Python) | PASS 124 checks |
 | `npm run lint`          | all TS (eslint)                     | FAIL 49e/4w (gate no-op) |
 | `npm run verify:codegen`| generator (13 graphs, exec-ed)      | PASS 13/13  |
 | `npm run verify:traingen`| training codegen (compile + 2 e2e) | PASS         |

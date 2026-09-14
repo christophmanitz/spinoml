@@ -334,7 +334,50 @@ def main() -> int:
     finally:
         os.chdir(prev_cwd)
 
-    # ── structural invariants on ok results ──────────────────────────────
+    # ── Phase 18: dataset fingerprinting ───────────────────────────────────
+    # Every ok inspect result carries a SHA-256 content fingerprint; it is
+    # deterministic, copy-stable, and changes when the data changes.
+    import re as _re
+    sha_hex = _re.compile(r"^[0-9a-f]{64}$")
+    for key in ("tabular_valid", "tensor_pt", "molecule", "protein", "image_folder",
+                "graph_folder", "pyg", "hf", "manifest"):
+        r = dh.inspect(F[key])
+        fp = r.get("fingerprint") if r.get("ok") else None
+        if key in ("pyg", "hf"):
+            # reference-mode datasets still get a file-based id when offline.
+            either_counted_or_err(r, f"fp.{key}.inspect")
+        if r.get("ok") and fp:
+            check(f"fp.{key}.alg", fp.get("alg") == "sha256", f"got {fp.get('alg')}")
+            check(f"fp.{key}.hash", isinstance(fp.get("hash"), str) and bool(sha_hex.match(fp["hash"])), str(fp)[:80])
+            check(f"fp.{key}.size", isinstance(fp.get("size_bytes"), int) and fp["size_bytes"] > 0,
+                  f"got {fp.get('size_bytes')}")
+            check(f"fp.{key}.id", dh.inspect(F[key])["fingerprint"]["hash"] == fp["hash"], "nondeterministic")
+    # deterministic across repeated inspect
+    check("fp.deterministic", dh.inspect(F["tabular_valid"])["fingerprint"]["hash"]
+          == dh.inspect(F["tabular_valid"])["fingerprint"]["hash"])
+    # copy-stability: same bytes at a new path/name → same id
+    import shutil
+    tdir = F["tabular_valid"].rsplit("/", 1)[0]
+    copy = os.path.join(str(F["_root"]), "t/tabcopy.csv")
+    shutil.copy(F["tabular_valid"], copy)
+    check("fp.copy-stable", dh.inspect(copy)["fingerprint"]["hash"]
+          == dh.inspect(F["tabular_valid"])["fingerprint"]["hash"])
+    # content change → id change
+    import io as _io
+    with open(copy, "a", encoding="utf-8") as fh:
+        fh.write("a9,9,CCO,9.5\n")
+    check("fp.content-change", dh.inspect(copy)["fingerprint"]["hash"]
+          != dh.inspect(F["tabular_valid"])["fingerprint"]["hash"])
+    # structure-mode folders carry n_files > 0
+    img_fp = dh.inspect(F["image_folder"])["fingerprint"]
+    check("fp.image.structure", img_fp.get("mode") == "structure" and (img_fp.get("n_files") or 0) > 0, str(img_fp)[:80])
+    g_fp = dh.inspect(F["graph_folder"])["fingerprint"]
+    check("fp.graph.structure", g_fp.get("mode") == "structure" and g_fp.get("n_files") == 1, str(g_fp)[:80])
+    # manifest = descriptor + table (n_files 2)
+    m_fp = dh.inspect(F["manifest"])["fingerprint"]
+    check("fp.manifest.n_files", m_fp.get("mode") == "config+content" and m_fp.get("n_files") == 2, str(m_fp)[:80])
+
+# ── structural invariants on ok results ──────────────────────────────
     for key in ("tabular_valid", "tensor_pt", "molecule", "image_folder"):
         r = dh.sample_tensor(F[key])
         if r.get("ok") and isinstance(r.get("tensor"), torch.Tensor):

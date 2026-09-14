@@ -82,6 +82,22 @@ as **tabular on its inner table** (`detect_kind`/`_table_path`/`_dir_table`; ins
 the `bundle`), so such dirs are selectable for external validation (§6b). Heavy deps
 (pandas/PIL/rdkit/biopython/torch_geometric) are lazy-imported → graceful `missing_dep`
 instead of a crash. Datasets appear live in the Datasets tab when written under `datasets/`.
+Every inspect result additionally carries a **content fingerprint** (Phase 18) —
+a stable SHA-256 id that survives being copied/replaced/renamed and is determined by
+bytes — never the human-readable
+name. Modes: `content` (file bytes: tabular/tensor/molecule/protein), `structure`
+(sorted relpath+size listing: image/graph folders), `config+content` (manifest +
+its referenced table), `reference` (pyg/huggingface ref file only — the remote
+data itself is NOT pinned). The fingerprint is attached to every `inspect`
+result, cached by relpath, and **frozen into `run.json` (`dataset.fingerprint`)**
+at launch with `feature_columns`/`target_column`/split config (the `Split` node's
+`val_ratio`/`seed` inside `training`). The trainer re-emits it as
+`run.provenance` + `dataset.fingerprint.check` (it REHASHES the primary file just
+before loading, so a run frozen against one dataset but executed later on
+different bytes fails loudly instead of silently training on the wrong data).
+Only when the dataset was never inspected (e.g. remote workspaces pre-12b) is the
+key absent. (Phase 18 — `sidecar-torch/dataset_handlers.py: _fingerprint_for` /
+`training/types.ts DatasetConfig.fingerprint` / `training_template.py`.)
 
 ## 5. Manifests (paired / dual-encoder datasets)
 
@@ -220,6 +236,14 @@ chatbot knows about it — recipe in CLAUDE.md "Add a new LLM tool".
   `agent/`, run via `run_script`; write outputs under `datasets/`.
 
 ## Changelog (append one dated line per feature; newest first)
+
+- 2026-09-14 — **Dataset fingerprinting (Phase 18)**: every dataset `inspect` now
+  returns a stable SHA-256 `fingerprint` (`content`/`structure`/`config+content`/
+  `reference` modes, copy- & rename-stable), which is frozen into `run.json`
+  (`dataset.fingerprint`) and re-checked by `train.py` before loading
+  (`run.provenance` + `dataset.fingerprint.check` events). A run trained later on
+  different bytes now fails loudly. `test:datasets` covers determinism,
+  copy-stability, and content-change detection (124 checks).
 
 - 2026-09-14 — **OpenCode as first-class LLM provider** (default): `kind:'opencode'` in
   the sidecar spawns `opencode run --format json` per chat turn; the model is exposed

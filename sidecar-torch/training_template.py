@@ -28,6 +28,7 @@ Other kinds fail loudly.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -72,6 +73,72 @@ def fail(stage: str, msg: str, tb: str | None = None) -> None:
     if tb:
         sys.stderr.write(tb)
     sys.exit(1)
+
+
+# ─── Dataset fingerprint verification (Phase 18) ──────────────────────────
+# The fingerprint is computed by the SIDECAR at inspect time
+# (dataset_handlers._fingerprint_for) and frozen into run.json. We recompute
+# here so a run catches a dataset that was replaced/moved between the UI
+# freeze and the actual execution (e.g. detached remote launch days later).
+# This mirrors dataset_handlers' hashing on purpose: the template is
+# self-contained by contract, so the ~15-line helper is duplicated rather than
+# importing the sidecar.
+
+_FP_HEADER = b"spinoml-dataset-fp-v1\x00"
+
+
+def _content_sha256(path: Path) -> tuple[str, int]:
+    """Stream SHA-256 → (hex hash, size). Mirrors dataset_handlers._sha256_file."""
+    h = hashlib.sha256(_FP_HEADER)
+    size = 0
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1 << 20)
+            if not chunk:
+                break
+            size += len(chunk)
+            h.update(chunk)
+    return h.hexdigest(), size
+
+
+def _resolve_primary(path: Path) -> Path | None:
+    """Pick the main data file inside a prepared-dataset directory (mirrors
+    dataset_handlers._table_path), returning None for non-tabular dir kinds."""
+    if not path.is_dir():
+        return path
+    prefer = ("pairs.csv", "data.csv", "table.csv", "dataset.csv", "train.csv", "test.csv")
+    tables = [c for c in path.iterdir() if c.is_file() and c.suffix.lower() in (".csv", ".tsv", ".parquet")]
+    if not tables:
+        return None
+    by_name = {c.name.lower(): c for c in tables}
+    return next((by_name[n] for n in prefer if n in by_name),
+                max(tables, key=lambda c: c.stat().st_size))
+
+
+def _verify_fingerprint(cfg: dict) -> dict:
+    """Recompute the primary file hash and compare against the frozen record.
+    Returns a result dict suitable for emit('dataset.fingerprint', ...)."""
+    fp = cfg.get("fingerprint")
+    if not isinstance(fp, dict) or not fp.get("hash"):
+        return {"ok": "not_frozen", "note": "run.json records no fingerprint — verify unavailable"}
+    mode = fp.get("mode")
+    path = Path(os.path.expanduser(str(cfg.get("path", ""))))
+    if not path.exists():
+        return {"ok": False, "error": "dataset path missing at run time"}
+    if mode == "structure":
+        return {"ok": "skipped", "note": "structure-mode fingerprint (folder) not rehashed at train time"}
+    primary = _resolve_primary(path)
+    if primary is None or not primary.is_file():
+        return {"ok": False, "error": "no table file found in prepared dataset dir"}
+    actual, size = _content_sha256(primary)
+    expected = str(fp["hash"])
+    return {
+        "ok": actual == expected,
+        "mode": mode,
+        "expected": expected,
+        "actual": actual,
+        "size_bytes": size,
+    }
 
 
 # ─── Multitask plumbing ─────────────────────────────────────────────────────
@@ -978,6 +1045,20 @@ def main() -> None:
     # classes per head, filled by dataset loading (None for regression heads).
     head_classes: dict = {h["output"]: None for h in heads}
 
+    # ── provenance (Phase 18) — record WHICHT dataset + split this run pinned,
+    #    independent of human-readable names, before anything can fail. ──
+    fp = ds_cfg.get("fingerprint")
+    emit("run.provenance",
+         dataset=ds_cfg.get("relpath") or ds_cfg.get("path"),
+         model=cfg.get("model_path"),
+         ds_kind=ds_cfg.get("kind"),
+         fingerprint_id=(f"{fp['alg']}:{fp['hash']}" if isinstance(fp, dict) and fp.get("hash") else None),
+         split={"val_split": val_split, "seed": seed})
+    try:
+        emit("dataset.fingerprint", **_verify_fingerprint(ds_cfg))
+    except Exception as e:  # noqa: BLE001
+        emit("dataset.fingerprint", ok=False, error=type(e).__name__)
+
     # ── dataset ──
     is_graph = False
     try:
@@ -989,11 +1070,13 @@ def main() -> None:
             graphs_list, targets, branches, skipped = load_manifest_graphs(ds_cfg, heads, known_classes_by_head)
             full = MultiTaskDataset(graphs_list, targets)
             emit("dataset.loaded", n_rows=len(graphs_list), branches=branches,
+                 fingerprint_id=(f"{fp['alg']}:{fp['hash']}" if isinstance(fp, dict) and fp.get("hash") else None),
                  heads=[{"output": h["output"], "task": h["task"]} for h in heads], skipped=skipped)
         elif kind == "tabular":
             X, targets, feature_cols = load_tabular(ds_cfg, heads, known_classes_by_head)
             full = MultiTaskDataset(X, targets)
             emit("dataset.loaded", n_rows=int(X.shape[0]), n_features=int(X.shape[1]),
+                 fingerprint_id=(f"{fp['alg']}:{fp['hash']}" if isinstance(fp, dict) and fp.get("hash") else None),
                  heads=[{"output": h["output"], "task": h["task"],
                          "n_classes": targets[h["output"]]["n_classes"]} for h in heads],
                  features=feature_cols)

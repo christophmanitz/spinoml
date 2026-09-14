@@ -10,6 +10,26 @@ export type DatasetKind =
   | 'manifest'
   | 'unknown'
 
+/** Phase 18 — stable, content-derived dataset identifier computed by the torch
+ *  sidecar at inspect time and frozen into run.json. Copy/rename-stable, never
+ *  a human-readable name. `mode` says what the hash pins: 'content' = file
+ *  bytes (tabular/tensor/molecule/protein), 'structure' = sorted (rel,size)
+ *  listing (image/graph folders), 'config+content' = descriptor + referenced
+ *  table (manifest), 'reference' = only the reference file (pyg/huggingface;
+ *  the remote data itself is not pinned). */
+export type DatasetFingerprint = {
+  alg: 'sha256'
+  mode: 'content' | 'structure' | 'config+content' | 'reference'
+  hash: string
+  size_bytes: number
+  n_files?: number
+}
+
+/** Compact stable id string: `sha256:<hex>` — what goes into logs/events. */
+export function fingerprintId(fp?: DatasetFingerprint | null): string | undefined {
+  return fp && fp.hash ? `${fp.alg}:${fp.hash}` : undefined
+}
+
 export type GraphField = { name: string; shape: number[]; dtype: string }
 export type XPreview = { rows: number; cols: number; grid: number[][] }
 
@@ -19,6 +39,7 @@ export type InspectBase = {
   error?: string
   missing_dep?: string
   size_bytes?: number
+  fingerprint?: DatasetFingerprint
 }
 
 export type TabularInspect = InspectBase & {

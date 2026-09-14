@@ -1,3 +1,5 @@
+import type { DatasetFingerprint } from '../datasets/types'
+
 // Shared types for the Phase 13 training-run system. These mirror the
 // run.json schema written into experiments/runs/<run_id>/ and the events.jsonl
 // stream (see TODO.md "Phase 13").
@@ -91,6 +93,11 @@ export type DatasetConfig = {
   kind: 'tabular' | 'manifest'
   feature_columns: string[] | null
   target_column: string
+  /** Phase 18 — content-derived stable identifier captured at inspect time,
+   *  frozen into run.json so the run records exactly WHICH data it trained on,
+   *  independent of path/name. Absent when the dataset was never inspected or
+   *  the workspace has no sidecar (remote pre-12b). */
+  fingerprint?: DatasetFingerprint | null
 }
 
 export type RunConfig = {

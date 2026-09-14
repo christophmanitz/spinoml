@@ -1711,6 +1711,24 @@ Dataset hash/identifier
 
 Avoid relying only on human-readable dataset names.
 
+> **2026-09-14 — implemented.** Sidecar `inspect` now attaches a stable SHA-256
+> `fingerprint` to every ok result. Modes: `content` (single-file kinds: tabular
+> via `_table_path`, tensor, molecule, protein), `structure` (image/graph folders:
+> canonical sorted relpath+size listing — copy/rename-stable, no mtimes),
+> `config+content` (manifest + referenced table), `reference` (pyg/huggingface:
+> pins the ref file only — remote data NOT pinned). Handlers: `_fingerprint_for` /
+> `_sha256_file` / `_fingerprint_dir` / `_fingerprint_manifest`.
+> The TS side caches it with the inspect (by relpath) and **freezes it into
+> `run.json`** (`DatasetConfig.fingerprint`, both `startRun` and `startEvalRun`),
+> alongside `path`/`relpath`/kind/columns (= source + config) and the Split node's
+> `val_ratio`/`seed` in `training` (= split config). `train.py` emits
+> `run.provenance` (dataset + split + fingerprint_id) and `dataset.fingerprint`,
+> re-hashing the primary file just before loading (`_verify_fingerprint`) so a run
+> launched later on changed bytes fails loudly. `test:datasets` extended with
+> determinism / copy-stability / content-change / n_files assertions (124 checks).
+> Known gap: remote workspaces can't inspect pre-12b → fingerprint absent there;
+> `reference` mode cannot pin data the sidecar never sees.
+
 ---
 
 # 20. PHASE 19 – TRAIN / VALIDATION / TEST INTEGRITY

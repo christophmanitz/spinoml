@@ -170,6 +170,104 @@ def _missing_path(abspath: str) -> dict[str, Any]:
     return {"kind": "unknown", "ok": False, "error": f"file not found: {abspath}"}
 
 
+# ─── Dataset fingerprinting (Phase 18) ─────────────────────────────────────
+
+_FP_HEADER = b"spinoml-dataset-fp-v1\x00"
+
+
+def _sha256_file(path: Path) -> tuple[str, int]:
+    """Stream a SHA-256 over the file bytes → (hex hash, size). Copy-stable:
+    the hash depends only on content, so a dataset copied to a new host or
+    renamed keeps the same identifier."""
+    h = hashlib.sha256(_FP_HEADER)
+    size = 0
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1 << 20)
+            if not chunk:
+                break
+            size += len(chunk)
+            h.update(chunk)
+    return h.hexdigest(), size
+
+
+def _fingerprint_dir(path: Path, exts: set[str] | None) -> dict[str, Any] | None:
+    """Structural fingerprint for a dataset DIRECTORY: the canonical sorted
+    (relpath, size) listing, hashed. Deterministic across renames/copies —
+    does NOT depend on mtimes or read order. Returns None for an empty dir."""
+    entries: list[tuple[str, int]] = []
+    total = 0
+    for p in path.rglob("*"):
+        if not p.is_file():
+            continue
+        if exts and p.suffix.lower() not in exts:
+            continue
+        entries.append((p.relative_to(path).as_posix(), p.stat().st_size))
+        total += p.stat().st_size
+    if not entries:
+        return None
+    h = hashlib.sha256(_FP_HEADER)
+    h.update(f"dir {len(entries)}\n".encode())
+    for rel, size in sorted(entries):
+        h.update(f"{rel}:{size}\n".encode())
+    return {"alg": "sha256", "mode": "structure", "hash": h.hexdigest(),
+            "size_bytes": total, "n_files": len(entries)}
+
+
+def _fingerprint_manifest(abspath: str) -> dict[str, Any] | None:
+    """A .manifest glues a JSON descriptor to its table. Fingerprint both so
+    changing the TABLE (the actual data) changes the id. Derived cache
+    artifacts (.graphcache) are excluded on purpose."""
+    try:
+        cfg = _read_manifest(abspath)
+        main_hash, main_size = _sha256_file(Path(abspath))
+        parts: list[tuple[str, str, int]] = [("manifest", main_hash, main_size)]
+        tbl = cfg.get("table")
+        if isinstance(tbl, str):
+            tp = Path(abspath).resolve().parent / tbl
+            if tp.is_file():
+                th, ts = _sha256_file(tp)
+                parts.append(("table", th, ts))
+        h = hashlib.sha256(_FP_HEADER)
+        for name, hx, size in parts:
+            h.update(f"{name}:{size}:{hx}\n".encode())
+        return {"alg": "sha256", "mode": "config+content", "hash": h.hexdigest(),
+                "size_bytes": sum(p[2] for p in parts), "n_files": len(parts)}
+    except Exception:
+        return None
+
+
+def _fingerprint_for(abspath: str, kind: str) -> dict[str, Any] | None:
+    """Kind-aware stable dataset identifier, attached to ok inspect results.
+    Copy-stable, deterministic, and content-derived — never a human-readable
+    name. Returns None (key omitted) when the source cannot be fingerprinted."""
+    try:
+        if kind == "tabular":
+            p = _table_path(abspath)  # prepared-dataset dir → its inner table
+            h, size = _sha256_file(p)
+            return {"alg": "sha256", "mode": "content", "hash": h, "size_bytes": size}
+        if kind == "image_folder":
+            return _fingerprint_dir(Path(abspath), IMAGE_EXTS)
+        if kind == "graph_folder":
+            return _fingerprint_dir(Path(abspath), set(".pt .pth".split()))
+        if kind == "manifest":
+            return _fingerprint_manifest(abspath)
+        if kind == "tensor":
+            h, size = _sha256_file(Path(abspath))
+            return {"alg": "sha256", "mode": "content", "hash": h, "size_bytes": size}
+        if kind in ("molecule", "protein"):
+            h, size = _sha256_file(Path(abspath))
+            return {"alg": "sha256", "mode": "content", "hash": h, "size_bytes": size}
+        if kind in ("pyg", "huggingface"):
+            # The actual data lives elsewhere (a torch_geometric/repo dataset);
+            # the hash pins the reference file, NOT the remote content.
+            h, size = _sha256_file(Path(abspath))
+            return {"alg": "sha256", "mode": "reference", "hash": h, "size_bytes": size}
+    except OSError:
+        return None
+    return None
+
+
 def inspect(abspath: str) -> dict[str, Any]:
     # Phase 12b: remote workspaces send tilde-prefixed paths ('~/spinoml/...');
     # Python's os.path doesn't expand those, so we do it once at the entry point.
@@ -178,24 +276,32 @@ def inspect(abspath: str) -> dict[str, Any]:
         return _missing_path(abspath)
     kind = detect_kind(abspath)
     if kind == "tabular":
-        return _inspect_tabular(abspath)
-    if kind == "image_folder":
-        return _inspect_image_folder(abspath)
-    if kind == "graph_folder":
-        return _inspect_graph_folder(abspath)
-    if kind == "tensor":
-        return _inspect_tensor(abspath)
-    if kind == "protein":
-        return _inspect_protein(abspath)
-    if kind == "molecule":
-        return _inspect_molecule(abspath)
-    if kind == "huggingface":
-        return _inspect_huggingface(abspath)
-    if kind == "pyg":
-        return _inspect_pyg(abspath)
-    if kind == "manifest":
-        return _inspect_manifest(abspath)
-    return {"kind": "unknown", "ok": False, "error": "could not detect dataset kind"}
+        info = _inspect_tabular(abspath)
+    elif kind == "image_folder":
+        info = _inspect_image_folder(abspath)
+    elif kind == "graph_folder":
+        info = _inspect_graph_folder(abspath)
+    elif kind == "tensor":
+        info = _inspect_tensor(abspath)
+    elif kind == "protein":
+        info = _inspect_protein(abspath)
+    elif kind == "molecule":
+        info = _inspect_molecule(abspath)
+    elif kind == "huggingface":
+        info = _inspect_huggingface(abspath)
+    elif kind == "pyg":
+        info = _inspect_pyg(abspath)
+    elif kind == "manifest":
+        info = _inspect_manifest(abspath)
+    else:
+        return {"kind": "unknown", "ok": False, "error": "could not detect dataset kind"}
+    # Attach the stable content fingerprint to every ok result — one change
+    # point so all kinds stay in sync (Phase 18).
+    if isinstance(info, dict) and info.get("ok"):
+        fp = _fingerprint_for(abspath, str(info.get("kind")))
+        if fp:
+            info["fingerprint"] = fp
+    return info
 
 
 def _inspect_tabular(abspath: str) -> dict[str, Any]:

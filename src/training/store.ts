@@ -5,6 +5,8 @@ import { parseFile } from '../persistence/file'
 import { generateFromSnapshot } from '../codegen/generator'
 import { fs } from '../connections/backend'
 import { getCurrentConnection } from '../connections/store'
+import { useDatasetsStore } from '../datasets/store'
+import type { DatasetFingerprint } from '../datasets/types'
 import { training } from './backend'
 import {
   type RunSummary,
@@ -100,6 +102,15 @@ type TrainingState = {
   deleteRun: (runId: string) => Promise<void>
 }
 
+/** Phase 18 — pull the cached content fingerprint for a dataset from the
+ *  datasets store (populated by /dataset/inspect at DatasetExplorer open).
+ *  Returns undefined when the dataset was never inspected (remote pre-12b,
+ *  or user skipped the inspector) — run.json still carries it, just without
+ *  a fingerprint. */
+function cachedFingerprint(relpath: string): DatasetFingerprint | null {
+  return useDatasetsStore.getState().inspects[relpath]?.data?.fingerprint ?? null
+}
+
 // Single shared poller — refreshes the list while any run is still alive so the
 // UI tracks queued→running→done without the user clicking refresh. NON-overlapping
 // (each refresh is awaited before the next is scheduled): on a remote ssh
@@ -176,12 +187,14 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
 
     const runId = makeRunId(input.label)
     // A .manifest is a paired graph dataset; everything else is tabular here.
+    const fingerprint = cachedFingerprint(input.datasetRelpath)
     const dataset: DatasetConfig = {
       path: input.datasetAbspath,
       relpath: input.datasetRelpath,
       kind: input.datasetRelpath.toLowerCase().endsWith('.manifest') ? 'manifest' : 'tabular',
       feature_columns: input.featureColumns,
       target_column: input.targetColumn,
+      ...(fingerprint ? { fingerprint } : {}),
     }
     const config: RunConfig = {
       run_id: runId,
@@ -219,12 +232,14 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
 
     const runId = makeRunId(`val ${input.label || 'run'}`)
     const isManifest = input.datasetRelpath.toLowerCase().endsWith('.manifest')
+    const fingerprint = cachedFingerprint(input.datasetRelpath)
     const dataset: DatasetConfig = {
       path: input.datasetAbspath,
       relpath: input.datasetRelpath,
       kind: isManifest ? 'manifest' : 'tabular',
       feature_columns: input.featureColumns,
       target_column: input.targetColumn,
+      ...(fingerprint ? { fingerprint } : {}),
     }
     const config: RunConfig = {
       run_id: runId,
