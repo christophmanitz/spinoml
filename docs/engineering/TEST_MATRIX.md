@@ -42,7 +42,7 @@ Security (sidecars)    | none (known open: CORS `*`, no auth)           | auth +
 | `npm run test:datasets` | dataset handlers per-kind reliability matrix + hang regression + Phase-18 fingerprint (Python) | PASS 124 checks |
 | `npm run lint`          | all TS (eslint)                     | FAIL 49e/4w (gate no-op) |
 | `npm run verify:codegen`| generator (13 graphs, exec-ed)      | PASS 13/13  |
-| `npm run verify:traingen`| training codegen (compile + 2 e2e + strategy guard) | PASS         |
+| `npm run verify:traingen`| training codegen (compile + 2 e2e + strategy guard + snapshot) | PASS         |
 | `npm run verify:sidecar`| torch sidecar (autostart)           | PASS 6/6+activations |
 | `npm run verify:opencode`| LLM sidecar opencode provider      | PASS         |
 | `cargo check` (src-tauri)| Rust                                | SKIPPED (no toolchain) |

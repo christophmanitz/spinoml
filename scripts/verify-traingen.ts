@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { compileTrainingGraph } from '../src/codegen/trainingGenerator'
 import type { TrainingGraphSnapshot } from '../src/training/graph/store'
 import { defaultTrainingParams } from '../src/training/graph/registry'
+import { buildRunSnapshot } from '../src/training/snapshot'
 
 function n(id: string, trainingType: string, params: Record<string, unknown> = {}) {
   return { id, trainingType, params: { ...defaultTrainingParams(trainingType), ...params } }
@@ -310,6 +311,65 @@ if (existsSync(template) && r.plan) {
     check('grouped strategy failed loudly', stderr.includes('split_strategy')
       && stderr.includes('grouped'),
       stderr.slice(0, 200))
+  }
+}
+
+// ── 7. snapshot integrity (Phase 20) — run dir artifacts must be byte-identical
+//    to the launch freeze; mutation after launch is a loud, halting failure. ──
+console.log('snapshot: frozen run dir verified at launch, mutation fails loudly')
+if (existsSync(template) && r.plan) {
+  const dir = mkdtempSync(join(tmpdir(), 'spinoml-snapshot-'))
+  writeFileSync(join(dir, 'iris.csv'),
+    'sl,sw,pl,pw,species\n' +
+    '5.1,3.5,1.4,0.2,setosa\n4.9,3.0,1.4,0.2,setosa\n4.7,3.2,1.3,0.2,setosa\n5.0,3.4,1.5,0.2,setosa\n' +
+    '6.4,3.2,4.5,1.5,versicolor\n6.9,3.1,4.9,1.5,versicolor\n5.5,2.3,4.0,1.3,versicolor\n6.0,2.2,4.0,1.0,versicolor\n' +
+    '6.3,3.3,6.0,2.5,virginica\n5.8,2.7,5.1,1.9,virginica\n7.1,3.0,5.9,2.1,virginica\n6.5,3.0,5.8,2.2,virginica\n')
+  const modelPyDef = 'import torch\nimport torch.nn as nn\n\nclass Model(nn.Module):\n' +
+    '    def __init__(self):\n        super().__init__()\n        self.fc1 = nn.Linear(4, 16)\n        self.act = nn.ReLU()\n        self.fc2 = nn.Linear(16, 3)\n' +
+    '    def forward(self, x):\n        return self.fc2(self.act(self.fc1(x)))\n'
+  const modelSpinoml = JSON.stringify({
+    format: 'spinoml', version: 1, savedAt: '2026-01-01T00:00:00Z',
+    graph: { nodes: [], edges: [] },
+  }, null, 2)
+  const snapshot = await buildRunSnapshot(modelSpinoml, modelPyDef)
+  writeFileSync(join(dir, 'model.py'), modelPyDef)
+  writeFileSync(join(dir, 'model.spinoml'), modelSpinoml)
+  writeFileSync(join(dir, 'run.json'), JSON.stringify({
+    run_id: 'snap', run_label: 'snap', created_at: '2026-01-01T00:00:00Z', status: 'queued',
+    model_path: 'm', backend: { kind: 'local' },
+    dataset: { path: join(dir, 'iris.csv'), relpath: 'iris.csv', kind: 'tabular',
+      feature_columns: ['sl', 'sw', 'pl', 'pw'], target_column: 'species' },
+    training: { ...r.plan.training, split_strategy: 'random', val_split: 0.25 },
+    snapshot,
+  }, null, 2))
+  copyFileSync(template, join(dir, 'train.py'))
+  // (a) unmutated → snapshot verifies (ok:true) and training completes.
+  try {
+    execSync('python -u train.py', { cwd: dir, stdio: 'pipe' })
+    const events = readFileSync(join(dir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    const snapEv = events.find((e) => e.kind === 'run.snapshot')
+    check('snapshot verifies on unmutated run dir (ok:true)', snapEv?.ok === true
+      && snapEv?.graph?.matches === true && snapEv?.model_py?.matches === true,
+      JSON.stringify(snapEv))
+  } catch (e) {
+    check('snapshot verifies on unmutated run dir (ok:true)', false,
+      (e as { stderr?: Buffer }).stderr?.toString() ?? '')
+  }
+  // (b) mutate model.py after launch → halting failure, no training happens.
+  writeFileSync(join(dir, 'model.py'), modelPyDef.replace('self.fc2', 'self.broken_fc2'))
+  writeFileSync(join(dir, 'events.jsonl'), '')
+  try {
+    execSync('python -u train.py', { cwd: dir, stdio: 'pipe' })
+    check('mutated model.py fails loudly', false, 'exit code 0 — drifted model was executed')
+  } catch (e) {
+    const stderr = (e as { stderr?: Buffer }).stderr?.toString() ?? ''
+    const events = readFileSync(join(dir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    const snapEv = events.find((e) => e.kind === 'run.snapshot')
+    const leakedAcc = events.some((e) => e.kind === 'epoch.end')
+    check('mutated model.py fails loudly',
+      snapEv?.ok === false && snapEv?.model_py?.matches === false
+      && stderr.includes('mutated after launch') && !leakedAcc,
+      `snap=${JSON.stringify(snapEv)} leakedEpoch=${leakedAcc}`)
   }
 }
 

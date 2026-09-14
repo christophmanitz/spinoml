@@ -1785,6 +1785,17 @@ The running experiment must not depend directly on mutable UI state.
 
 If the user edits the graph after training starts, the running experiment must not change.
 
+> **2026-09-14 — implemented.** The executor already froze run.json /
+> model.spinoml / model.py / train.py into the run dir at launch (trainer runs
+> detached — structurally cannot depend on mutable UI state). Phase 20 adds the
+> explicit contract: `startRun`/`startEvalRun` build a `snapshot` section
+> (src/training/snapshot.ts) — sha256 of graph + model_py (frontend
+> crypto.subtle) plus the graph's DataOp preprocessing scripts — frozen into
+> run.json. train.py re-hashes the RUN-DIR copies (`_verify_snapshot`) and
+> emits `run.snapshot`; on any drift it FAILS LOUDLY before training. The
+> verify:traingen snapshot section proves both the ok:true verify path and that
+> a mutated model.py is caught with no training. (R026 → ADDRESSED.)
+
 ---
 
 # 22. PHASE 21 – TRAINING CONFIGURATION

@@ -8,6 +8,7 @@ import { getCurrentConnection } from '../connections/store'
 import { useDatasetsStore } from '../datasets/store'
 import type { DatasetFingerprint } from '../datasets/types'
 import { training } from './backend'
+import { buildRunSnapshot } from './snapshot'
 import {
   type RunSummary,
   type RunConfig,
@@ -196,6 +197,7 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       target_column: input.targetColumn,
       ...(fingerprint ? { fingerprint } : {}),
     }
+    const snapshot = await buildRunSnapshot(modelContent, modelPy)
     const config: RunConfig = {
       run_id: runId,
       run_label: input.label,
@@ -205,6 +207,7 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       backend: input.backend ?? { kind: 'local' },
       dataset,
       training: input.training,
+      snapshot,
       ...(input.resumeFrom ? { resume_from: input.resumeFrom } : {}),
     }
     await training.start(runId, JSON.stringify(config, null, 2), modelContent, modelPy)
@@ -253,6 +256,7 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       // `heads` (when given) restricts validation to outputs that have a target in
       // the external set — e.g. only the classification head when there's no affinity.
       training: { ...srcTraining, val_split: 0, ...(input.heads ? { heads: input.heads } : {}) },
+      snapshot: await buildRunSnapshot(modelSpinoml, modelPy),
       eval_only: true,
       validate: {
         checkpoint_from: `experiments/runs/${input.sourceRunId}/checkpoints/best.pt`,

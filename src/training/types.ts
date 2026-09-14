@@ -118,6 +118,12 @@ export type RunConfig = {
   backend: RunBackend
   dataset: DatasetConfig
   training: TrainingConfig
+  /** Phase 20 — immutable launch snapshot: content-hashes of the frozen
+   *  model.spinoml (graph) + generated model.py + the preprocessing (DataOp)
+   *  steps from the graph. train.py re-verifies the RUN-DIR copies against
+   *  these hashes before training, so the running experiment cannot drift
+   *  from the bytes that were locked in at launch. */
+  snapshot?: RunSnapshot
   /** Phase 17 — resume weights/optimizer from a prior run's checkpoint. A
    *  workspace-relative path (e.g. experiments/runs/<id>/checkpoints/best.pt)
    *  resolved on the executor host, or an absolute path. */
@@ -126,6 +132,29 @@ export type RunConfig = {
    *  and evaluates the WHOLE `dataset` once (no training) → eval.summary metrics. */
   eval_only?: boolean
   validate?: ValidateConfig
+}
+
+/** Phase 20 — content-addressed record of what a run will execute. */
+export type RunSnapshot = {
+  /** snapshot schema version (bump when the shape changes; train.py validates). */
+  version: number
+  /** sha256 of the model.spinoml bytes frozen into the run dir. */
+  graph_sha256: string
+  /** sha256 of the generated model.py bytes frozen into the run dir. */
+  model_py_sha256: string
+  /** DataOp preprocessing scripts extracted from the graph at launch. */
+  preprocessing: PreprocessingStep[]
+}
+
+/** A DataOp step baked into the graph (Phase 20): the script that produced
+ *  the dataset the run consumes, plus its binding (input/output/mode/cache). */
+export type PreprocessingStep = {
+  node: string
+  script: string
+  input_dataset: string
+  output_name: string
+  mode: 'shell' | 'slurm'
+  cache: boolean
 }
 
 /** External-validation config carried in an eval run's run.json. */

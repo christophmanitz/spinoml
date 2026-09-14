@@ -81,6 +81,19 @@ validation sets (`split.integrity` event with `overlap=0`) and records the
 strategy used, so every run documents exactly HOW its splits were formed. A
 non-zero overlap (from a future custom split method) is a fail-closed refusal.
 
+### Run snapshot (Phase 20) — the experiment never touches mutable UI state
+
+At launch the executor freezes FOUR files into the run dir: `run.json`, the
+`model.spinoml` graph, the generated `model.py`, and the `train.py` template —
+the trainer runs detached on those copies, so editing the graph in the UI after
+launch cannot change a running experiment. Since Phase 20 each `run.json` ALSO
+carries a `snapshot` section: sha256 of the frozen graph (`graph_sha256`) and of
+the generated model (`model_py_sha256`), plus the graph's DataOp preprocessing
+scripts. `train.py` re-hashes the run-dir copies at startup and emits
+`run.snapshot`; any drift (e.g. a hand-edited model.py in the run dir) is a loud,
+halting failure BEFORE training — the executed artifacts are provably the
+launch-time bytes.
+
 ## 4. Datasets
 
 Kinds + handlers live in **`sidecar-torch/dataset_handlers.py`** (and the UI types in
@@ -247,6 +260,13 @@ chatbot knows about it — recipe in CLAUDE.md "Add a new LLM tool".
   `agent/`, run via `run_script`; write outputs under `datasets/`.
 
 ## Changelog (append one dated line per feature; newest first)
+
+- 2026-09-14 — **Training snapshot (Phase 20)**: every `run.json` now carries an
+  immutable `snapshot` section — sha256 of the frozen `model.spinoml` graph +
+  generated `model.py` + the graph's DataOp preprocessing scripts. `train.py`
+  re-verifies the run-dir copies against it (`run.snapshot` event) and refuses to
+  start if any artifact drifted, so a running experiment provably never depends
+  on mutable UI state.
 
 - 2026-09-14 — **Split integrity + strategy guard (Phase 19)**: the Split node now
   records a `strategy` (`random`/`stratified`/`grouped`/`time-based`/`predefined`),

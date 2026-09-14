@@ -141,6 +141,42 @@ def _verify_fingerprint(cfg: dict) -> dict:
     }
 
 
+def _plain_sha256(path: Path) -> str:
+    """Plain SHA-256 (no header) — mirrors the frontend's crypto.subtle hash of
+    the model.spinoml / model.py strings frozen into the run dir at launch."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1 << 20)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _verify_snapshot(cfg: dict) -> dict:
+    """Phase 20 — prove the run-dir copies of the graph + generated model are
+    byte-identical to what was frozen at launch. Returns a result dict suitable
+    for emit('run.snapshot', ...)."""
+    snap = cfg.get("snapshot")
+    if not isinstance(snap, dict) or not snap.get("graph_sha256") or not snap.get("model_py_sha256"):
+        return {"ok": "not_frozen", "note": "run.json records no snapshot — verify unavailable"}
+    graph_path = RUN_DIR / "model.spinoml"
+    model_path = RUN_DIR / "model.py"
+    actual_graph = _plain_sha256(graph_path) if graph_path.exists() else None
+    actual_model = _plain_sha256(model_path) if model_path.exists() else None
+    matches = (
+        actual_graph == snap.get("graph_sha256")
+        and actual_model == snap.get("model_py_sha256")
+    )
+    return {
+        "ok": matches,
+        "graph": {"expected": snap.get("graph_sha256"), "actual": actual_graph, "matches": actual_graph == snap.get("graph_sha256")},
+        "model_py": {"expected": snap.get("model_py_sha256"), "actual": actual_model, "matches": actual_model == snap.get("model_py_sha256")},
+        "preprocessing": snap.get("preprocessing", []),
+    }
+
+
 # ─── Multitask plumbing ─────────────────────────────────────────────────────
 # The trainer is uniformly multi-head: a list of "heads", each binding one model
 # output → a target column + loss + weight. A single-task run is just one head
@@ -1031,6 +1067,19 @@ def main() -> None:
         fail("import-torch", f"torch import failed: {e}", traceback.format_exc())
 
     torch.manual_seed(seed)
+
+    # ── snapshot (Phase 20) — fail-closed: the frozen model.spinoml + model.py
+    #    in the RUN DIR must be byte-identical to the launch-time freeze, else
+    #    the running experiment would depend on post-launch mutation. Checked
+    #    before heavy imports/training so nothing executes on drifted bytes. ──
+    snap_result = _verify_snapshot(cfg)
+    emit("run.snapshot", **snap_result)
+    if snap_result.get("ok") is False:
+        fail("snapshot",
+             f"run dir artifacts mutated after launch — model.spinoml and/or model.py "
+             f"no longer match the frozen snapshot. Refusing to train on drifted code. "
+             f"(graph match={snap_result['graph']['matches']}, "
+             f"model.py match={snap_result['model_py']['matches']})")
 
     # ── external validation (eval-only): load the SOURCE checkpoint up-front so the
     #    external target is encoded against the model's TRAINED class order. ──
