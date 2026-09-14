@@ -30,7 +30,8 @@
 | R021   | Remote    | Cluster scratch path unknown; `/scratch/<user>` absent (network home) | MEDIUM   | R005    | OPEN     | Phase 12b site prep |
 | R022   | Remote    | `python: not found` on bare shell breaks verify harnesses (env gap)   | MEDIUM   | R006    | OPEN     | ops: activate `mlforge-dev` |
 | R023   | Remote    | Rust toolchain absent → `cargo check`/Tauri packaging impossible      | HIGH     | R007    | OPEN     | §1.6 env gap |
-| R024   | Dataset   | Manifest/branch binding mismatches (graph datasets per branch)        | HIGH     | D002    | OPEN     | §17/18 dataset reliability & fingerprinting |
+| R024   | Dataset   | Manifest/branch binding mismatches (graph datasets per branch)        | HIGH     | D002    | OPEN     | §17 reliability slice landed 2026-09-14 (explicit errors, no silent empties — see R029); §18 fingerprinting still OPEN |
+| R029   | Dataset   | Degenerate/corrupt dataset crashes (uncaught→500) or hangs the sidecar worker, or yields a silent empty tensor | HIGH | D003 | ADDRESSED | §17 (test:datasets 84 checks: per-kind valid/empty/missing/corrupt/wrong-dtype/NaN/Inf/single/large/unicode/spaces/relative; empty-CSV+features infinite-loop fixed; `_sample_tabular` unguarded read + `_stats_tabular` empty-frame describe + `_sample_tensor_file` 0-element + image-folder OSError all guarded 2026-09-14) |
 | R025   | Training  | Metric correctness / per-head eval drift (multitask)                  | HIGH     | T003    | OPEN     | §29/31 metric + event ordering |
 | R026   | Training  | run.json immutability violated (post-launch mutation)                 | HIGH     | T004    | OPEN     | §42 training immutability |
 | R027   | LLM       | Model config scattered through code (provider drift)                  | MEDIUM   | L001    | OPEN     | §0.4 (Phase 0 addressed: providerStore centralized — VERIFY once) |

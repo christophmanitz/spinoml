@@ -1675,6 +1675,23 @@ Errors must be explicit.
 
 Never silently turn a dataset error into an empty dataset.
 
+> **2026-09-14 — reliability slice landed.** `scripts/test-datasets.py`
+> (`npm run test:datasets`) drives 84 checks over every kind
+> (tabular/image_folder/graph_folder/tensor/molecule/protein/pyg/huggingface/
+> manifest) across all listed scenarios. Invariant: ok:true ⇒ real non-empty
+> tensor; else explicit `error` string — never a 500, never a silent empty,
+> never a hang. Bugs it caught & fixed in `dataset_handlers.py`:
+> - empty CSV + `features` option → infinite pad-loop that wedged the worker
+>   (regression-locked in the harness);
+> - `_sample_tabular` unguarded `read_csv` (corrupt file → crash) — now explicit;
+> - `_stats_tabular` `describe()` on an empty frame (header-only CSV) → crash;
+> - `_sample_tensor_file` 0-element archive → silent empty `ok:true`;
+> - missing file → uniform "file not found" everywhere (inspect/stats/sample);
+> - image-folder iteration had no OSError guard (unreadable dir → crash).
+> Stats for protein/HF stay a "limited to inspect" note; pyproject-eager parquet
+> untested here (pyarrow absent from env — flagged in TEST_MATRIX.md). Next:
+> PHASE 18 fingerprinting.
+
 ---
 
 # 19. PHASE 18 – DATASET FINGERPRINTING

@@ -164,10 +164,18 @@ def _looks_like_image_folder(path: Path) -> bool:
 # ─── Inspect (cheap metadata) ─────────────────────────────────────────────
 
 
+def _missing_path(abspath: str) -> dict[str, Any]:
+    """One explicit shape for 'the path does not exist' — a missing file or
+    directory is a dataset error, never silently 'unknown' or empty."""
+    return {"kind": "unknown", "ok": False, "error": f"file not found: {abspath}"}
+
+
 def inspect(abspath: str) -> dict[str, Any]:
     # Phase 12b: remote workspaces send tilde-prefixed paths ('~/spinoml/...');
     # Python's os.path doesn't expand those, so we do it once at the entry point.
     abspath = os.path.expanduser(abspath)
+    if not os.path.exists(abspath):
+        return _missing_path(abspath)
     kind = detect_kind(abspath)
     if kind == "tabular":
         return _inspect_tabular(abspath)
@@ -257,16 +265,23 @@ def _inspect_image_folder(abspath: str) -> dict[str, Any]:
     classes: list[dict[str, Any]] = []
     total = 0
     sample_paths: list[Path] = []
-    for sub in sorted(p.iterdir()):
-        if not sub.is_dir():
-            continue
-        imgs = [f for f in sub.iterdir() if f.is_file() and f.suffix.lower() in IMAGE_EXTS]
-        if not imgs:
-            continue
-        classes.append({"name": sub.name, "count": len(imgs)})
-        total += len(imgs)
-        if len(sample_paths) < 8 and imgs:
-            sample_paths.append(imgs[0])
+    try:
+        for sub in sorted(p.iterdir()):
+            if not sub.is_dir():
+                continue
+            try:
+                imgs = [f for f in sub.iterdir() if f.is_file() and f.suffix.lower() in IMAGE_EXTS]
+            except OSError:
+                imgs = []
+            if not imgs:
+                continue
+            classes.append({"name": sub.name, "count": len(imgs)})
+            total += len(imgs)
+            if len(sample_paths) < 8 and imgs:
+                sample_paths.append(imgs[0])
+    except OSError as e:
+        # Unreadable dir (permissions, IO) is an EXPLICIT error, not an empty set.
+        return {"kind": "image_folder", "ok": False, "error": f"could not read image folder: {e}"}
     sample_size = None
     thumbnails: list[dict[str, Any]] = []
     try:
@@ -1236,6 +1251,8 @@ def _missing_dep(kind: str, dep: str) -> dict[str, Any]:
 
 def stats(abspath: str) -> dict[str, Any]:
     abspath = os.path.expanduser(abspath)
+    if not os.path.exists(abspath):
+        return _missing_path(abspath)
     kind = detect_kind(abspath)
     if kind == "tabular":
         return _stats_tabular(abspath)
@@ -1274,7 +1291,12 @@ def _stats_tabular(abspath: str) -> dict[str, Any]:
     except Exception as e:
         return {"kind": "tabular", "ok": False, "error": str(e)}
     numeric = df.select_dtypes(include="number")
-    desc = numeric.describe().fillna(0).round(4)
+    if numeric.shape[1] == 0:
+        # Header-only table (0 rows) or all-object columns: describe() would
+        # raise on an empty frame — surface the honest shape instead.
+        _numeric_desc = None
+    else:
+        _numeric_desc = numeric.describe().fillna(0).round(4)
     summary: list[dict[str, Any]] = []
     for col in df.columns:
         s = df[col]
@@ -1284,7 +1306,8 @@ def _stats_tabular(abspath: str) -> dict[str, Any]:
             "missing": int(s.isna().sum()),
             "unique": int(s.nunique(dropna=True)),
         }
-        if col in numeric.columns:
+        if _numeric_desc is not None and col in numeric.columns:
+            desc = _numeric_desc
             item["mean"] = float(desc.loc["mean", col])
             item["std"] = float(desc.loc["std", col])
             item["min"] = float(desc.loc["min", col])
@@ -1324,20 +1347,23 @@ def _stats_image_folder(abspath: str) -> dict[str, Any]:
         from PIL import Image
     except ImportError:
         Image = None  # type: ignore
-    for sub in sorted(p.iterdir()):
-        if not sub.is_dir():
-            continue
-        imgs = [f for f in sub.iterdir() if f.is_file() and f.suffix.lower() in IMAGE_EXTS]
-        if not imgs:
-            continue
-        classes.append({"name": sub.name, "count": len(imgs)})
-        if Image is not None:
-            for f in imgs[:3]:
-                try:
-                    with Image.open(f) as im:
-                        sizes.append(im.size)
-                except Exception:
-                    continue
+    try:
+        for sub in sorted(p.iterdir()):
+            if not sub.is_dir():
+                continue
+            imgs = [f for f in sub.iterdir() if f.is_file() and f.suffix.lower() in IMAGE_EXTS]
+            if not imgs:
+                continue
+            classes.append({"name": sub.name, "count": len(imgs)})
+            if Image is not None:
+                for f in imgs[:3]:
+                    try:
+                        with Image.open(f) as im:
+                            sizes.append(im.size)
+                    except Exception:
+                        continue
+    except OSError as e:
+        return {"kind": "image_folder", "ok": False, "error": f"could not read image folder: {e}"}
     size_hist: dict[str, int] = {}
     for w, h in sizes:
         key = f"{w}x{h}"
@@ -1433,6 +1459,8 @@ def sample_tensor(
     options: per-input bag — currently {features: list[str]} for tabular.
     """
     abspath = os.path.expanduser(abspath)
+    if not os.path.exists(abspath):
+        return _missing_path(abspath)
     kind = detect_kind(abspath)
     if kind == "tabular":
         field = (options or {}).get("field") if options else None
@@ -1468,12 +1496,21 @@ def _sample_tabular(
     except ImportError:
         return _missing_dep("tabular", "pandas")
     p = _table_path(abspath)  # prepared-dataset dir → its inner table
-    if p.suffix.lower() == ".parquet":
-        df = pd.read_parquet(p)
-    elif p.suffix.lower() == ".tsv":
-        df = pd.read_csv(p, sep="\t")
-    else:
-        df = pd.read_csv(p)
+    try:
+        if p.suffix.lower() == ".parquet":
+            df = pd.read_parquet(p)
+        elif p.suffix.lower() == ".tsv":
+            df = pd.read_csv(p, sep="\t")
+        else:
+            df = pd.read_csv(p)
+    except Exception as e:
+        return {"ok": False, "error": f"could not read table: {type(e).__name__}: {e}"}
+    # An empty-but-valid table (header-only CSV, 0-row numeric parquet) must be
+    # an EXPLICIT error, never a silent empty tensor. The old repeat-pad loop
+    # below turns a 0-row frame into an infinite loop (rows.repeat stays 0-row)
+    # that permanently wedges a sidecar worker thread.
+    if len(df) == 0:
+        return {"ok": False, "error": "tabular dataset has no rows"}
     if feature_cols:
         missing = [c for c in feature_cols if c not in df.columns]
         if missing:
@@ -1499,6 +1536,15 @@ def _sample_tabular(
         rows = np.concatenate([rows, pad], axis=1)
     elif rows.shape[1] > n_feat:
         rows = rows[:, :n_feat]
+    if rows.shape[1] == 0:
+        return {"ok": False, "error": "no usable feature columns in tabular dataset"}
+    # fillna(0) above already turned NaN into zeros, but Inf survives to the
+    # model — a scientifically silent corruption. Surface it explicitly.
+    import numpy as np
+    if rows.size and not np.isfinite(rows).all():
+        return {"ok": False, "error": "tabular features contain NaN/Inf in the first batch — clean the data before training"}
+    if rows.shape[0] == 0:
+        return {"ok": False, "error": "tabular dataset has no rows"}
     while rows.shape[0] < batch:
         rows = rows.repeat(2, axis=0)[:batch]
     return {"ok": True, "tensor": torch.tensor(rows, dtype=torch.float32),
@@ -1513,14 +1559,17 @@ def _sample_image_folder(abspath: str, target: list[int] | None) -> dict[str, An
     p = Path(abspath)
     # Find one image.
     img_path: Path | None = None
-    for sub in sorted(p.iterdir()):
-        if sub.is_dir():
-            for f in sub.iterdir():
-                if f.is_file() and f.suffix.lower() in IMAGE_EXTS:
-                    img_path = f
-                    break
-        if img_path:
-            break
+    try:
+        for sub in sorted(p.iterdir()):
+            if sub.is_dir():
+                for f in sub.iterdir():
+                    if f.is_file() and f.suffix.lower() in IMAGE_EXTS:
+                        img_path = f
+                        break
+            if img_path:
+                break
+    except OSError as e:
+        return {"ok": False, "error": f"could not read image folder: {e}"}
     if img_path is None:
         return {"ok": False, "error": "no images found in image folder"}
     # target shape: [N, C, H, W] or [C, H, W]
@@ -1547,13 +1596,19 @@ def _sample_image_folder(abspath: str, target: list[int] | None) -> dict[str, An
 def _sample_tensor_file(abspath: str, target: list[int] | None, options: dict[str, Any] | None = None) -> dict[str, Any]:
     p = Path(abspath)
     ext = p.suffix.lower()
-    if ext in (".pt", ".pth"):
-        t = torch.load(p, map_location="cpu", weights_only=False)
-    elif ext == ".npy":
-        import numpy as np
-        t = torch.from_numpy(np.load(p, allow_pickle=False))
-    else:
-        return {"ok": False, "error": f"sampling not supported for tensor ext {ext}"}
+    # A corrupt/truncated/wrong-format file must be an explicit error, not an
+    # uncaught exception that surfaces as a generic HTTP 500 (while inspect of
+    # the SAME file already returns a clean ok:false). Never a silent empty.
+    try:
+        if ext in (".pt", ".pth"):
+            t = torch.load(p, map_location="cpu", weights_only=False)
+        elif ext == ".npy":
+            import numpy as np
+            t = torch.from_numpy(np.load(p, allow_pickle=False))
+        else:
+            return {"ok": False, "error": f"sampling not supported for tensor ext {ext}"}
+    except Exception as e:
+        return {"ok": False, "error": f"could not load tensor file: {type(e).__name__}: {e}"}
     # A saved PyG graph → expose the requested field (x/edge_index/edge_attr/…).
     d = _as_pyg_data(t)
     if d is not None:
@@ -1563,6 +1618,10 @@ def _sample_tensor_file(abspath: str, target: list[int] | None, options: dict[st
         t = next(iter(t.values()))
     if not isinstance(t, torch.Tensor):
         return {"ok": False, "error": f"loaded object is {type(t).__name__}, not a tensor"}
+    # An archived 0-element tensor is data that exists but carries nothing —
+    # surface it as an explicit error, never an 'ok' empty tensor.
+    if t.numel() == 0:
+        return {"ok": False, "error": "tensor has 0 elements"}
     t = t.float()
     # If target_shape is given and matches in length, use it; otherwise return as-is with batch dim.
     if target:

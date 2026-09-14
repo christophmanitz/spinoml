@@ -21,6 +21,7 @@
     "test:verifier": "tsx scripts/test-verifier.ts",
     "test:races": "tsx scripts/test-races.ts",
     "test:robustness": "tsx scripts/test-sidecar-robustness.ts",
+    "test:datasets": "python scripts/test-datasets.py",
     "sidecar:torch": "python sidecar-torch/main.py",
     "sidecar:llm": "node sidecar-llm/main.mjs"
   },
