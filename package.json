@@ -25,6 +25,7 @@
     "verify:ssh": "tsx scripts/verify-ssh.ts",
     "verify:credentials": "tsx scripts/verify-credentials.ts",
     "verify:slurm": "tsx scripts/verify-slurm.ts",
+    "verify:recovery": "tsx scripts/verify-recovery.ts",
     "verify:opencode": "tsx scripts/verify-opencode.ts",
     "test:graphstore": "tsx scripts/test-graphstore.ts",
     "test:persistence": "tsx scripts/test-persistence.ts",

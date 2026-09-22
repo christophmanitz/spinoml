@@ -2359,6 +2359,8 @@ The application must recover the actual remote state.
 
 Do not rely only on UI state saved before shutdown.
 
+> **2026-09-22 — implemented.** Recovery is file- and scheduler-backed, never `localStorage`. `useTrainingStore.runs` is memory-only (`training/store.ts:145` `[]`); `App.tsx:257` blanks `runs:[]` on every `workspaceRoot` reconnect and `ExperimentsExplorer:32` on `currentId` change, then both call live `training.list()` → `ssh_list_training_runs` which per-run cats `status`/`pid`/`run.json`/`metrics.json`/`events.jsonl` and probes liveness via `squeue -j <jid> -h -o '%T'` (SLURM) or `kill -0 <pid>` (direct) + `sacct State` fallback, reconciled by `training.rs:reconcile_status`/`reconcile_slurm_status` (stale `running` without alive → `failed`). Direct runs use `setsid ... & echo $! > pid` (brace-group) and remote direct adds `nohup setsid`; SLURM writes `slurm:<jid>` via `sbatch` — both survive app/ssh close (reparent to init). `connections/store.ts` persists only `alias/root` and `getCurrentConnection()`/`training/backend.ts` dispatch live per call. Lost-response retry is idempotent via the Phase-33 atomic `mkdir` claim. Verified by `npm run verify:recovery` (38 checks: store/App/connections/detached/live query/reconcile/atomic claim + Rust 9-case reuse).
+
 ---
 
 # 39. PHASE 38 – UI STATE MUST NOT LIE

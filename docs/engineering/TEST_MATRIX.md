@@ -14,7 +14,7 @@ Training codegen       | `verify-traingen` ✓ (compile, multitask, eval-only) |
 Shape inference        | `verify-sidecar` (synthetic /infer) ✓ + `test:verifier` ✓ (fail-closed gate, INVALID/UNKNOWN/VALID decision matrix, end-to-end with sidecar when reachable) + `test:races` ✓ (stale-response replay via fetch mock) | live multi-request interleaving on real sidecar | §8/9/10
 Dataset handling       | `verify-sidecar` (inspect/stats/smoke) ✓ + `test:datasets` ✓ (per-kind §18 matrix: valid/empty/missing/corrupt/wrong-dtype/NaN/Inf/single/large/unicode/spaces/relative — explicit-error, never-silently-empty + Phase-18 fingerprint: determinism, copy-stability, content-change) | leak tests, parquet (pyarrow absent env), remote pre-12b (no sidecar → no fingerprint) | §19
 Training runs (local)  | `verify-traingen` e2e ✓ + `verify:states` ✓ + `verify:events` ✓ + `verify:cancel` ✓ | — | §30/31/32
-Training runs (remote) | `verify:submission` ✓ + `verify:slurm` ✓ (sbatch + 9-state reconciliation, sbatch template, squeue/sacct probes, pid persistence) | job recovery (§37)             | §33/36/37
+Training runs (remote) | `verify:submission` ✓ + `verify:slurm` ✓ + `verify:recovery` ✓ (close→restart→reconnect re-queries live pid/status/squeue/sacct, not cache; detached survival; atomic claim) | — | §33/36/37
 Persistence            | `npm run test:persistence` ✓ (P001/P011: round-trip, malformed-file matrix, schema versions, fail-closed) | autosave (localStorage) browser smoke | §4.3, §5
 Torch sidecar          | `verify-sidecar` 6/6+activations ✓ + `test:robustness` ✓ (11-case matrix: startup, structured errors with `error_code` on every path, slow-client stall cap, abort resistance, kill→restart recovery) | auth/path-scope tests        | §77/78 security
 LLM sidecar            | `verify-opencode` ✓ (+manual ask/confirm)      | `/respond`/auto-approve auth | §14/15, §77
@@ -24,7 +24,7 @@ Filesystem (local)     | none                                          | path-sa
 Filesystem (remote)    | `verify:ssh` ✓                                | ssh mirror parity tests      | §34/35
 SSH                    | `verify:ssh` ✓ + `verify:credentials` ✓       | live cluster integration     | §34/35 (+ R003 alias)
 PTY/Terminal           | none                                          | interactive smoke            | manual
-SLURM                  | `verify:slurm` ✓ (sbatch defaults + all-fields + job-ID persistence, 9 reconciliation states) | live sbatch/squeue smoke       | §36/37
+SLURM                  | `verify:slurm` ✓ + `verify:recovery` ✓ (live squeue/sacct/kill-0 + reconcile, detached setsid/sbatch, app blanks+refresh chain) | live sbatch/squeue smoke       | §36/37
 Workspace (browser)    | none                                          | virtual-FS UT                | §38/39
 Security (sidecars)    | none (known open: CORS `*`, no auth)           | auth + injection tests       | §14/44/47, §77/78
 
@@ -54,6 +54,7 @@ Security (sidecars)    | none (known open: CORS `*`, no auth)           | auth +
 | `npm run verify:ssh`    | SSH failure classification, transport options, error detail | PASS 17 checks |
 | `npm run verify:credentials`| secret/credential scan across artifacts, logs, error sanitize | PASS 8 checks |
 | `npm run verify:slurm`     | SLURM reliability (sbatch 4 tests + 9 scheduler-state reconciliation, submit success/failure, squeue/sacct probes, job-ID persistence) | PASS 33 checks |
+| `npm run verify:recovery`  | remote job recovery (close→restart→reconnect live re-query, no localStorage cache; detached/sbatch survival; reconcile gates) | PASS 38 checks |
 | `npm run verify:sidecar`| torch sidecar (autostart)           | PASS 6/6+activations |
 | `npm run verify:opencode`| LLM sidecar opencode provider      | PASS         |
 | `cargo check` (src-tauri)| Rust compilation                    | PASS         |
