@@ -27,6 +27,7 @@
     "verify:slurm": "tsx scripts/verify-slurm.ts",
     "verify:recovery": "tsx scripts/verify-recovery.ts",
     "verify:ui-state": "tsx scripts/verify-ui-state.ts",
+    "verify:frontend-errors": "tsx scripts/verify-frontend-errors.ts",
     "verify:opencode": "tsx scripts/verify-opencode.ts",
     "test:graphstore": "tsx scripts/test-graphstore.ts",
     "test:persistence": "tsx scripts/test-persistence.ts",

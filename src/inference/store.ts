@@ -71,7 +71,30 @@ export const useInferenceStore = create<InferenceState>((set) => ({
       try {
         result = await inferShapes(code, inputShapes, inputDtypes, ctrl.signal)
       } catch (e) {
-        if (e instanceof DOMException && e.name === 'AbortError') return
+        if (e instanceof DOMException && e.name === 'AbortError') {
+          // Phase 39 — aborted by a newer kick() (stale) → let the newer run
+          // decide the final status. If this was the latest run and was
+          // cancelled without a successor, leave `inferring` would hang the
+          // badge; return to the previous truthful state (idle if nothing was
+          // valid before, otherwise keep prior ok/error/offline).
+          if (runId !== runCounter) return
+          // Latest was cancelled — keep prior state if it was already truthful
+          // (ok/error/offline), otherwise drop inferring to idle.
+          const cur = useInferenceStore.getState().status
+          if (cur === 'inferring') {
+            set({
+              status: 'idle',
+              error: null,
+              errorStage: null,
+              errorTrace: null,
+              failingNodeId: null,
+              failingNodeLayerType: null,
+              attrShapes: {},
+            })
+            clearShapesOnNodes()
+          }
+          return
+        }
         // Phase 38 — any other throw (network, sidecar crash, unhandled
         // fetch error) must leave `inferring`, not hang the badge forever.
         const msg = e instanceof Error ? e.message : String(e)

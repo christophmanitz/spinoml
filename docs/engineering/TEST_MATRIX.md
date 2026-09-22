@@ -6,7 +6,7 @@
 
 Component              | Automated tests today                            | Gap                          | Planned (TODO §)
 ---------------------- | ---------------------------------------------- | ---------------------------- | -----------------
-Frontend shell         | `npm run build` (tsc+vite) + `verify:ui-state` ✓ (training stale→unknown, SSH badge disconnect, inference not hanging, save truthfulness) | no e2e/render tests          | §38/39 UI state + error states
+Frontend shell         | `npm run build` (tsc+vite) + `verify:ui-state` ✓ + `verify:frontend-errors` ✓ (loading/success/error/offline distinct; timeout/cancelled string-typed, not Success) | no e2e/render tests          | §38/39 UI state + error states
 GraphStore             | `npm run test:graphstore` ✓ (G001: invariants, mutation guards, validate-before-commit, edge-id gen) | history/dirty-snapshot UT   | §4.2
 Layer registry         | `verify-codegen` (13 graphs via generator) + G001 param validation | coerceParams per-kind UT  | §4.3 validate-before-commit
 Code generation        | `verify-codegen` 13/13 ✓ + `test:determinism` ✓ (repeatability, shuffled arrays) | golden outputs, multi-input  | §6 golden tests
@@ -56,6 +56,7 @@ Security (sidecars)    | none (known open: CORS `*`, no auth)           | auth +
 | `npm run verify:slurm`     | SLURM reliability (sbatch 4 tests + 9 scheduler-state reconciliation, submit success/failure, squeue/sacct probes, job-ID persistence) | PASS 33 checks |
 | `npm run verify:recovery`  | remote job recovery (close→restart→reconnect live re-query, no localStorage cache; detached/sbatch survival; reconcile gates) | PASS 38 checks |
 | `npm run verify:ui-state`  | UI state must not lie (training stale→unknown on SSH loss, SSH badge disconnect, inference not hanging, save truthfulness) | PASS 33 checks |
+| `npm run verify:frontend-errors` | frontend error states (loading/success/error/offline distinct; timeout/cancelled string-typed) | PASS 42 checks |
 | `npm run verify:sidecar`| torch sidecar (autostart)           | PASS 6/6+activations |
 | `npm run verify:opencode`| LLM sidecar opencode provider      | PASS         |
 | `cargo check` (src-tauri)| Rust compilation                    | PASS         |

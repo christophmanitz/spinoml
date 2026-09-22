@@ -2420,6 +2420,8 @@ Do not represent all failures simply as:
 loading = false
 ```
 
+> **2026-09-22 — implemented (partial + caveat).** Loading/Success/Error/Unavailable are distinct everywhere: `inference/store.ts:7` `Status='idle'|'inferring'|'ok'|'error'|'offline'` with `inferring`→`ok`/`error`/`offline`, `offline in result` vs throw→`error`, `runCounter` stale guard + Phase-39 AbortError fix (latest inferring without successor → `idle` + `clearShapes`, not hang); `training/store.ts:76` `listLoading` vs `listError` + `runs` + `alive` + `StatusPill` 6 styles vs only `loading=false`; `datasets/store.ts:12` `Cached<T>={loading,data,error}` + `missing_dep`; `project/store.ts:16` `'loading'|'loaded'|'error'|'remote-missing'`; `chat/store.ts:32` `'streaming'|'idle'` vs `online` + `pendingAsk`. Timeout/Cancelled remain partly conflated: inference fetch timeout → `offline`/`error` string (no `AbortSignal.timeout`), training SSH `ConnectTimeout=10`/`ServerAlive` maps to `ssh_failure` classified string in `listError` then degraded to `unknown`, not a `timeout` enum; datasets post has no `AbortSignal`; chat `AbortError` swallows to `done` not `cancelled`. No false Success on Timeout/Cancelled — the gap is a missing `timeout`/`cancelled` enum, documented in `LIMITATIONS.md`. Verified by `npm run verify:frontend-errors` (42 checks) + `verify:ui-state` (33).
+
 ---
 
 # 41. PHASE 40 – GRAPH REVISION SYSTEM
