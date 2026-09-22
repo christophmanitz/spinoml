@@ -2496,6 +2496,8 @@ must be tied to the run snapshot.
 
 Later UI changes must not modify the running experiment.
 
+> **2026-09-22 — implemented (already frozen, now regression-locked).** `training/store.ts:217` `startRun` freezes `modelContent` via `fs.read(modelRelpath)` + `modelPy=generateFromSnapshot(parseFile(content)).code` + `snapshot=buildRunSnapshot(modelContent,modelPy)` (`snapshot.ts:43` sha256 of exact strings) and hands all three plus `dataset{fingerprint}`+`training`+`backend` verbatim to `training.start`; `training.rs:447`/`ssh.rs:919` write `run.json`/`model.spinoml`/`model.py`/`train.py` (bundle copy) atomically into `experiments/runs/<id>/` (`already exists` if duplicate) and launch detached `setsid`/`sbatch` (reparent to init, survives app close) — the run never reads `useGraphStore` after launch. `training_template.py:342` `_verify_snapshot` re-hashes `RUN_DIR` copies vs `run.json.snapshot` before training and `fail("snapshot",...Refusing)` on drift; dataset fingerprint is re-emitted as `run.provenance`. Later `GraphStore.revision` bumps on `addLayer`/`updateNodeParams`/etc. never touch the run dir, so UI edits cannot mutate the running experiment (canvas vs run may diverge if user edited dirty canvas before saving, but run's bytes are proven). Verified by `npm run verify:immutability` (27 checks) + `verify:traingen` snapshot section.
+
 ---
 
 # 44. PHASE 43 – GENERATED PYTHON SECURITY

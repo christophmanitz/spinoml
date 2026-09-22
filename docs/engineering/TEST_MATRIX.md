@@ -59,6 +59,7 @@ Security (sidecars)    | none (known open: CORS `*`, no auth)           | auth +
 | `npm run verify:frontend-errors` | frontend error states (loading/success/error/offline distinct; timeout/cancelled string-typed) | PASS 42 checks |
 | `npm run verify:graph-revision`  | graph revision system (structural revision bump, stale shape/dataset/smoke/refresh drop) | PASS 32 checks |
 | `npm run verify:concurrent`     | concurrent operations (Save+edit dirty correction, Edit+inference debounced+revision, LLM+user validate, Training snapshot frozen, Dataset seq) | PASS 44 checks |
+| `npm run verify:immutability`   | training immutability (frozen run snapshot, detached launch, re-verified drift, no live GraphStore read) | PASS 27 checks |
 | `npm run verify:sidecar`| torch sidecar (autostart)           | PASS 6/6+activations |
 | `npm run verify:opencode`| LLM sidecar opencode provider      | PASS         |
 | `cargo check` (src-tauri)| Rust compilation                    | PASS         |

@@ -30,6 +30,7 @@
     "verify:frontend-errors": "tsx scripts/verify-frontend-errors.ts",
     "verify:graph-revision": "tsx scripts/verify-graph-revision.ts",
     "verify:concurrent": "tsx scripts/verify-concurrent.ts",
+    "verify:immutability": "tsx scripts/verify-immutability.ts",
     "verify:opencode": "tsx scripts/verify-opencode.ts",
     "test:graphstore": "tsx scripts/test-graphstore.ts",
     "test:persistence": "tsx scripts/test-persistence.ts",
