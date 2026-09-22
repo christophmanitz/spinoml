@@ -160,10 +160,34 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
     set({ listLoading: true, listError: null })
     try {
       const runs = await training.list()
-      set({ runs, listLoading: false })
+      set({ runs, listLoading: false, listError: null })
       syncPolling(get)
     } catch (e) {
-      set({ listLoading: false, listError: e instanceof Error ? e.message : String(e) })
+      const msg = e instanceof Error ? e.message : String(e)
+      // Phase 38 — do not leave a stale "running" pill visible while the
+      // SSH/transport is down. The last successful `runs` would otherwise
+      // keep showing a live run that we can no longer verify. Mark any
+      // previously-running entry as unknown (not alive) so the UI truthfully
+      // reflects "unverified" rather than "running".
+      const stale = get().runs
+      const degraded = stale.map((r) =>
+        RUNNING_STATES.has(r.status) || r.alive
+          ? { ...r, status: 'unknown' as const, alive: false }
+          : r,
+      )
+      // If we had stale running entries, surface the degraded list together
+      // with the error; otherwise keep the previous (non-running) list as-is
+      // so a finished run's history isn't blanked on a transient failure.
+      const hasDegraded = degraded.some((r, i) => r !== stale[i])
+      set({
+        runs: hasDegraded ? (degraded as RunSummary[]) : stale,
+        listLoading: false,
+        listError: msg,
+      })
+      // Do not re-arm the poller while disconnected — it will resume on the
+      // next successful refresh (triggered by App.tsx workspaceRoot or manual
+      // refresh). Leaving it armed would spam ssh on a dead connection.
+      if (pollTimer !== null) { clearTimeout(pollTimer); pollTimer = null }
     }
   },
 

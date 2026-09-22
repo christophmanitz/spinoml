@@ -2397,6 +2397,8 @@ If SLURM state is unknown:
 Do not display "Running" unless verified.
 ```
 
+> **2026-09-22 — implemented.** `training/store.ts:155` `refresh()` now degrades any stale `running`/`queued` run to `unknown` + `alive:false` on `listError` (SSH transport loss) and clears the poll timer — the last successful `runs` no longer lingers as `running` (green pulse) while disconnected; `listError` and `listLoading` remain distinct (never just `loading=false`). `App.tsx:154` `ProjectHeader` derives SSH badge from live `listError` + `status.kind==='error'`: connected → violet `ssh · alias`, disconnected → rose `ssh · alias — nicht verbunden` (with error title) and an error badge when project load fails. `StatusPill.tsx:12` only pulses when `status==='running' && alive`; SLURM unknown is `reconcile_slurm_status` → `failed`/`unknown` never `running` (Phase 36). `inference/store.ts:70` `throw e` that left `inferring` hanging now sets `error`/`offline` + `clearShapesOnNodes()`; `InferenceBadge` shows `ok` only on `ok`, `verifier` is fail-closed (`offline`→`unknown`), `NewRunModal` blocks `invalid`/`unknown`. Save truthfulness: `workspace/store.ts:375` awaits `fs.write` before `dirty:false`, `data/graph/doc.ts:41` + `training/graph/doc.ts:33` set `saved` only on success / `error` on catch, `Toolbar.tsx:25` reports via dialog/alert. Verified by `npm run verify:ui-state` (33 checks).
+
 ---
 
 # 40. PHASE 39 – FRONTEND ERROR STATES

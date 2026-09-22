@@ -156,6 +156,23 @@ function ProjectHeader() {
   const closeProject = useProjectStore((s) => s.closeProject)
   const currentId = useConnectionsStore((s) => s.currentId)
   if (status.kind !== 'loaded') {
+    // Phase 38 — error while loading the project (e.g. ssh lost during
+    // project.load) must NOT look like "not connected"; show the failure so
+    // the user knows workspace/ssh is the problem, not just "none".
+    if (status.kind === 'error') {
+      const conn = getCurrentConnection()
+      const isRemote = conn.kind === 'remote-ssh'
+      return (
+        <div className="flex items-center gap-2">
+          <img src="/favicon.svg" alt="" className="h-5 w-5" />
+          <span className="font-semibold tracking-tight">SpinoML</span>
+          <span className="rounded bg-rose-900/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-rose-300" title={status.error}>
+            {isRemote ? `ssh · ${conn.alias} — nicht verbunden` : 'nicht verbunden'} · {status.error.split(':')[0]}
+          </span>
+          <button onClick={() => void closeProject()} className="ml-1 text-[10px] text-[#5a6068] hover:text-[#9aa1a8]" title="close project">×</button>
+        </div>
+      )
+    }
     return (
       <div className="flex items-center gap-2">
         <img src="/favicon.svg" alt="" className="h-5 w-5" />
@@ -164,6 +181,13 @@ function ProjectHeader() {
     )
   }
   const conn = getCurrentConnection()
+  // Phase 38 — when the last training/ssh refresh failed (listError or
+  // project error on remote), the header must not still claim "ssh · alias"
+  // in violet as if connected. Use the training listError as a live
+  // connectivity signal: a remote with a recent listError is "disconnected"
+  // until the next successful poll.
+  const listError = useTrainingStore((s) => s.listError)
+  const disconnected = conn.kind === 'remote-ssh' && !!listError
   return (
     <div className="flex items-center gap-2">
       <img src="/favicon.svg" alt="" className="h-5 w-5" />
@@ -174,11 +198,13 @@ function ProjectHeader() {
       </span>
       {conn.kind === 'remote-ssh' && (
         <span
-          className="rounded bg-violet-900/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-violet-300"
-          title={`${conn.alias}:${conn.root}`}
+          className={disconnected
+            ? 'rounded bg-rose-900/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-rose-300'
+            : 'rounded bg-violet-900/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-violet-300'}
+          title={disconnected ? `${conn.alias}:${conn.root} — ${listError}` : `${conn.alias}:${conn.root}`}
           key={currentId}
         >
-          ssh · {conn.alias}
+          ssh · {conn.alias}{disconnected ? ' — nicht verbunden' : ''}
         </span>
       )}
       <button

@@ -72,7 +72,21 @@ export const useInferenceStore = create<InferenceState>((set) => ({
         result = await inferShapes(code, inputShapes, inputDtypes, ctrl.signal)
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return
-        throw e
+        // Phase 38 — any other throw (network, sidecar crash, unhandled
+        // fetch error) must leave `inferring`, not hang the badge forever.
+        const msg = e instanceof Error ? e.message : String(e)
+        const offline = msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('offline')
+        set({
+          status: offline ? 'offline' : 'error',
+          error: msg,
+          errorStage: null,
+          errorTrace: null,
+          failingNodeId: null,
+          failingNodeLayerType: null,
+          attrShapes: {},
+        })
+        clearShapesOnNodes()
+        return
       }
       if (runId !== runCounter) return
 
