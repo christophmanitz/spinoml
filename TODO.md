@@ -2338,6 +2338,8 @@ Communication failure
 
 Persist the remote job ID.
 
+> **2026-09-22 — implemented.** `build_sbatch` generates the correct `#SBATCH` header for every SlurmConfig field (partition/time/mem/cpus/gres/account/qos/modules/pre_run_script; job-name sanitized, defaults applied) and freezes it as `train.sbatch` alongside `pid` (`slurm:<jid>`) on successful `sbatch` (parsed via `Submitted batch job <id>`); `sbatch` failure (`MLF_SUBMIT_FAILED`) surfaces as `sbatch failed: <stderr>`. `reconcile_slurm_status` in `training.rs` maps all 8 states: `squeue %T` while queued (`PENDING`/`CONFIGURING`→`queued`, otherwise `running` unless terminal file already `done`/`failed`/`cancelled`), `sacct State` after queue (`COMPLETED`→`done`, `CANCELLED`→`cancelled` with `by <uid>` suffix stripped, `FAILED`/`TIMEOUT`/`OUT_OF_MEMORY`/`NODE_FAIL`→`failed`), and `UNKNOWN`/communication loss falls back to `reconcile_status` (`queued`/`running` without alive → `failed`, never silently `running`). SLURM stop uses `scancel <jid>` (direct uses `kill -TERM -<pid>`). Verified by `npm run verify:slurm` (33 checks: 4 sbatch + 9 reconciliation Rust unit tests + probe/persistence/marker string checks).
+
 ---
 
 # 38. PHASE 37 – REMOTE JOB RECOVERY

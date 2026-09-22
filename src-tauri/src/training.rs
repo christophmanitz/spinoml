@@ -633,4 +633,100 @@ mod tests {
         assert!(!f.contains("batch"));
         assert!(f.contains("epoch.end") && f.contains("run.done"));
     }
+
+    // Phase 36 — SLURM reliability: every scheduler state must map to the
+    // correct user-visible status, and the mapping must survive the
+    // squeue→sacct handoff (job leaves queue) and communication loss.
+    #[test]
+    fn slurm_reconcile_squeue_pending_and_configuring_are_queued() {
+        assert_eq!(reconcile_slurm_status("queued", "PENDING", ""), "queued");
+        assert_eq!(reconcile_slurm_status("queued", "CONFIGURING", ""), "queued");
+        assert_eq!(reconcile_slurm_status("running", "PENDING", ""), "queued");
+        // sacct is ignored while squeue is live
+        assert_eq!(reconcile_slurm_status("running", "PENDING", "COMPLETED"), "queued");
+    }
+
+    #[test]
+    fn slurm_reconcile_squeue_running_maps_to_running() {
+        assert_eq!(reconcile_slurm_status("queued", "RUNNING", ""), "running");
+        assert_eq!(reconcile_slurm_status("running", "RUNNING", ""), "running");
+        assert_eq!(reconcile_slurm_status("", "RUNNING", ""), "running");
+        // other live states (COMPLETING, SUSPENDED, etc.) also → running
+        assert_eq!(reconcile_slurm_status("queued", "COMPLETING", ""), "running");
+    }
+
+    #[test]
+    fn slurm_reconcile_terminal_file_wins_over_live_squeue() {
+        // Trainer already wrote done/failed/cancelled → that word wins even while
+        // squeue still reports RUNNING (brief overlap before sacct).
+        assert_eq!(reconcile_slurm_status("done", "RUNNING", ""), "done");
+        assert_eq!(reconcile_slurm_status("failed", "RUNNING", ""), "failed");
+        assert_eq!(reconcile_slurm_status("cancelled", "RUNNING", ""), "cancelled");
+    }
+
+    #[test]
+    fn slurm_reconcile_sacct_completed_is_done() {
+        // Job left the queue; trainer never wrote terminal → sacct decides.
+        assert_eq!(reconcile_slurm_status("queued", "", "COMPLETED"), "done");
+        assert_eq!(reconcile_slurm_status("running", "", "COMPLETED"), "done");
+        assert_eq!(reconcile_slurm_status("", "", "COMPLETED"), "done");
+    }
+
+    #[test]
+    fn slurm_reconcile_sacct_cancelled_is_cancelled() {
+        assert_eq!(reconcile_slurm_status("queued", "", "CANCELLED"), "cancelled");
+        assert_eq!(reconcile_slurm_status("running", "", "CANCELLED"), "cancelled");
+        // "CANCELLED by 123" suffix must be stripped
+        assert_eq!(
+            reconcile_slurm_status("running", "", "CANCELLED by 123"),
+            "cancelled"
+        );
+    }
+
+    #[test]
+    fn slurm_reconcile_sacct_failures_are_failed() {
+        for state in [
+            "FAILED",
+            "TIMEOUT",
+            "OUT_OF_MEMORY",
+            "NODE_FAIL",
+            "BOOT_FAIL",
+            "DEADLINE",
+            "PREEMPTED",
+        ] {
+            assert_eq!(
+                reconcile_slurm_status("running", "", state),
+                "failed",
+                "sacct {state} should be failed"
+            );
+        }
+    }
+
+    #[test]
+    fn slurm_reconcile_terminal_file_wins_over_sacct() {
+        assert_eq!(reconcile_slurm_status("done", "", "FAILED"), "done");
+        assert_eq!(reconcile_slurm_status("failed", "", "COMPLETED"), "failed");
+        assert_eq!(reconcile_slurm_status("cancelled", "", "COMPLETED"), "cancelled");
+    }
+
+    #[test]
+    fn slurm_reconcile_unknown_when_no_scheduler_state() {
+        // No squeue, no sacct → fall back to local reconcile (running/queued without alive → failed)
+        assert_eq!(reconcile_slurm_status("running", "", ""), "failed");
+        assert_eq!(reconcile_slurm_status("queued", "", ""), "failed");
+        // Non-running states pass through
+        assert_eq!(reconcile_slurm_status("done", "", ""), "done");
+        assert_eq!(reconcile_slurm_status("failed", "", ""), "failed");
+        assert_eq!(reconcile_slurm_status("unknown", "", ""), "unknown");
+        assert_eq!(reconcile_slurm_status("", "", ""), "unknown");
+    }
+
+    #[test]
+    fn slurm_reconcile_communication_loss_is_unknown_or_failed() {
+        // Both squeue and sacct empty due to SSH loss is the same as unknown —
+        // the caller already maps ssh_failure to a user-visible error; the status
+        // itself becomes failed/unknown via the fallback above, never silently running.
+        assert_eq!(reconcile_slurm_status("running", "", ""), "failed");
+        assert_ne!(reconcile_slurm_status("running", "", ""), "running");
+    }
 }

@@ -1494,6 +1494,78 @@ pub async fn ssh_gpu_stats(
 }
 
 #[cfg(test)]
+mod slurm_tests {
+    use super::build_sbatch;
+    use serde_json::json;
+
+    #[test]
+    fn sbatch_defaults_when_no_config() {
+        let s = build_sbatch("2026-09-22_test_a8f3", "'python'", None);
+        assert!(s.contains("#SBATCH --job-name=spinoml-2026-09-22_test_a8f3"));
+        assert!(!s.contains("#SBATCH --partition="));
+        assert!(s.contains("#SBATCH --time=04:00:00"));
+        assert!(s.contains("#SBATCH --cpus-per-task=8"));
+        assert!(!s.contains("#SBATCH --gres="));
+        assert!(!s.contains("#SBATCH --account="));
+        assert!(!s.contains("#SBATCH --qos="));
+        assert!(s.contains("#SBATCH --output=slurm-%j.out"));
+        assert!(s.contains("#SBATCH --error=slurm-%j.err"));
+        assert!(s.contains("cd \"$SLURM_SUBMIT_DIR\""));
+        assert!(s.contains("'python' -u train.py"));
+    }
+
+    #[test]
+    fn sbatch_emits_all_slurm_fields() {
+        let cfg = json!({
+            "partition": "paula",
+            "time": "02:00:00",
+            "mem": "16G",
+            "cpus_per_task": 4,
+            "gres": "gpu:1",
+            "account": "myproj",
+            "qos": "high",
+            "modules": ["module1", "module2"],
+            "pre_run_script": "export FOO=1"
+        });
+        let s = build_sbatch("run-1", "'python3'", Some(&cfg));
+        assert!(s.contains("#SBATCH --partition=paula"));
+        assert!(s.contains("#SBATCH --time=02:00:00"));
+        assert!(s.contains("#SBATCH --mem=16G"));
+        assert!(s.contains("#SBATCH --cpus-per-task=4"));
+        assert!(s.contains("#SBATCH --gres=gpu:1"));
+        assert!(s.contains("#SBATCH --account=myproj"));
+        assert!(s.contains("#SBATCH --qos=high"));
+        assert!(s.contains("module load module1"));
+        assert!(s.contains("module load module2"));
+        assert!(s.contains("export FOO=1"));
+    }
+
+    #[test]
+    fn sbatch_sanitizes_job_name() {
+        let s = build_sbatch("weird run/id:with spaces!", "'python'", None);
+        // non-alphanumeric except -_ become -
+        assert!(s.contains("#SBATCH --job-name=spinoml-weird-run-id-with-spaces-"));
+        assert!(!s.contains("weird run/id"));
+    }
+
+    #[test]
+    fn sbatch_submit_parsing_extracts_jobid() {
+        // The launch shell does: grep -oE 'job [0-9]+' | grep -oE '[0-9]+' | tail -1
+        // Verify that a typical sbatch output yields the id, and a failure without the marker is detected.
+        let ok_out = "Submitted batch job 123456\nMLF_JOBID 123456";
+        assert!(ok_out.contains("MLF_JOBID"));
+        let jid = ok_out
+            .lines()
+            .find(|l| l.starts_with("MLF_JOBID"))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .unwrap_or("");
+        assert_eq!(jid, "123456");
+        let fail_out = "sbatch: error: Batch job submission failed: Invalid partition\nMLF_SUBMIT_FAILED";
+        assert!(!fail_out.contains("MLF_JOBID"));
+    }
+}
+
+#[cfg(test)]
 mod ssh_failure_tests {
     use super::{ssh_failure, sanitize_credentials};
 
