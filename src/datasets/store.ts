@@ -57,6 +57,9 @@ function entryByRel(entries: DatasetEntry[], rel: string): DatasetEntry | undefi
 const inspectSeq = new Map<string, number>()
 const statsSeq = new Map<string, number>()
 const smokeSeq = new Map<string, number>()
+// Phase 41 — refresh() is a list operation that can race with itself and
+// with inspect/stats/smoke (which capture entryByRel before the await).
+let refreshSeq = 0
 
 export const useDatasetsStore = create<DatasetsState>((set, get) => ({
   entries: [],
@@ -73,11 +76,14 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
       set({ entries: [], listError: 'datasets require Tauri (real filesystem)' })
       return
     }
+    const seq = ++refreshSeq
     set({ listLoading: true, listError: null })
     try {
       const entries = await datasetsBackend.list()
-      set({ entries, listLoading: false })
+      if (seq !== refreshSeq) return // stale — a newer refresh() started
+      set({ entries, listLoading: false, listError: null })
     } catch (e) {
+      if (seq !== refreshSeq) return
       const msg = e instanceof Error ? e.message : String(e)
       set({ listLoading: false, listError: msg })
     }

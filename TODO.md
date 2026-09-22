@@ -2477,6 +2477,8 @@ Define which operations are allowed concurrently.
 
 Prevent silent state corruption.
 
+> **2026-09-22 — implemented.** `workspace/store.ts:529` `saveActive` now holds `saveSeq`+`revAtStart`; concurrent `saveActive` → last writer wins via `seq !== saveSeq` check before the py-twin write and before `set dirty:false`; an edit that landed while writing is detected via `revAtStart !== revision` and `dirty` is corrected to `true` via `fingerprintCurrent()` vs stale file hash (no silent loss, dirty indicator truthful). `inference/store.ts:39` `Edit+inference` is debounced 200 ms + `runCounter`+`graphRev` + `AbortController`; stale shape is dropped before `applyShapesToNodes` (`test:races` proves flatten vs linear). `chat/store.ts:158` `if status==='streaming' return` blocks second turn while one streams; LLM `dispatchAction` goes through `GraphStore` `validateGuard`/`coerceParams`/`revision` so no invariant break (semantic last-wins, not torn). `training/store.ts:215` `startRun` freezes `modelContent`+`modelPy`+`buildRunSnapshot` sha256 — the run dir is immutable and `train.py` ` _verify_snapshot` fails loudly on drift, so `Training start+graph edit` cannot corrupt the running experiment (canvas vs run may diverge, but run's bytes are proven). `datasets/store.ts:57` `inspectSeq`/`statsSeq`/`smokeSeq` + `smoke` `graphRev` + `refreshSeq` (Phase 41) make `Dataset reload+inspect` latest-wins: stale `inspect`/`stats`/`smoke`/`refresh` after a newer one is dropped, and a graph edit kills a pending smoke. Verified by `npm run verify:concurrent` (44 checks) + `verify:graph-revision` + `test:races`.
+
 ---
 
 # 43. PHASE 42 – TRAINING IMMUTABILITY

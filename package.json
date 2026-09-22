@@ -29,6 +29,7 @@
     "verify:ui-state": "tsx scripts/verify-ui-state.ts",
     "verify:frontend-errors": "tsx scripts/verify-frontend-errors.ts",
     "verify:graph-revision": "tsx scripts/verify-graph-revision.ts",
+    "verify:concurrent": "tsx scripts/verify-concurrent.ts",
     "verify:opencode": "tsx scripts/verify-opencode.ts",
     "test:graphstore": "tsx scripts/test-graphstore.ts",
     "test:persistence": "tsx scripts/test-persistence.ts",

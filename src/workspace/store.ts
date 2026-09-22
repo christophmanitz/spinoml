@@ -377,12 +377,18 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     if (!id) return
     const e = get().entries[id]
     if (!e || e.kind !== 'file') return
+    const seq = ++saveSeq
+    const revAtStart = useGraphStore.getState().revision
     const content = serializeCurrent()
     if (get().mode === 'tauri') {
       await fsBackend.write(id, content)
+      // If a newer save started while we were awaiting, this one is stale —
+      // don't clobber its result (last writer wins via seq).
+      if (seq !== saveSeq) return
       try {
         await fsBackend.write(pyTwinPath(id), generateFromSnapshot(parseFile(content)).code)
       } catch { /* skip .py if codegen fails */ }
+      if (seq !== saveSeq) return
       set({
         entries: {
           ...get().entries,
@@ -390,6 +396,19 @@ export const useWorkspaceStore = create<State>((set, get) => ({
         },
         dirty: false,
       })
+      // Phase 41 — an edit that landed while we were writing would have
+      // set dirty=true via the GraphStore subscriber, but our unconditional
+      // dirty:false above clobbered it and refreshFingerprintForActive
+      // (triggered by becameClean) based the baseline on the stale T0 bytes.
+      // Re-evaluate against the actual current graph: if it diverged, restore
+      // dirty=true so the save+edit race does not silently lose edits.
+      if (revAtStart !== useGraphStore.getState().revision) {
+        const now = fingerprintCurrent()
+        const fileFp = fingerprintFile({ content } as unknown as File)
+        if (fileFp !== null && now !== fileFp) {
+          useWorkspaceStore.setState({ dirty: true })
+        }
+      }
       await get().refreshFromDisk()
       return
     }
@@ -525,6 +544,10 @@ useWorkspaceStore.subscribe((s, prev) => {
   if (s.activeFileId === prev.activeFileId && s.workspaceRoot === prev.workspaceRoot) return
   setActiveFile(s.workspaceRoot, s.activeFileId)
 })
+
+// Phase 41 — save concurrency: monotonic seq so a stale save (started
+// before a newer one) does not clobber the newer one's result.
+let saveSeq = 0
 
 // Track dirty: any structural change to the graph after the last save/load
 // marks the active file dirty. Compares fingerprints to the last persisted
