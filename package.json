@@ -18,6 +18,7 @@
     "verify:failures": "tsx scripts/verify-failures.ts",
     "verify:checkpoint": "tsx scripts/verify-checkpoint.ts",
     "verify:metrics": "tsx scripts/verify-metrics.ts",
+    "verify:states": "tsx scripts/verify-states.ts",
     "verify:opencode": "tsx scripts/verify-opencode.ts",
     "test:graphstore": "tsx scripts/test-graphstore.ts",
     "test:persistence": "tsx scripts/test-persistence.ts",

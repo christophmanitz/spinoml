@@ -1211,9 +1211,14 @@ pub async fn ssh_stop_training_run(alias: String, root: String, run_id: String) 
     let dir_q = shell_quote_path(&remote_run_dir(&root, &run_id));
     // Cooperative (status file, checked each epoch) + forceful (SIGTERM the whole
     // process group via negative pid — setsid made python the group leader).
+    // Phase 30: only flip the status if it can still make progress — a terminal
+    // status (done/failed/cancelled) is FINAL and must not be overwritten.
     let cmd = format!(
         "d={dir_q}; if [ -d \"$d\" ]; then \
-           printf 'cancelled\\n' > \"$d/status\"; \
+           cur=$(cat \"$d/status\" 2>/dev/null || true); \
+           case \"$cur\" in done|failed|cancelled) ;; \
+             *) printf 'cancelled\\n' > \"$d/status\" ;; \
+           esac; \
            pid=$(cat \"$d/pid\" 2>/dev/null); \
            case \"$pid\" in \
              slurm:*) scancel \"${{pid#slurm:}}\" 2>/dev/null ;; \

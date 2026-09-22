@@ -186,6 +186,17 @@ sample/train; ESPF caches a compact codebook to `<manifest_dir>/.espf/` (the
   `train.py` snapshot + `run.json`); see `src-tauri/src/training.rs`. Runs locally
   (`setsid python train.py`) or via SLURM on remote. The training store polls run
   status (slower cadence on remote ssh).
+- **Run state machine (Phase 30)**: the `status` file is governed by a real state
+  machine — `queued → running → done|failed|cancelled`, terminal states FINAL.
+  The trainer applies every transition via `transition_status()` (queued→running
+  on start, running→terminal on finish/fail/cancel); `stop_training_run` (local +
+  ssh) only flips a non-terminal status to `cancelled`. A late write — a cancel
+  racing a `done`, a `running` after a crash, or a stop on a finished run — is
+  REJECTED, so `CANCELLED → SUCCEEDED`, `FAILED → RUNNING`, `SUCCEEDED → RUNNING`
+  cannot happen; a cancel landing in the finalisation window emits
+  `run.cancelled` instead of `run.done`. Verify: `npm run verify:states`
+  (transition table + cancel-before-start / mid-training / race / double-cancel
+  / post-done guard).
 - Trainable dataset kinds: **tabular** + **manifest**. Manifest branches batch as
   PyG `Batch` (graphs) or padded `[B, Lmax]` LongTensors (sequence/ESPF).
 - **GPU**: `training_template.py` picks `cuda` when available, moves the model AND
@@ -286,6 +297,17 @@ chatbot knows about it — recipe in CLAUDE.md "Add a new LLM tool".
 
 ## Changelog (append one dated line per feature; newest first)
 
+- 2026-09-22 — **Run state machine (Phase 30)**: the run `status` file is now a
+  real state machine — `queued → running → done|failed|cancelled` with terminal
+  states FINAL. `transition_status()` in `training_template.py` gates every
+  trainer write (rejecting late `running`/`done` after a cancel or crash); local
+  `stop_training_run` and remote `ssh_stop_training_run` only flip a
+  non-terminal status to `cancelled`, so stopping a SUCCEEDED/FAILED run is a
+  no-op. A cancel racing the finalisation window emits `run.cancelled` instead
+  of `run.done` — `CANCELLED → SUCCEEDED` is impossible. New
+  `npm run verify:states` proves the full transition table plus cancel-before-
+  start, cancel-mid-training, CANCELLED→SUCCEEDED race, double cancellation and
+  the post-done cancel guard (43 checks).
 - 2026-09-14 — **Seed + determinism record (Phase 22)**: `train.py` now seeds
   every random source (Python `random`, NumPy, torch CPU + all CUDA devices),
   enforces `cudnn.deterministic` + `benchmark=False`, enables

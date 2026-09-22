@@ -511,6 +511,13 @@ pub fn stop_training_run(state: State<WorkspaceState>, run_id: String) -> Result
     if !dir.exists() {
         return Err(format!("run {run_id} not found"));
     }
+    // Phase 30 — only cancel a run that can still make progress. A terminal
+    // status (done/failed/cancelled) is FINAL: a late stop must not flip a
+    // SUCCEEDED run to CANCELLED (invalid transition).
+    let cur = read_status(&dir);
+    if cur == "done" || cur == "failed" || cur == "cancelled" {
+        return Ok(());
+    }
     // Cooperative: the trainer checks `status` at each epoch boundary.
     let _ = fs::write(dir.join("status"), "cancelled\n");
     // Forceful: SIGTERM the whole process group (negative pid). setsid made the

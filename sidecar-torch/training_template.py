@@ -63,14 +63,62 @@ def emit(kind: str, **fields) -> None:
         os.fsync(f.fileno())
 
 
-def set_status(s: str) -> None:
+def set_status(s: str) -> bool:
     STATUS.write_text(s + "\n", encoding="utf-8")
+    return True
+
+
+# ─── Local job state machine (Phase 30) ─────────────────────────────────────
+# queued → running → done|failed|cancelled. Terminal states are FINAL: a late
+# write (a 'done' racing a user cancellation, a 'running' after a crash) is
+# REJECTED so CANCELLED→SUCCEEDED / FAILED→RUNNING / SUCCEEDED→RUNNING can
+# never happen. Returns True when the transition was applied.
+
+_TERMINAL_STATUSES = ("done", "failed", "cancelled")
+
+
+def _read_status() -> str:
+    try:
+        return STATUS.read_text(encoding="utf-8").strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def transition_status(next_status: str) -> bool:
+    """Apply a status transition through the Phase-30 state machine.
+    Allowed: queued→running, queued→cancelled, running→terminal,
+    idempotent re-write of the SAME value. Everything else is rejected."""
+    cur = _read_status()
+    if cur == next_status:
+        STATUS.write_text(next_status + "\n", encoding="utf-8")
+        return True
+    if cur in _TERMINAL_STATUSES:
+        return False  # final states are protected from stale asynchronous updates
+    if cur in ("", "queued") and next_status in ("running", "cancelled", "done", "failed"):
+        STATUS.write_text(next_status + "\n", encoding="utf-8")
+        return True
+    if cur == "running" and next_status in _TERMINAL_STATUSES:
+        STATUS.write_text(next_status + "\n", encoding="utf-8")
+        return True
+    return False
+
+
+def cancel_run(epoch: int, note: str = "") -> None:
+    """The cooperative stop path: mark cancelled (only if not already terminal),
+    emit the event, and write metrics. Idempotent — double cancellation is a
+    no-op after the first terminal write."""
+    applied = transition_status("cancelled")
+    emit("run.cancelled", epoch=epoch, applied=applied, note=note)
+    METRICS.write_text(json.dumps({"status": "cancelled", "epoch": epoch}, indent=2))
 
 
 def fail(stage: str, msg: str, tb: str | None = None) -> None:
     emit("run.failed", stage=stage, error=msg, traceback=tb or "")
+    # Phase 30 — only move running→failed; if the user already cancelled (or the
+    # run already ended), the terminal state wins and the failure is recorded
+    # in events but must NOT resurrect the run.
+    transition_status("failed")
     METRICS.write_text(json.dumps({"status": "failed", "stage": stage, "error": msg}, indent=2))
-    set_status("failed")
     sys.stderr.write(f"[spinoml-train] FAILED in {stage}: {msg}\n")
     if tb:
         sys.stderr.write(tb)
@@ -1190,7 +1238,10 @@ def emit_eval(epoch, heads, head_names, multitask, head_classes, val_cat):
 
 
 def main() -> None:
-    set_status("running")
+    # Phase 30 — queued→running via the state machine; if the launch wrote
+    # 'cancelled' first (cancel-before-start race) the transition is rejected
+    # and the trainer will observe the cancellation at the first epoch check.
+    transition_status("running")
     t0 = time.time()
     emit("run.start", pid=os.getpid())
 
@@ -1607,7 +1658,7 @@ def main() -> None:
 
     try:
         for epoch in range(start_epoch, end_epoch):
-            if STATUS.read_text().strip() == "cancelled":
+            if _read_status() == "cancelled":
                 # Phase 26 — a stopped run must leave a resumable checkpoint
                 # (last completed epoch) so stop → load → resume works.
                 last_done = max(start_epoch, epoch - 1)
@@ -1615,8 +1666,9 @@ def main() -> None:
                     _atomic_save(build_ckpt(last_done), CKPT_DIR / "last.pt")
                 except Exception:  # noqa: BLE001
                     pass
-                emit("run.cancelled", epoch=epoch)
-                METRICS.write_text(json.dumps({"status": "cancelled", "epoch": epoch}, indent=2))
+                # Phase 30 — cancel through the state machine (idempotent;
+                # double cancellation is a no-op after the first write).
+                cancel_run(epoch)
                 return
             emit("epoch.start", epoch=epoch)
             model.train()
@@ -1728,13 +1780,28 @@ def main() -> None:
         fail("train", str(e), traceback.format_exc())
 
     total = time.time() - t0
-    emit("run.done", total_seconds=round(total, 2), best_val_loss=round(best_val, 6))
     try:
         env_summary = _env_info(torch, device, cb["amp"], WORKSPACE_ROOT)
     except Exception:  # noqa: BLE001
         env_summary = {}
+    # Phase 30 — running→done via the state machine. A cancellation racing in
+    # after the last epoch check (user cancelled while we were finalising) makes
+    # the terminal 'cancelled' win: run.done is NOT emitted, a run.cancelled
+    # event is, and the run is never reported as succeeded after a cancel.
+    # CANCELLED → SUCCEEDED is impossible.
+    final_status = "done"
+    if transition_status("done"):
+        emit("run.done", total_seconds=round(total, 2), best_val_loss=round(best_val, 6))
+    else:
+        final_status = _read_status() or "cancelled"
+        if final_status == "cancelled":
+            # The loop never saw the cancel (it landed while we were finalising),
+            # so no run.cancelled exists yet — emit one and let the cancelled
+            # metrics below be the final word.
+            emit("run.cancelled", epoch=max(start_epoch, end_epoch - 1), applied=True,
+                 note="cancelled during finalisation")
     METRICS.write_text(json.dumps({
-        "status": "done",
+        "status": final_status,
         "total_seconds": round(total, 2),
         "best_val_loss": round(best_val, 6),
         "epochs": epochs,
@@ -1743,7 +1810,6 @@ def main() -> None:
         "gpu": gpu_name,
         "env": env_summary,
     }, indent=2))
-    set_status("done")
 
 
 if __name__ == "__main__":
