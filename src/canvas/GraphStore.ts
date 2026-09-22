@@ -47,6 +47,13 @@ type State = {
   nodes: LayerNode[]
   edges: Edge[]
   selectedNodeId: string | null
+  /** Phase 40 — monotonic structural revision. Bumped on every committed
+   *  structural change (addLayer/updateParams/replace/delete/connect/load/
+   *  edges change) and on resetGraph. Pure position drags (onNodesChange
+   *  containing only {type:'position'}) do NOT bump. Async callers record it
+   *  as `const rev = get().revision` before the await and drop the response
+   *  if `rev !== get().revision` — the response is stale. */
+  revision: number
 
   onNodesChange: OnNodesChange<LayerNode>
   onEdgesChange: OnEdgesChange
@@ -88,12 +95,23 @@ export const useGraphStore = create<State>((set, get) => ({
   ],
   edges: [],
   selectedNodeId: null,
+  revision: 0,
 
-  onNodesChange: (changes) => set({ nodes: applyNodeChanges(changes, get().nodes) }),
+  onNodesChange: (changes) => {
+    // Phase 40 — pure position/dimensions drags are not structural; don't
+    // bump the revision for them (avoids spurious staleness). Any other
+    // change (add/remove/select) is structural.
+    const structural = changes.some((c) => c.type !== 'position' && c.type !== 'dimensions' && c.type !== 'select')
+    if (structural) {
+      set({ nodes: applyNodeChanges(changes, get().nodes), revision: get().revision + 1 })
+    } else {
+      set({ nodes: applyNodeChanges(changes, get().nodes) })
+    }
+  },
   onEdgesChange: (changes) => {
     const edges = applyEdgeChanges(changes, get().edges)
     // Edge removed/added near a Subgraph node → re-sync its input proxies.
-    set({ edges, nodes: reconcileSubgraphPorts(get().nodes, edges) })
+    set({ edges, nodes: reconcileSubgraphPorts(get().nodes, edges), revision: get().revision + 1 })
   },
   onConnect: (connection) => {
     if (!connection.source || !connection.target) return
@@ -105,7 +123,7 @@ export const useGraphStore = create<State>((set, get) => ({
     }
     const base = baseForConnect(nodes, edges, connection.target)
     const nextEdges = addEdge({ ...connection, animated: true }, base)
-    set({ edges: nextEdges, nodes: reconcileSubgraphPorts(nodes, nextEdges) })
+    set({ edges: nextEdges, nodes: reconcileSubgraphPorts(nodes, nextEdges), revision: get().revision + 1 })
   },
 
   addLayer: (layerType, position, opts) => {
@@ -122,7 +140,7 @@ export const useGraphStore = create<State>((set, get) => ({
       position,
       data: { layerType, params: coerceParams(layerType, merged) },
     }
-    set({ nodes: [...get().nodes, node], selectedNodeId: id })
+    set({ nodes: [...get().nodes, node], selectedNodeId: id, revision: get().revision + 1 })
     return id
   },
 
@@ -133,7 +151,7 @@ export const useGraphStore = create<State>((set, get) => ({
       return { ...n, data: { ...n.data, params: coerceParams(n.data.layerType, merged) } }
     })
     // If the edited node feeds a Subgraph, its proxy mirrors the new config.
-    set({ nodes: reconcileSubgraphPorts(nodes, get().edges) })
+    set({ nodes: reconcileSubgraphPorts(nodes, get().edges), revision: get().revision + 1 })
   },
 
   replaceNodeLayer: (id, newLayerType, extraParams) => {
@@ -157,6 +175,7 @@ export const useGraphStore = create<State>((set, get) => ({
           },
         }
       }),
+      revision: get().revision + 1,
     })
   },
 
@@ -170,6 +189,7 @@ export const useGraphStore = create<State>((set, get) => ({
       nodes: reconcileSubgraphPorts(nodes, edges),
       edges,
       selectedNodeId: get().selectedNodeId === id ? null : get().selectedNodeId,
+      revision: get().revision + 1,
     })
   },
 
@@ -183,7 +203,7 @@ export const useGraphStore = create<State>((set, get) => ({
     if (edges.some((e) => e.source === source && e.target === target)) return true // dedupe, already connected
     const base = baseForConnect(nodes, edges, target)
     const nextEdges = addEdge({ source, target, animated: true, id: nextEdgeId(edges) }, base)
-    set({ edges: nextEdges, nodes: reconcileSubgraphPorts(nodes, nextEdges) })
+    set({ edges: nextEdges, nodes: reconcileSubgraphPorts(nodes, nextEdges), revision: get().revision + 1 })
     return true
   },
 
@@ -227,7 +247,7 @@ export const useGraphStore = create<State>((set, get) => ({
       console.warn(`loadSnapshot rejected (${v.issues.length} issues):`, v.issues)
       return false
     }
-    set({ nodes, edges, selectedNodeId: null })
+    set({ nodes, edges, selectedNodeId: null, revision: get().revision + 1 })
     const needsLayout = snapshot.nodes.some((n) => !n.position)
     if (needsLayout) get().autoLayout()
     return true
@@ -243,6 +263,7 @@ export const useGraphStore = create<State>((set, get) => ({
       }],
       edges: [],
       selectedNodeId: null,
+      revision: get().revision + 1,
     })
   },
 }))

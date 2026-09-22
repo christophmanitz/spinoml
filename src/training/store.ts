@@ -119,6 +119,10 @@ function cachedFingerprint(relpath: string): DatasetFingerprint | null {
 // setInterval would stack those up and saturate the connection. Slower cadence
 // on remote for the same reason.
 let pollTimer: ReturnType<typeof setTimeout> | null = null
+// Phase 40 — latest refresh wins (like inference runCounter / events
+// latestWinsGuard). A stale list response must not overwrite a newer one
+// that already applied (e.g. quick workspace switch → two refresh() in flight).
+let refreshSeq = 0
 
 function pollDelay(): number {
   return getCurrentConnection().kind === 'remote-ssh' ? 5000 : 2000
@@ -157,12 +161,15 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       set({ runs: [], listError: 'Training braucht Tauri (echtes Dateisystem).' })
       return
     }
+    const seq = ++refreshSeq
     set({ listLoading: true, listError: null })
     try {
       const runs = await training.list()
+      if (seq !== refreshSeq) return // stale — a newer refresh already started
       set({ runs, listLoading: false, listError: null })
       syncPolling(get)
     } catch (e) {
+      if (seq !== refreshSeq) return // stale error must not overwrite newer success
       const msg = e instanceof Error ? e.message : String(e)
       // Phase 38 — do not leave a stale "running" pill visible while the
       // SSH/transport is down. The last successful `runs` would otherwise

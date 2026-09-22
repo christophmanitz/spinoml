@@ -2457,6 +2457,8 @@ LLM actions where relevant
 Other asynchronous graph operations
 ```
 
+> **2026-09-22 — implemented.** `GraphStore.revision: number` (0→monotonic) bumped on every committed structural change (`addLayer`/`updateNodeParams`/`replaceNodeLayer`/`deleteNode`/`connectNodes`/`onEdgesChange`/`onConnect`/`loadSnapshot`/`resetGraph`); pure `onNodesChange` position/dimensions drags do NOT bump (no spurious invalidation). `inference/store.ts:43` captures `graphRev` + `runCounter` before the await and drops the response if `graphRev !== revision` or `runId !== runCounter` (stale inference after graph edit → no shape overwrite). `datasets/store.ts:14` per-dataset `inspectSeq`/`statsSeq`/`smokeSeq` + `smoke` also captures `graphRev` — a second inspect/smoke on the same dataset before the first returns sees the first dropped, and a graph edit kills a pending smoke. `training/store.ts:121` `refreshSeq` is the same `latestWinsGuard` for run list (stale list after quick workspace switch dropped). `events.ts:71` `latestWinsGuard` was already the reference impl for run detail. Verified by `npm run verify:graph-revision` (32 checks: revision increments, drag not bump, all guards). Training/data graph stores still lack revision (known gap, architecture only).
+
 ---
 
 # 42. PHASE 41 – CONCURRENT OPERATIONS

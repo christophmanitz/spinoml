@@ -44,6 +44,7 @@ export const useInferenceStore = create<InferenceState>((set) => ({
       const ctrl = new AbortController()
       inFlight = ctrl
       const runId = ++runCounter
+      const graphRev = useGraphStore.getState().revision
 
       const { nodes, edges } = useGraphStore.getState()
       const { code, issues, attrMap, inputs, order } = generate(nodes, edges)
@@ -97,6 +98,9 @@ export const useInferenceStore = create<InferenceState>((set) => ({
         }
         // Phase 38 — any other throw (network, sidecar crash, unhandled
         // fetch error) must leave `inferring`, not hang the badge forever.
+        // Also guard graph revision: if the graph moved since we started,
+        // dropping the response is the correct staleness behavior.
+        if (graphRev !== useGraphStore.getState().revision) return
         const msg = e instanceof Error ? e.message : String(e)
         const offline = msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('offline')
         set({
@@ -111,7 +115,9 @@ export const useInferenceStore = create<InferenceState>((set) => ({
         clearShapesOnNodes()
         return
       }
-      if (runId !== runCounter) return
+      // Phase 40 — stale-response guard: graph changed since we started
+      // (runCounter covers ordering, revision covers structural move).
+      if (runId !== runCounter || graphRev !== useGraphStore.getState().revision) return
 
       if ('offline' in result && result.offline) {
         set({

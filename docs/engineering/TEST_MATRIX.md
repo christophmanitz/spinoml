@@ -7,12 +7,12 @@
 Component              | Automated tests today                            | Gap                          | Planned (TODO §)
 ---------------------- | ---------------------------------------------- | ---------------------------- | -----------------
 Frontend shell         | `npm run build` (tsc+vite) + `verify:ui-state` ✓ + `verify:frontend-errors` ✓ (loading/success/error/offline distinct; timeout/cancelled string-typed, not Success) | no e2e/render tests          | §38/39 UI state + error states
-GraphStore             | `npm run test:graphstore` ✓ (G001: invariants, mutation guards, validate-before-commit, edge-id gen) | history/dirty-snapshot UT   | §4.2
+GraphStore             | `npm run test:graphstore` ✓ + `verify:graph-revision` ✓ (revision bump on structural change, not position drag; guards) | history/dirty-snapshot UT   | §4.2/40
 Layer registry         | `verify-codegen` (13 graphs via generator) + G001 param validation | coerceParams per-kind UT  | §4.3 validate-before-commit
 Code generation        | `verify-codegen` 13/13 ✓ + `test:determinism` ✓ (repeatability, shuffled arrays) | golden outputs, multi-input  | §6 golden tests
 Training codegen       | `verify-traingen` ✓ (compile, multitask, eval-only) | immersive failure tests | §24 training failure tests
-Shape inference        | `verify-sidecar` (synthetic /infer) ✓ + `test:verifier` ✓ (fail-closed gate, INVALID/UNKNOWN/VALID decision matrix, end-to-end with sidecar when reachable) + `test:races` ✓ (stale-response replay via fetch mock) | live multi-request interleaving on real sidecar | §8/9/10
-Dataset handling       | `verify-sidecar` (inspect/stats/smoke) ✓ + `test:datasets` ✓ (per-kind §18 matrix: valid/empty/missing/corrupt/wrong-dtype/NaN/Inf/single/large/unicode/spaces/relative — explicit-error, never-silently-empty + Phase-18 fingerprint: determinism, copy-stability, content-change) | leak tests, parquet (pyarrow absent env), remote pre-12b (no sidecar → no fingerprint) | §19
+Shape inference        | `verify-sidecar` ✓ + `test:verifier` ✓ (fail-closed gate) + `test:races` ✓ (stale-response replay) + `verify:graph-revision` ✓ (graph revision + runCounter guard, stale shape drop) | live multi-request on real sidecar | §8/9/10/40
+Dataset handling       | `verify-sidecar` ✓ + `test:datasets` ✓ (per-kind §18 matrix + fingerprint) + `verify:graph-revision` ✓ (per-dataset inspect/stats/smoke seq + smoke graphRev guard) | leak tests, parquet (pyarrow absent), remote pre-12b | §19/40
 Training runs (local)  | `verify-traingen` e2e ✓ + `verify:states` ✓ + `verify:events` ✓ + `verify:cancel` ✓ | — | §30/31/32
 Training runs (remote) | `verify:submission` ✓ + `verify:slurm` ✓ + `verify:recovery` ✓ (close→restart→reconnect re-queries live pid/status/squeue/sacct, not cache; detached survival; atomic claim) | — | §33/36/37
 Persistence            | `npm run test:persistence` ✓ (P001/P011: round-trip, malformed-file matrix, schema versions, fail-closed) | autosave (localStorage) browser smoke | §4.3, §5
@@ -57,6 +57,7 @@ Security (sidecars)    | none (known open: CORS `*`, no auth)           | auth +
 | `npm run verify:recovery`  | remote job recovery (close→restart→reconnect live re-query, no localStorage cache; detached/sbatch survival; reconcile gates) | PASS 38 checks |
 | `npm run verify:ui-state`  | UI state must not lie (training stale→unknown on SSH loss, SSH badge disconnect, inference not hanging, save truthfulness) | PASS 33 checks |
 | `npm run verify:frontend-errors` | frontend error states (loading/success/error/offline distinct; timeout/cancelled string-typed) | PASS 42 checks |
+| `npm run verify:graph-revision`  | graph revision system (structural revision bump, stale shape/dataset/smoke/refresh drop) | PASS 32 checks |
 | `npm run verify:sidecar`| torch sidecar (autostart)           | PASS 6/6+activations |
 | `npm run verify:opencode`| LLM sidecar opencode provider      | PASS         |
 | `cargo check` (src-tauri)| Rust compilation                    | PASS         |

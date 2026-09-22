@@ -50,6 +50,14 @@ function entryByRel(entries: DatasetEntry[], rel: string): DatasetEntry | undefi
   return entries.find((e) => e.relpath === rel)
 }
 
+// Phase 40 — per-dataset monotonic sequence guards. A later inspect/stats/
+// smoke request must never be overwritten by an earlier one that resolves
+// late (e.g. dsA→dsB→dsA before dsA#1 returns). Each relpath has its own
+// sequence; the response is applied only if it is still the latest.
+const inspectSeq = new Map<string, number>()
+const statsSeq = new Map<string, number>()
+const smokeSeq = new Map<string, number>()
+
 export const useDatasetsStore = create<DatasetsState>((set, get) => ({
   entries: [],
   selectedRel: null,
@@ -90,8 +98,11 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
       set({ inspects: { ...get().inspects, [relpath]: { loading: false, data: null, error: 'no such dataset' } } })
       return
     }
+    const seq = (inspectSeq.get(relpath) ?? 0) + 1
+    inspectSeq.set(relpath, seq)
     set({ inspects: { ...get().inspects, [relpath]: { loading: true, data: null, error: null } } })
     const result = await inspectDataset(entry.abspath)
+    if (seq !== inspectSeq.get(relpath)) return // stale — a newer inspect started
     if ('offline' in result && result.offline) {
       set({ inspects: { ...get().inspects, [relpath]: { loading: false, data: null, error: result.error } } })
       return
@@ -104,8 +115,11 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
     if (!force && cached?.data) return
     const entry = entryByRel(get().entries, relpath)
     if (!entry) return
+    const seq = (statsSeq.get(relpath) ?? 0) + 1
+    statsSeq.set(relpath, seq)
     set({ stats: { ...get().stats, [relpath]: { loading: true, data: null, error: null } } })
     const result = await statsDataset(entry.abspath)
+    if (seq !== statsSeq.get(relpath)) return // stale
     if ('offline' in result && result.offline) {
       set({ stats: { ...get().stats, [relpath]: { loading: false, data: null, error: result.error } } })
       return
@@ -116,6 +130,9 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
   runSmoke: async (relpath, inputShape) => {
     const entry = entryByRel(get().entries, relpath)
     if (!entry) return
+    const seq = (smokeSeq.get(relpath) ?? 0) + 1
+    smokeSeq.set(relpath, seq)
+    const graphRev = useGraphStore.getState().revision
     const { nodes, edges } = useGraphStore.getState()
     const { code, inputs } = generate(nodes, edges)
     // Per-input dataset binding: if every Input node has a bound dataset (via
@@ -169,6 +186,7 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
       for (const rel of perInputDatasets) {
         const e = entryByRel(get().entries, rel)
         if (!e) {
+          if (seq !== smokeSeq.get(relpath)) return
           set({ smoke: { ...get().smoke, [relpath]: {
             loading: false, data: null,
             error: `Input bound to '${rel}' but dataset not found in workspace.`,
@@ -183,6 +201,8 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
       // Single-dataset broadcast: use options for the single input (if any).
       result = await smokeDataset(code, entry.abspath, shapes, perInputOptions.slice(0, 1))
     }
+    // Phase 40 — stale guard: graph moved or newer smoke started → drop
+    if (seq !== smokeSeq.get(relpath) || graphRev !== useGraphStore.getState().revision) return
     if ('offline' in result && result.offline) {
       set({ smoke: { ...get().smoke, [relpath]: { loading: false, data: null, error: result.error } } })
       return
