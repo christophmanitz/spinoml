@@ -2190,6 +2190,13 @@ CANCELLED → SUCCEEDED
 
 must not happen accidentally.
 
+> **2026-09-22 — implemented.** `transition_status()` in `training_template.py`
+> gates trainer writes: queued→running at launch, running→done/failed/cancelled.
+> A late write (done racing user cancel, running after crash) is REJECTED so
+> CANCELLED→SUCCEEDED, FAILED→RUNNING, SUCCEEDED→RUNNING are prevented.
+> Local `stop_training_run` and remote `ssh_stop_training_run` only flip
+> non-terminal states. `npm run verify:states` covers all 43 state checks.
+
 ---
 
 # 32. PHASE 31 – TRAINING EVENT ORDERING
@@ -2209,6 +2216,13 @@ A late event must not overwrite a final state.
 
 Final states should be protected from stale asynchronous updates.
 
+> **2026-09-22 — implemented.** Strict append-only `events.jsonl` with
+> read-boundary protection in `src/training/events.ts`. `parseFinalEvents`
+> truncates at the first terminal event (`run.done`, `run.failed`, `run.cancelled`),
+> ensuring out-of-order lines (e.g. trailing EPOCH after FAILED) are dropped.
+> `latestWinsGuard` drops older in-flight tail/read responses that resolve after
+> a newer snapshot. Verified by `npm run verify:events` (26 checks).
+
 ---
 
 # 33. PHASE 32 – CANCELLATION
@@ -2225,6 +2239,12 @@ Double cancellation
 
 The resulting state must be consistent.
 
+> **2026-09-22 — implemented.** SIGTERM/SIGINT handled via `_Cancelled` exception
+> unwinding in `training_template.py`. A cancelling run emits exactly one
+> `run.cancelled`, updates `metrics.json`, saves a resumable `last.pt` at the last
+> completed epoch (epoch -1 during startup/epoch 0), and shields completed runs
+> from post-done cancellation writes. Verified by `npm run verify:cancel` (28 checks).
+
 ---
 
 # 34. PHASE 33 – JOB SUBMISSION IDEMPOTENCY
@@ -2240,6 +2260,11 @@ Client retries
 Ensure the system does not accidentally submit two jobs.
 
 If perfect idempotency is impossible, use a submission identifier and verify the existing job before retrying.
+
+> **2026-09-22 — implemented.** Remote SSH start claims the run directory atomically
+> (`mkdir` claim). Concurrent starts have exactly one winner; duplicate launch attempts
+> are blocked before start. Retries after a lost response detect the recorded PID and return
+> success without re-executing. Verified by `npm run verify:submission` (7 checks).
 
 ---
 
@@ -2262,6 +2287,14 @@ Remote command failure
 
 Errors must be explicit.
 
+> **2026-09-22 — implemented.** `ssh_failure()` in `src-tauri/src/ssh.rs` maps exit
+> codes and stderr patterns into distinct, explicit failure classifications:
+> auth/host-key failure, DNS resolution failure, connection timeout, connection reset/loss,
+> missing remote directory, permission denied, remote filesystem full, SFTP failure,
+> and remote command error. Uses multiplexed ControlMaster sockets with keepalives
+> (`ServerAliveInterval=20`, `ConnectTimeout=10`). Verified by `npm run verify:ssh` (17 checks)
+> and Rust unit tests in `ssh_failure_tests`.
+
 ---
 
 # 36. PHASE 35 – SSH CREDENTIAL SAFETY
@@ -2277,6 +2310,13 @@ SSH credentials
 ```
 
 They must never be written to ordinary logs or experiment artifacts.
+
+> **2026-09-22 — implemented.** Credential safety audit and enforcement. Connection
+> store delegates authentication to system `~/.ssh/config` and `ssh-agent` without
+> persisting passwords or keys. Runtime environment recording (`_env_info`) captures
+> explicit platform/framework diagnostics without leaking `os.environ`. `sanitize_credentials`
+> scrubs private keys, URL passwords, and API tokens from SSH diagnostic outputs.
+> Verified by `npm run verify:credentials` (8 checks).
 
 ---
 

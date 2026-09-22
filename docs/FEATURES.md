@@ -197,6 +197,21 @@ sample/train; ESPF caches a compact codebook to `<manifest_dir>/.espf/` (the
   `run.cancelled` instead of `run.done`. Verify: `npm run verify:states`
   (transition table + cancel-before-start / mid-training / race / double-cancel
   / post-done guard).
+- **Event ordering (Phase 31)**: `events.jsonl` is append-only + fsynced per
+  line, so on-disk ordering is strict; the protection is at the read boundary.
+  `src/training/events.ts` owns the pure vocabulary: the FIRST terminal event
+  (run.done/failed/cancelled) decides the final state, anything after it — a
+  trailing EPOCH after FAILED, a duplicate terminal write — is truncated away
+  (`parseFinalEvents` feeds every `setEvents` in RunDetail/CompareModal), and a
+  `latestWinsGuard` drops an older in-flight events read whose response lands
+  after a newer one (the inference/store staleness guard, applied to events, so
+  a remote-tail response can never overwrite an already-final view). Verify:
+  `npm run verify:events` (parse tolerance, out-of-order EPOCH-after-FAILED,
+  first-terminal-wins over duplicates, stale-read drop, modal flow).
+- **Cancellation (Phase 32)**: SIGTERM and SIGINT unwind through one terminal-shielded cancellation path. It records exactly one `run.cancelled` event, writes cancelled metrics, and leaves `last.pt` at the final completed epoch; a first-epoch stop stores epoch -1 so resume starts at epoch 0. A late signal cannot change done or failed. Verify: `npm run verify:cancel`.
+- **Submission idempotency (Phase 33)**: remote starts claim `experiments/runs/<run_id>` with one atomic `mkdir`. Concurrent starts have one owner; retries after a lost response detect the recorded `pid` and return success without a second launch. An existing run without a PID remains an explicit incomplete-submission error. Verify: `npm run verify:submission`.
+- **SSH reliability (Phase 34)**: transport failures now report their actual cause: authentication or host-key failure, DNS/host unavailable, timeout, connection loss, missing remote path, permission denied, disk full, SFTP failure, or remote command failure. SSH uses a 10-second connect timeout, keepalives, and multiplexed connections that reopen after loss. Verify: `npm run verify:ssh` (and `cargo test --manifest-path src-tauri/Cargo.toml ssh_failure_tests`).
+- **Credential safety (Phase 35)**: passwords, private keys, API tokens, OAuth secrets, and SSH credentials are strictly banned from experiment artifacts, logs, and frontend stores. The connection store delegates auth entirely to the user's `~/.ssh/config` and ssh-agent without persisting credentials. Runtime environment recording (`_env_info`) captures only whitelisted platform/torch diagnostics (never dumping `os.environ`), and `sanitize_credentials` strips private keys, URL passwords, and secret tokens from all SSH diagnostics. Verify: `npm run verify:credentials`.
 - Trainable dataset kinds: **tabular** + **manifest**. Manifest branches batch as
   PyG `Batch` (graphs) or padded `[B, Lmax]` LongTensors (sequence/ESPF).
 - **GPU**: `training_template.py` picks `cuda` when available, moves the model AND
@@ -296,6 +311,27 @@ chatbot knows about it — recipe in CLAUDE.md "Add a new LLM tool".
   `agent/`, run via `run_script`; write outputs under `datasets/`.
 
 ## Changelog (append one dated line per feature; newest first)
+
+- 2026-09-22 — **Credential safety (Phase 35)**: passwords, private keys, API tokens, OAuth secrets, and SSH credentials are confirmed absent from all experiment artifacts, logs, and config files. SpinoML delegates remote authentication entirely to system `~/.ssh/config` and `ssh-agent` without storing secrets in local storage. Runtime environment recording (`_env_info`) captures platform diagnostics without dumping `os.environ`. All SSH error outputs are sanitized via `sanitize_credentials` before being reported. New `npm run verify:credentials` proves leak-free artifacts, logs, error reporting, and training templates.
+
+- 2026-09-22 — **SSH reliability (Phase 34)**: transport and remote failures now report distinct, explicit error causes: authentication/host-key mismatch, DNS host resolution failure, connection timeout, connection reset/loss, missing remote paths, permission denied, filesystem full, or SFTP failures. Multiplexed ControlMaster sockets ensure fast, keepalive-backed re-use and automatic re-establishment. New `npm run verify:ssh` and Rust unit tests verify error classification across all scenarios.
+
+- 2026-09-22 — **Submission idempotency (Phase 33)**: remote SSH start now claims the run directory atomically. One concurrent client can submit; a retry after a lost response sees the durable PID and returns success without launching a duplicate. An incomplete prior attempt fails explicitly before launch. New `npm run verify:submission` covers first submit, retry before/after PID, and 16 concurrent claimers.
+
+- 2026-09-22 — **Cancellation (Phase 32)**: SIGTERM/SIGINT now unwind through one terminal-shielded trainer path, rather than terminating the process mid-epoch. Cancellation produces exactly one `run.cancelled`, cancelled metrics, and a resumable checkpoint at the last completed epoch (epoch -1 during the first epoch, so resume starts at 0); a late signal cannot change done/failed. New `npm run verify:cancel` exercises cancel-before-start, startup, first-epoch signal, cooperative stop, double SIGTERM, and post-completion shielding.
+
+- 2026-09-22 — **Event ordering (Phase 31)**: final-state protection moved to the
+  events-read boundary. On-disk `events.jsonl` is already append-only + fsynced
+  per line; the risk was a stale read snapshot landing over a newer one (esp.
+  over ssh) or a trailing out-of-order line (EPOCH after FAILED). New pure module
+  `src/training/events.ts` — `finalTerminal`/`truncateAtTerminal` let the first
+  terminal event (run.done/failed/cancelled) decide the final state and drop
+  everything after it; `latestWinsGuard` discards an older in-flight events read
+  whose response arrives after a newer one (the Phase-10 inference guard applied
+  to events). RunDetailModal + CompareModal now feed every `setEvents` through
+  `parseFinalEvents` + the guard. New `npm run verify:events` proves parsing
+  tolerance, EPOCH-after-FAILED truncation, first-terminal-wins over duplicate
+  terminal writes, stale-read dropping and the modal flow (26 checks).
 
 - 2026-09-22 — **Run state machine (Phase 30)**: the run `status` file is now a
   real state machine — `queued → running → done|failed|cancelled` with terminal

@@ -32,6 +32,7 @@ import hashlib
 import json
 import os
 import platform
+import signal
 import subprocess
 import sys
 import time
@@ -103,13 +104,46 @@ def transition_status(next_status: str) -> bool:
     return False
 
 
-def cancel_run(epoch: int, note: str = "") -> None:
-    """The cooperative stop path: mark cancelled (only if not already terminal),
-    emit the event, and write metrics. Idempotent — double cancellation is a
-    no-op after the first terminal write."""
-    applied = transition_status("cancelled")
-    emit("run.cancelled", epoch=epoch, applied=applied, note=note)
+class _Cancelled(BaseException):
+    """Raised by the SIGTERM/SIGINT handler to unwind to the single graceful
+    cancellation point. A cancellation is NOT a failure: the run ends
+    'cancelled', never 'failed' (Phase 32). Deliberately derives from
+    BaseException (like KeyboardInterrupt/SystemExit) so no `except Exception`
+    guard anywhere in the trainer — the dataset/model/validate/resume failure
+    paths included — can swallow it and misclassify a cancellation as a run
+    failure (startup-window cancel → 'failed' would be a lie)."""
+
+
+_CANCEL_RECORDED = {"v": False}  # Phase 32 — sentinel: the run.cancelled event
+#                                 must be emitted exactly once even when a
+#                                 duplicate signal/write races in.
+_SHUTDOWN = {"v": False}  # Phase 32 — sentinel: the FIRST signal wins; duplicate
+#                          signals landing during unwinding/exit are ignored so
+#                          a second SIGTERM can't interrupt the shutdown (the
+#                          Rust/ssh stop path sends SIGTERM to the group AND the
+#                          pid — a double signal is the production pattern).
+
+
+def _finish_cancel(epoch: int, note: str = "") -> None:
+    """Phase 32 — the single, terminal-shielded cancellation record, used by the
+    cooperative status-file path and the SIGTERM/SIGINT path alike. The Phase-30
+    state machine decides: if the run already reached a FINAL state (done/failed)
+    a late cancel is REJECTED — a post-SUCCESS stop must never resurrect the run.
+    Otherwise the run is marked cancelled, exactly ONE run.cancelled event is
+    emitted (idempotent even on a double signal), and metrics are written."""
+    if not transition_status("cancelled"):
+        return  # already terminal (done/failed) — the final state wins; emit nothing
+    if not _CANCEL_RECORDED["v"]:
+        _CANCEL_RECORDED["v"] = True
+        emit("run.cancelled", epoch=epoch, applied=True, note=note)
     METRICS.write_text(json.dumps({"status": "cancelled", "epoch": epoch}, indent=2))
+
+
+def cancel_run(epoch: int, note: str = "") -> None:
+    """The cooperative stop path (historic name kept): the status file already
+    says 'cancelled', so the state-machine transition is idempotent; record the
+    cancellation, emit the event and the metrics each exactly once."""
+    _finish_cancel(epoch, note)
 
 
 def fail(stage: str, msg: str, tb: str | None = None) -> None:
@@ -1238,10 +1272,31 @@ def emit_eval(epoch, heads, head_names, multitask, head_classes, val_cat):
 
 
 def main() -> None:
+    # Phase 32 — graceful cancellation on SIGTERM/SIGINT. The UI stop path
+    # (stop_training_run / ssh_stop_training_run) writes status=cancelled FIRST,
+    # then signals us; default signal handling would kill the process mid-epoch,
+    # losing the resumable last.pt and the run.cancelled event (breaking the
+    # Phase-26 stop → load → resume promise). We instead unwind to a single
+    # cancellation point — `_finish_cancel` is terminal-shielded, so a late
+    # signal after done/failed can never resurrect the run (the Phase-30
+    # CANCELLED→SUCCEEDED / SUCCEEDED→CANCELLED prohibition holds for signals too).
+    def _on_cancel(signum, frame):
+        if _SHUTDOWN["v"]:
+            return  # duplicate signal during unwinding/exiting — ignore
+        _SHUTDOWN["v"] = True
+        raise _Cancelled(signum)
+
+    signal.signal(signal.SIGTERM, _on_cancel)
+    signal.signal(signal.SIGINT, _on_cancel)
+
     # Phase 30 — queued→running via the state machine; if the launch wrote
-    # 'cancelled' first (cancel-before-start race) the transition is rejected
-    # and the trainer will observe the cancellation at the first epoch check.
-    transition_status("running")
+    # 'cancelled' first (cancel-before-start race) the transition is rejected.
+    # Phase 32 — record that pre-termination cancellation and exit cleanly
+    # instead of paying the startup cost to discover it at the first epoch check.
+    if not transition_status("running"):
+        if _read_status() == "cancelled":
+            _finish_cancel(0, "cancelled before start")
+            return
     t0 = time.time()
     emit("run.start", pid=os.getpid())
 
@@ -1656,19 +1711,21 @@ def main() -> None:
             "config": cfg,
         }
 
+    current_epoch: list[int | None] = [None]  # Phase 32 — signal-safe epoch tracker
     try:
         for epoch in range(start_epoch, end_epoch):
+            current_epoch[0] = epoch
             if _read_status() == "cancelled":
                 # Phase 26 — a stopped run must leave a resumable checkpoint
                 # (last completed epoch) so stop → load → resume works.
-                last_done = max(start_epoch, epoch - 1)
+                last_done = epoch - 1
                 try:
                     _atomic_save(build_ckpt(last_done), CKPT_DIR / "last.pt")
                 except Exception:  # noqa: BLE001
                     pass
                 # Phase 30 — cancel through the state machine (idempotent;
-                # double cancellation is a no-op after the first write).
-                cancel_run(epoch)
+                # double cancellation is a no-op after the first terminal write).
+                _finish_cancel(epoch, "cancelled at epoch boundary")
                 return
             emit("epoch.start", epoch=epoch)
             model.train()
@@ -1776,6 +1833,19 @@ def main() -> None:
                             break
 
         _atomic_save(build_ckpt(end_epoch - 1, val_loss_v=val_loss), CKPT_DIR / "last.pt")
+    except _Cancelled as c:  # Phase 32 — graceful signal cancellation, any point in the epoch
+        # The signal unwound us mid-epoch/mid-validation. Leave a resumable
+        # checkpoint at the last COMPLETED epoch and record the cancellation —
+        # unless the run already reached a final state, in which case the
+        # terminal state wins and nothing is overwritten.
+        canc_epoch = current_epoch[0]
+        last_done = (canc_epoch if canc_epoch is not None else start_epoch) - 1
+        try:
+            _atomic_save(build_ckpt(last_done), CKPT_DIR / "last.pt")
+        except Exception:  # noqa: BLE001
+            pass
+        _finish_cancel(canc_epoch or 0, f"cancelled (signal {c})")
+        return
     except Exception as e:  # noqa: BLE001
         fail("train", str(e), traceback.format_exc())
 
@@ -1798,8 +1868,7 @@ def main() -> None:
             # The loop never saw the cancel (it landed while we were finalising),
             # so no run.cancelled exists yet — emit one and let the cancelled
             # metrics below be the final word.
-            emit("run.cancelled", epoch=max(start_epoch, end_epoch - 1), applied=True,
-                 note="cancelled during finalisation")
+            _finish_cancel(max(start_epoch, end_epoch - 1), "cancelled during finalisation")
     METRICS.write_text(json.dumps({
         "status": final_status,
         "total_seconds": round(total, 2),
@@ -1815,6 +1884,13 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
+    except _Cancelled as c:
+        # Last resort: a signal that landed OUTSIDE the epoch loop (during
+        # startup, e.g. imports/model build/dataset load — no epoch completed,
+        # so there is nothing to make resumable yet). Record the cancellation
+        # through the terminal-shielded path and exit cleanly.
+        _finish_cancel(0, f"cancelled during startup (signal {c})")
+        sys.exit(0)
     except SystemExit:
         raise
     except Exception as e:  # noqa: BLE001

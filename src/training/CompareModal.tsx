@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react'
 import { training } from './backend'
 import { useTrainingStore } from './store'
 import LineChart, { type Series } from './charts/LineChart'
-import { parseEventLines, epochEnds, CHART_COLORS } from './charts/series'
+import { epochEnds, CHART_COLORS } from './charts/series'
+import { parseFinalEvents } from './events'
 import type { TrainingEvent } from './types'
 
 type Loaded = {
@@ -48,7 +49,7 @@ export default function CompareModal() {
         const summary = runs.find((r) => r.run_id === runId)
         let events: TrainingEvent[] = []
         let config: Record<string, unknown> | null = null
-        try { events = parseEventLines(await training.readFile(runId, 'events.jsonl')) } catch { /* none yet */ }
+        try { events = parseFinalEvents(await training.readFile(runId, 'events.jsonl')) } catch { /* none yet */ }
         try { config = JSON.parse(await training.readFile(runId, 'run.json')) } catch { /* none */ }
         return {
           runId,

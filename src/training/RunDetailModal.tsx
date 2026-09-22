@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import { training } from './backend'
 import { useTrainingStore } from './store'
 import { type RunConfig, type TrainingEvent, type GpuStat, RUNNING_STATES } from './types'
 import StatusPill from './StatusPill'
 import LineChart from './charts/LineChart'
-import { parseEventLines, lossSeries, lrSeries, metricSeries } from './charts/series'
+import { lossSeries, lrSeries, metricSeries } from './charts/series'
+import { latestWinsGuard, parseFinalEvents } from './events'
 import { latestEval, latestEvalHeads, EvalDiagram } from './charts/Evaluation'
 import { runConfigToTrainingSnapshot } from './graph/fromRun'
 import { useTrainingGraphStore } from './graph/store'
@@ -44,6 +45,17 @@ export default function RunDetailModal({ runId }: { runId: string }) {
 
   const status = summary?.status ?? 'unknown'
   const active = RUNNING_STATES.has(status) || (summary?.alive ?? false)
+
+  // Phase 31 — events JSONL is whole-file read + snapshotted. Two concurrent
+  // reads can land out of order (esp. over ssh): the newest-STARTED read always
+  // sees a superset of an older one, so an older response arriving late must be
+  // DROPPED (a stale snapshot would "overwrite" the final state already shown).
+  // parseFinalEvents additionally truncates at the first terminal event so a
+  // trailing out-of-order line (EPOCH after FAILED) never surfaces.
+  const eventsApply = useMemo(
+    () => latestWinsGuard<string>((text) => setEvents(parseFinalEvents(text))),
+    [],
+  )
 
   // Frozen run.json (backend, eval-validation metadata).
   const parsedCfg = (() => {
@@ -84,22 +96,24 @@ export default function RunDetailModal({ runId }: { runId: string }) {
       const jobId = pidRaw.startsWith('slurm:') ? pidRaw.slice('slurm:'.length).trim() || null : null
       setSlurmJobId(jobId)
       const [outName, errName] = logFileNames(jobId)
-      const [ev, rj, tp, sb, so, se] = await Promise.all([
-        training.readFile(runId, 'events.jsonl'),
+      // Events go through the stale-read guard (never blocks the rest of the
+      // load): an older read landing late is discarded, a terminal run's final
+      // snapshot stays final.
+      eventsApply(() => training.readFile(runId, 'events.jsonl')).catch(() => {})
+      const [rj, tp, sb, so, se] = await Promise.all([
         training.readFile(runId, 'run.json'),
         training.readFile(runId, 'train.py'),
         training.readFile(runId, 'train.sbatch'),
         training.readFile(runId, outName),
         training.readFile(runId, errName),
       ])
-      setEvents(parseEventLines(ev))
       setRunJson(rj)
       setTrainPy(tp)
       setTrainSbatch(sb)
       setStdout(so)
       setStderr(se)
     } catch { /* file may not exist yet */ }
-  }, [runId])
+  }, [runId, eventsApply])
 
   // Lightweight tail — only the file(s) that actually grow. On a remote (ssh)
   // connection every readFile is an ssh round-trip, so we DON'T re-fetch the
@@ -107,7 +121,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   // logs tab is open. This is what keeps a remote run from saturating ssh.
   const tailReload = useCallback(async () => {
     try {
-      setEvents(parseEventLines(await training.readFile(runId, 'events.jsonl')))
+      eventsApply(() => training.readFile(runId, 'events.jsonl')).catch(() => {})
       if (tab === 'logs') {
         const [outName, errName] = logFileNames(slurmJobId)
         const [so, se] = await Promise.all([
@@ -118,7 +132,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
         setStderr(se)
       }
     } catch { /* file may not exist yet */ }
-  }, [runId, tab, slurmJobId])
+  }, [runId, tab, slurmJobId, eventsApply])
 
   // Reload on open AND whenever the status changes. The status-change reload is
   // what catches the final epoch + run.done on the running→done transition: the

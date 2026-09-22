@@ -13,16 +13,16 @@ Code generation        | `verify-codegen` 13/13 ✓ + `test:determinism` ✓ (re
 Training codegen       | `verify-traingen` ✓ (compile, multitask, eval-only) | immersive failure tests | §24 training failure tests
 Shape inference        | `verify-sidecar` (synthetic /infer) ✓ + `test:verifier` ✓ (fail-closed gate, INVALID/UNKNOWN/VALID decision matrix, end-to-end with sidecar when reachable) + `test:races` ✓ (stale-response replay via fetch mock) | live multi-request interleaving on real sidecar | §8/9/10
 Dataset handling       | `verify-sidecar` (inspect/stats/smoke) ✓ + `test:datasets` ✓ (per-kind §18 matrix: valid/empty/missing/corrupt/wrong-dtype/NaN/Inf/single/large/unicode/spaces/relative — explicit-error, never-silently-empty + Phase-18 fingerprint: determinism, copy-stability, content-change) | leak tests, parquet (pyarrow absent env), remote pre-12b (no sidecar → no fingerprint) | §19
-Training runs (local)  | `verify-traingen` e2e (2-head, external-val) ✓ | local job state machine     | §30/31/32/33
-Training runs (remote) | none                                          | ssh + slurm run tests        | §34/35/36/37
+Training runs (local)  | `verify-traingen` e2e ✓ + `verify:states` ✓ + `verify:events` ✓ + `verify:cancel` ✓ | — | §30/31/32
+Training runs (remote) | `verify:submission` ✓                         | slurm run tests              | §33/36/37
 Persistence            | `npm run test:persistence` ✓ (P001/P011: round-trip, malformed-file matrix, schema versions, fail-closed) | autosave (localStorage) browser smoke | §4.3, §5
 Torch sidecar          | `verify-sidecar` 6/6+activations ✓ + `test:robustness` ✓ (11-case matrix: startup, structured errors with `error_code` on every path, slow-client stall cap, abort resistance, kill→restart recovery) | auth/path-scope tests        | §77/78 security
 LLM sidecar            | `verify-opencode` ✓ (+manual ask/confirm)      | `/respond`/auto-approve auth | §14/15, §77
 MCP                    | `verify-opencode` (via opencode bridge) ✓      | spec-parity across providers | §16 MCP validation
-Tauri/Rust             | none (rust toolchain absent locally)           | cargo check + command tests  | §1.6 (env), §48 Rust errors
+Tauri/Rust             | `cargo check` ✓ + `cargo test` (ssh failures) ✓ | command integration tests    | §1.6 (env), §48 Rust errors
 Filesystem (local)     | none                                          | path-sanity tests            | §45/46
-Filesystem (remote)    | none                                          | ssh mirror parity tests      | §34/35
-SSH                    | none                                          | state-on-failure tests       | §34/35 (+ R003 alias)
+Filesystem (remote)    | `verify:ssh` ✓                                | ssh mirror parity tests      | §34/35
+SSH                    | `verify:ssh` ✓ + `verify:credentials` ✓       | live cluster integration     | §34/35 (+ R003 alias)
 PTY/Terminal           | none                                          | interactive smoke            | manual
 SLURM                  | none (probed live: partitions exist)           | sbatch/squeue/cancel tests   | §36/37
 Workspace (browser)    | none                                          | virtual-FS UT                | §38/39
@@ -47,9 +47,15 @@ Security (sidecars)    | none (known open: CORS `*`, no auth)           | auth +
 | `npm run verify:failures`| training failure tests (9 failure modes incl. NaN input + NaN-loss→`numeric` hardening) | PASS 37 checks |
 | `npm run verify:checkpoint`| checkpoint correctness (train/save/resume/cancel, full state incl. rng + config) + atomic-write crash sim + corrupted-ckpt rejection | PASS 45 checks |
 | `npm run verify:metrics`| metric correctness (batch-size-weighted loss/metric aggregation vs Python reference) | PASS 11 checks |
+| `npm run verify:states` | run state machine transitions and invalid-transition guards | PASS 43 checks |
+| `npm run verify:events` | event ordering, terminal truncation, stale-read dropping   | PASS 26 checks |
+| `npm run verify:cancel` | SIGTERM/SIGINT signal handling, resume checkpoint, shielding| PASS 28 checks |
+| `npm run verify:submission`| atomic remote run directory claim and retry idempotency   | PASS 7 checks |
+| `npm run verify:ssh`    | SSH failure classification, transport options, error detail | PASS 17 checks |
+| `npm run verify:credentials`| secret/credential scan across artifacts, logs, error sanitize | PASS 8 checks |
 | `npm run verify:sidecar`| torch sidecar (autostart)           | PASS 6/6+activations |
 | `npm run verify:opencode`| LLM sidecar opencode provider      | PASS         |
-| `cargo check` (src-tauri)| Rust                                | SKIPPED (no toolchain) |
+| `cargo check` (src-tauri)| Rust compilation                    | PASS         |
 | `pytest` / `npm test`   | —                                   | SKIPPED (no suites) |
 
 Prereq for all `verify:*` that exec Python: conda env `mlforge-dev` active

@@ -199,6 +199,101 @@ fn control_args() -> Vec<String> {
     ]
 }
 
+pub fn sanitize_credentials(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while let Some(start) = rest.find("-----BEGIN") {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        if let Some(end) = tail.find("-----END") {
+            if let Some(line_end) = tail[end..].find('\n') {
+                out.push_str("[REDACTED PRIVATE KEY]");
+                rest = &tail[end + line_end..];
+                continue;
+            } else {
+                out.push_str("[REDACTED PRIVATE KEY]");
+                rest = "";
+                break;
+            }
+        } else {
+            out.push_str("[REDACTED PRIVATE KEY]");
+            rest = "";
+            break;
+        }
+    }
+    out.push_str(rest);
+
+    let mut sanitized_lines = Vec::new();
+    for line in out.lines() {
+        let mut clean_line = line.to_string();
+
+        if let Some(scheme_idx) = clean_line.find("://") {
+            let after_scheme = scheme_idx + 3;
+            if let Some(at_idx) = clean_line[after_scheme..].find('@') {
+                let user_pass = &clean_line[after_scheme..after_scheme + at_idx];
+                if let Some(colon) = user_pass.find(':') {
+                    let user = &user_pass[..colon];
+                    clean_line = format!(
+                        "{}{}:[REDACTED]@{}",
+                        &clean_line[..after_scheme],
+                        user,
+                        &clean_line[after_scheme + at_idx + 1..]
+                    );
+                }
+            }
+        }
+
+        for prefix in &["sk-ant-", "sk-", "ghp_", "gho_", "glpat-", "hf_", "xoxb-", "xoxp-"] {
+            while let Some(idx) = clean_line.find(prefix) {
+                let tail = &clean_line[idx + prefix.len()..];
+                let end = tail
+                    .find(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+                    .unwrap_or(tail.len());
+                if end >= 12 {
+                    clean_line = format!("{}[REDACTED_TOKEN]{}", &clean_line[..idx], &tail[end..]);
+                } else {
+                    break;
+                }
+            }
+        }
+
+        sanitized_lines.push(clean_line);
+    }
+    sanitized_lines.join("\n")
+}
+
+fn ssh_failure(exit: Option<i32>, stderr: &str) -> String {
+    let sanitized = sanitize_credentials(stderr);
+    let detail = if sanitized.trim().is_empty() { "no diagnostic from ssh" } else { sanitized.trim() };
+    let lower = detail.to_ascii_lowercase();
+    let reason = if lower.contains("permission denied (publickey)") || lower.contains("authentication failed") || lower.contains("host key verification failed") {
+        "SSH authentication or host-key verification failed; check the configured key, agent, and known_hosts"
+    } else if lower.contains("could not resolve hostname") || lower.contains("name or service not known") {
+        "SSH host could not be resolved; check the configured host name and DNS"
+    } else if lower.contains("connection timed out") || lower.contains("operation timed out") {
+        "SSH connection timed out; check host reachability, firewall, or VPN"
+    } else if lower.contains("connection refused") || lower.contains("no route to host") || lower.contains("network is unreachable") {
+        "SSH host is unavailable; check that sshd, the network route, and the host are available"
+    } else if lower.contains("connection reset") || lower.contains("connection closed") || lower.contains("broken pipe") || lower.contains("kex_exchange_identification") {
+        "SSH connection was lost; retrying will open a fresh multiplexed connection"
+    } else if lower.contains("no such file or directory") {
+        "Remote path not found; the target file or directory does not exist"
+    } else if lower.contains("permission denied") {
+        "Remote permission denied; check file/directory permissions on the remote host"
+    } else if lower.contains("no space left on device") {
+        "Remote filesystem is full (no space left on device)"
+    } else if lower.contains("sftp") || lower.contains("subsystem") {
+        "Remote file transfer (SFTP) failed"
+    } else if exit == Some(255) {
+        "SSH connection setup failed; check authentication and network reachability"
+    } else {
+        "Remote SSH command failed"
+    };
+    let code = exit.map(|v| v.to_string()).unwrap_or_else(|| "signal".into());
+    format!("{reason} (ssh exit {code}): {detail}")
+}
+
 fn ssh_exec_blocking(alias: &str, remote_cmd: &str, stdin_data: Option<&[u8]>) -> Result<String, String> {
     let mut cmd = Command::new("ssh");
     for o in control_args() {
@@ -225,22 +320,11 @@ fn ssh_exec_blocking(alias: &str, remote_cmd: &str, stdin_data: Option<&[u8]>) -
         .wait_with_output()
         .map_err(|e| format!("wait ssh: {e}"))?;
     if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-        let code = out
-            .status
-            .code()
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "?".into());
-        let hint = if code == "255" {
-            "\n(SSH exit 255: connection/auth failed. Check ~/.ssh/config, ssh-agent, network reachability.)"
-        } else {
-            ""
-        };
-        return Err(format!("ssh exit {code}: {}{hint}", stderr.trim()));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(ssh_failure(out.status.code(), &stderr));
     }
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
-
 // ─── commands ─────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -857,10 +941,31 @@ pub async fn ssh_start_training_run(
     let ckpt_q = shell_quote_path(&format!("{dir}/checkpoints"));
     let python_q = shell_quote_path(&python);
 
-    // refuse to clobber an existing run
-    let exists = ssh_exec(&alias, &format!("if [ -d {dir_q} ]; then echo EXISTS; fi"), None).await?;
-    if exists.contains("EXISTS") {
-        return Err(format!("run {run_id} already exists on {alias}"));
+    // Phase 33 — mkdir is the submission claim. Two clients can observe a
+    // missing directory, but only one can create this run directory. A retry
+    // after a lost response sees the durable pid and succeeds without launch;
+    // an incomplete prior attempt remains an explicit error rather than a
+    // second submission.
+    let runs_q = shell_quote_path(&remote_runs_dir(&root));
+    let claim = ssh_exec(
+        &alias,
+        &format!(
+            "if ! mkdir -p {runs_q}; then echo MLF_CLAIM_FAILED; elif mkdir {dir_q} 2>/dev/null; then echo MLF_CREATED; elif [ -s {dir_q}/pid ]; then echo MLF_ALREADY_LAUNCHED; else echo MLF_EXISTS_INCOMPLETE; fi"
+        ),
+        None,
+    )
+    .await?;
+    if claim.contains("MLF_ALREADY_LAUNCHED") {
+        eprintln!("[spinoml] remote run {run_id} was already submitted on {alias}");
+        return Ok(());
+    }
+    if claim.contains("MLF_CLAIM_FAILED") {
+        return Err(format!("could not prepare the remote runs directory on {alias}"));
+    }
+    if !claim.contains("MLF_CREATED") {
+        return Err(format!(
+            "run {run_id} already exists on {alias}, but has no recorded submission; refusing duplicate launch"
+        ));
     }
     ssh_exec(&alias, &format!("mkdir -p {ckpt_q}"), None).await?;
 
@@ -1386,4 +1491,49 @@ pub async fn ssh_gpu_stats(
     };
     let out = ssh_exec(&alias, &cmd, None).await?;
     Ok(training::parse_gpu_stats(&out))
+}
+
+#[cfg(test)]
+mod ssh_failure_tests {
+    use super::{ssh_failure, sanitize_credentials};
+
+    #[test]
+    fn classifies_transport_and_remote_command_failures() {
+        assert!(ssh_failure(Some(255), "Permission denied (publickey).")
+            .starts_with("SSH authentication or host-key verification failed"));
+        assert!(ssh_failure(Some(255), "Could not resolve hostname cluster: Name or service not known")
+            .starts_with("SSH host could not be resolved"));
+        assert!(ssh_failure(Some(255), "ssh: connect to host cluster port 22: Connection timed out")
+            .starts_with("SSH connection timed out"));
+        assert!(ssh_failure(Some(255), "kex_exchange_identification: Connection closed by remote host")
+            .starts_with("SSH connection was lost"));
+        assert!(ssh_failure(Some(1), "cat: /scratch/run/missing: No such file or directory")
+            .starts_with("Remote path not found"));
+        assert!(ssh_failure(Some(1), "cat: /scratch/run: Permission denied")
+            .starts_with("Remote permission denied"));
+        assert!(ssh_failure(Some(1), "write: No space left on device")
+            .starts_with("Remote filesystem is full"));
+        assert!(ssh_failure(Some(1), "subsystem request failed for sftp")
+            .starts_with("Remote file transfer (SFTP) failed"));
+        assert!(ssh_failure(Some(1), "python: command not found")
+            .starts_with("Remote SSH command failed"));
+    }
+
+    #[test]
+    fn sanitizes_credentials_in_diagnostics() {
+        let key_leak = "ssh: key dump: -----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAA\n-----END OPENSSH PRIVATE KEY-----\nerror";
+        let clean = sanitize_credentials(key_leak);
+        assert!(!clean.contains("b3BlbnNzaC"));
+        assert!(clean.contains("[REDACTED PRIVATE KEY]"));
+
+        let url_leak = "fatal: repository 'https://user:super_secret_pass@github.com/org/repo' not found";
+        let clean_url = sanitize_credentials(url_leak);
+        assert!(!clean_url.contains("super_secret_pass"));
+        assert!(clean_url.contains("https://user:[REDACTED]@github.com/org/repo"));
+
+        let token_leak = "API error: invalid token sk-ant-api03-abcdef12345678901234567890";
+        let clean_token = sanitize_credentials(token_leak);
+        assert!(!clean_token.contains("abcdef12345678901234567890"));
+        assert!(clean_token.contains("[REDACTED_TOKEN]"));
+    }
 }

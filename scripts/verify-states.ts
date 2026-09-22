@@ -10,6 +10,7 @@ import { join } from 'node:path'
 
 const repoRoot = join(import.meta.dirname, '..')
 const template = join(repoRoot, 'sidecar-torch', 'training_template.py')
+const python = process.env.PYTHON ?? 'python'
 
 let failures = 0
 function check(name: string, cond: boolean, detail = '') {
@@ -19,7 +20,7 @@ function check(name: string, cond: boolean, detail = '') {
 
 // Helper: run python with the trainer module imported in a temp dir
 function runTrainerModule(dir: string, script: string): string {
-  const r = spawnSync('python', ['-c', script, dir], { cwd: dir, stdio: 'pipe' })
+  const r = spawnSync(python, ['-c', script, dir], { cwd: dir, stdio: 'pipe' })
   if (r.status !== 0) throw new Error(r.stderr.toString())
   return r.stdout.toString().trim()
 }
@@ -62,7 +63,7 @@ function writeRunDir(name: string, opts: { status?: string } = {}) {
 function runStateTest(dir: string, testCode: string): string[] {
   const scriptPath = join(dir, 'test_state.py')
   writeFileSync(join(dir, 'test_state.py'), testCode)
-  const r = spawnSync('python', [scriptPath, dir], { cwd: dir, stdio: 'pipe' })
+  const r = spawnSync(python, [scriptPath, dir], { cwd: dir, stdio: 'pipe' })
   if (r.status !== 0) throw new Error(r.stderr.toString())
   return r.stdout.toString().trim().split('\n').map((l) => l.trim())
 }
@@ -152,7 +153,7 @@ u("failed->failed", "failed", "failed")
 console.log('  [cancel before start]')
 {
   const dir = writeRunDir('cancel-pre', { status: 'cancelled' })
-  const r = spawnSync('python', ['-u', 'train.py'], { cwd: dir, stdio: 'pipe' })
+  const r = spawnSync(python, ['-u', 'train.py'], { cwd: dir, stdio: 'pipe' })
   check('exits quickly (no epochs)', r.status === 0)
   check('status stays cancelled', readFileSync(join(dir, 'status'), 'utf8').trim() === 'cancelled')
   const events = (existsSync(join(dir, 'events.jsonl'))
@@ -168,7 +169,7 @@ console.log('  [cancel before start]')
 console.log('  [cancel mid-training via state machine]')
 {
   const dir = writeRunDir('cancel-mid')
-  const child = spawn('python', ['-u', 'train.py'], { cwd: dir, stdio: 'ignore' })
+  const child = spawn(python, ['-u', 'train.py'], { cwd: dir, stdio: 'ignore' })
   let cancelled = false
   for (let i = 0; i < 3000; i++) {
     await new Promise((r) => setTimeout(r, 5))
@@ -189,7 +190,7 @@ console.log('  [cancel mid-training via state machine]')
 console.log('  [CANCELLED → SUCCEEDED race protection]')
 {
   const dir = writeRunDir('race-cancel-done')
-  const child = spawn('python', ['-u', 'train.py'], { cwd: dir, stdio: 'ignore' })
+  const child = spawn(python, ['-u', 'train.py'], { cwd: dir, stdio: 'ignore' })
   let race = false
   for (let i = 0; i < 2000; i++) {
     await new Promise((r) => setTimeout(r, 5))
@@ -213,7 +214,7 @@ console.log('  [CANCELLED → SUCCEEDED race protection]')
 console.log('  [double cancellation]')
 {
   const dir = writeRunDir('double-cancel')
-  const child = spawn('python', ['-u', 'train.py'], { cwd: dir, stdio: 'ignore' })
+  const child = spawn(python, ['-u', 'train.py'], { cwd: dir, stdio: 'ignore' })
   for (let i = 0; i < 2000; i++) {
     await new Promise((r) => setTimeout(r, 5))
     if (existsSync(join(dir, 'events.jsonl')) && readFileSync(join(dir, 'events.jsonl'), 'utf8').includes('"kind": "epoch.end", "epoch": 0')) {
@@ -233,7 +234,7 @@ console.log('  [double cancellation]')
 console.log('  [trainer guard: SUCCEEDED → CANCELLED rejected]')
 {
   const dir = writeRunDir('post-done-cancel')
-  execSync('python -u train.py', { cwd: dir, stdio: 'pipe', timeout: 120_000 })
+  execSync(`${python} -u train.py`, { cwd: dir, stdio: 'pipe', timeout: 120_000 })
   check('completed = done', readFileSync(join(dir, 'status'), 'utf8').trim() === 'done')
   // A late cancel write races toward the trainer. WITHOUT the Rust guard the
   // file would already say cancelled; the trainer state machine must still
