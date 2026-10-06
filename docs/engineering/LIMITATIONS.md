@@ -52,24 +52,23 @@
   the allow-list contains PyG and numpy array types, so other custom classes in a
   `.pt` are refused until the file is re-saved as tensors/dicts/PyG `Data`; on
   torch < 2.4 there is no allow-list API (only plain tensors/dicts load).
-- **Torch sidecar path scoping exists but is not enforcing on the local app yet**
-  (Phase 45/46, R016): `scope.py` enforces realpath containment (roots +
-  user-listed symlink targets) for every request path and every path derived from
-  file content, *when a root is configured* — `SPINOML_ALLOWED_ROOTS`,
-  `~/.cache/spinoml/scope.json`, or (remote HPC) the launcher's export. The local
-  managed sidecar is started before a workspace exists and Rust cannot tell it
-  the root (and no Rust writer exists yet), so without configuration it runs in the
-  visible mode `unconfigured-open` (stderr warning, `/health.scope.mode`).
-  `SPINOML_REQUIRE_SCOPE=1` fails closed. Remote workspaces that symlink data out
-  of the project root (e.g. `datasets -> /work2/...`) must export
-  `SPINOML_SYMLINK_TARGETS=/work2/...` in `<root>/.spinoml/env.sh`, otherwise the
-  request is refused with `PATH_SYMLINK_OUTSIDE` and a one-line fix.
+- **Path scoping is enforcing once a workspace exists, not before** (Phase 45/46 + Rust half,
+  R016): `scope.py` / `path-scope.mjs` enforce realpath containment (roots + user-listed symlink
+  targets) for every request path and every path derived from file content, and the Rust shell now
+  writes `scope.json` (`scope_file.rs`) when a local workspace is picked/opened and clears the roots on
+  close. Before the first workspace is chosen the managed sidecars still run in the visible mode
+  `unconfigured-open` (`/health.scope.mode`); `SPINOML_REQUIRE_SCOPE=1` fails closed but is not set by
+  the app because the GUI flows that use dataset paths before a workspace could not be tested. Remote
+  workspaces that symlink data out of the project root (e.g. `datasets -> /work2/...`) must export
+  `SPINOML_SYMLINK_TARGETS=/work2/...` in `<root>/.spinoml/env.sh` (remote) or list the target under
+  `symlink_targets` in the scope file / `SPINOML_SYMLINK_TARGETS` (local), otherwise the request is
+  refused with `PATH_SYMLINK_OUTSIDE` and a one-line fix. Two app instances share one scope file (last
+  writer wins). The check is not atomic with the later open (TOCTOU) and the Rust half is unix-only.
 - **Scoping does not protect the exec endpoints**: `/infer`, `/dataset/smoke` and
   `/activations` execute model `code`, which can open any file the process can and
   returns exception text. The sidecar token (Phase 77/78) now gates who may call them (see above).
-- **Rust `resolve()` is purely lexical** (no symlink resolution) and the Node
-  sidecar's remote (ssh) workspaces only get lexical checks; the local Node path is
-  symlink-aware (`path-scope.mjs`).
+- **The Node sidecar's remote (ssh) workspaces only get lexical checks**; the local Node path is
+  symlink-aware (`path-scope.mjs`), and Rust `resolve()` is symlink-aware since the Rust scope half.
 - Minor: `scope.py` rejects a path that traverses the *same* symlink twice (e.g.
   `link -> .`, `link/link/x`) as a loop (fail-closed); the Node resolver allows it.
 - **SSRF policy of `download_to_datasets` is best-effort**:

@@ -41,14 +41,6 @@ pub(crate) fn validate_run_id(run_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn runs_dir(root: &Path) -> PathBuf {
-    root.join("experiments").join("runs")
-}
-
-fn run_dir(root: &Path, run_id: &str) -> PathBuf {
-    runs_dir(root).join(run_id)
-}
-
 /// Files the UI is allowed to read back from a run dir. Keeps the read command
 /// from turning into an arbitrary-file-read primitive. Shared with the ssh
 /// mirror (ssh.rs) so local and remote expose exactly the same surface.
@@ -296,19 +288,59 @@ fn read_status(dir: &Path) -> String {
 }
 
 fn summarize(dir: &Path, run_id: &str) -> RunSummary {
-    let run_json = fs::read_to_string(dir.join("run.json")).unwrap_or_default();
-    let metrics_json = fs::read_to_string(dir.join("metrics.json")).unwrap_or_default();
-    let status_raw = fs::read_to_string(dir.join("status")).unwrap_or_default();
+    // R016 — refuse to read anything that is not inside `dir` after symlink
+    // resolution. An LLM-run script could plant `experiments/runs/<id>/run.json
+    // → /etc/passwd`; without this, list_training_runs would leak its
+    // contents into the UI summary.
+    let run_json = safe_read_text(dir, "run.json").unwrap_or_default();
+    let metrics_json = safe_read_text(dir, "metrics.json").unwrap_or_default();
+    let status_raw = safe_read_text(dir, "status").unwrap_or_default();
     // Keep only the epoch.end / run.done lines so a run with a huge per-batch
     // events.jsonl stays cheap to summarize (mirror of the ssh-side grep).
-    let events = fs::read_to_string(dir.join("events.jsonl"))
+    let events = safe_read_text(dir, "events.jsonl")
         .map(|s| filter_summary_events(&s))
         .unwrap_or_default();
     let alive = pid_of(dir).map(is_alive).unwrap_or(false);
-    let has_checkpoint = dir.join("checkpoints").join("best.pt").exists();
+    let has_checkpoint = safe_exists(dir.join("checkpoints").join("best.pt"), dir);
     RunSummary::from_parts(
         run_id, &run_json, &metrics_json, &events, &status_raw, alive, has_checkpoint,
     )
+}
+
+/// Read `dir/<name>` ONLY if the canonical path stays inside `dir`'s
+/// canonical path. Used by `summarize` so a planted symlink in the run dir
+/// can't redirect the listing summary outside the workspace.
+fn safe_read_text(dir: &Path, name: &str) -> Option<String> {
+    let candidate = dir.join(name);
+    match fs::symlink_metadata(&candidate) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink() {
+                return None;
+            }
+            if let Ok(real) = fs::canonicalize(&candidate) {
+                if real.parent().map(|p| p != dir).unwrap_or(true) {
+                    return None;
+                }
+                fs::read_to_string(&real).ok()
+            } else {
+                None
+            }
+        }
+        Err(_) => None,
+    }
+}
+
+fn safe_exists(candidate: PathBuf, dir: &Path) -> bool {
+    let Ok(meta) = fs::symlink_metadata(&candidate) else {
+        return false;
+    };
+    if meta.file_type().is_symlink() {
+        return false;
+    }
+    match fs::canonicalize(&candidate) {
+        Ok(real) => real.parent().map(|p| p == dir).unwrap_or(false),
+        Err(_) => false,
+    }
 }
 
 /// Drop everything but the epoch.end / run.done lines of an events.jsonl. These
@@ -324,10 +356,17 @@ pub(crate) fn filter_summary_events(raw: &str) -> String {
 #[tauri::command]
 pub fn list_training_runs(state: State<WorkspaceState>) -> Result<Vec<RunSummary>, String> {
     let root = current_root(&state)?;
-    let dir = runs_dir(&root);
+    // Resolve via the canonicalising resolver so a symlinked parent
+    // (experiments or experiments/runs) cannot redirect the walk out of the
+    // workspace (R016).
+    let dir = crate::resolve(&root, "experiments/runs")?;
     if !dir.exists() {
         return Ok(vec![]);
     }
+    let canonical_dir = match fs::canonicalize(&dir) {
+        Ok(c) => c,
+        Err(_) => return Ok(vec![]),
+    };
     let mut out: Vec<RunSummary> = Vec::new();
     for entry in fs::read_dir(&dir).map_err(|e| format!("read_dir {}: {e}", dir.display()))?.flatten() {
         let p = entry.path();
@@ -338,7 +377,18 @@ pub fn list_training_runs(state: State<WorkspaceState>) -> Result<Vec<RunSummary
         if name.starts_with('.') {
             continue;
         }
-        out.push(summarize(&p, &name));
+        // Skip entries that escape via symlink (their canonical path would
+        // land outside the canonical runs dir). R016: a malicious script
+        // could plant `experiments/runs/outside → /etc`; we must not feed
+        // those paths to summarize().
+        let entry_canonical = match fs::canonicalize(&p) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if !entry_canonical.starts_with(&canonical_dir) {
+            continue;
+        }
+        out.push(summarize(&entry_canonical, &name));
     }
     // run_id is timestamp-prefixed, so lexical-desc == chronological-newest-first.
     out.sort_by(|a, b| b.run_id.cmp(&a.run_id));
@@ -417,7 +467,7 @@ pub fn training_run_status(
 ) -> Result<RunStatus, String> {
     validate_run_id(&run_id)?;
     let root = current_root(&state)?;
-    let dir = run_dir(&root, &run_id);
+    let dir = crate::resolve(&root, &format!("experiments/runs/{run_id}"))?;
     let pid = pid_of(&dir);
     let alive = pid.map(is_alive).unwrap_or(false);
     let status = reconcile_status(&read_status(&dir), alive);
@@ -435,7 +485,7 @@ pub fn read_training_run_file(
         return Err(format!("file {name:?} is not readable from a run dir"));
     }
     let root = current_root(&state)?;
-    let p = run_dir(&root, &run_id).join(&name);
+    let p = crate::resolve(&root, &format!("experiments/runs/{run_id}/{name}"))?;
     if !p.exists() {
         return Ok(String::new());
     }
@@ -454,7 +504,9 @@ pub fn start_training_run(
 ) -> Result<(), String> {
     validate_run_id(&run_id)?;
     let root = current_root(&state)?;
-    let dir = run_dir(&root, &run_id);
+    // Resolve the run dir through the canonicalising resolver so a symlinked
+    // parent (e.g. experiments/runs → outside) cannot redirect the launch.
+    let dir = crate::resolve(&root, &format!("experiments/runs/{run_id}"))?;
     if dir.exists() {
         return Err(format!("run {run_id} already exists"));
     }
@@ -510,7 +562,7 @@ pub fn start_training_run(
 pub fn stop_training_run(state: State<WorkspaceState>, run_id: String) -> Result<(), String> {
     validate_run_id(&run_id)?;
     let root = current_root(&state)?;
-    let dir = run_dir(&root, &run_id);
+    let dir = crate::resolve(&root, &format!("experiments/runs/{run_id}"))?;
     if !dir.exists() {
         return Err(format!("run {run_id} not found"));
     }
@@ -562,13 +614,17 @@ pub fn promote_run_checkpoint(
     validate_run_id(&run_id)?;
     let file = sanitize_model_name(&dest_name)?;
     let root = current_root(&state)?;
-    let src = run_dir(&root, &run_id).join("checkpoints").join("best.pt");
+    let src = crate::resolve(&root, &format!("experiments/runs/{run_id}/checkpoints/best.pt"))?;
     if !src.exists() {
         return Err("this run has no checkpoints/best.pt to promote".into());
     }
-    let dest_dir = root.join("models").join("best");
-    fs::create_dir_all(&dest_dir).map_err(|e| format!("mkdir {}: {e}", dest_dir.display()))?;
-    let dest = dest_dir.join(&file);
+    // Resolve the destination so a symlink at models/best/<file>.pt
+    // (planted by an LLM-run script) cannot redirect the copy out of the
+    // workspace.
+    let dest = crate::resolve(&root, &format!("models/best/{file}"))?;
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
     fs::copy(&src, &dest).map_err(|e| format!("copy checkpoint: {e}"))?;
     Ok(format!("models/best/{file}"))
 }
@@ -577,7 +633,7 @@ pub fn promote_run_checkpoint(
 pub fn delete_training_run(state: State<WorkspaceState>, run_id: String) -> Result<(), String> {
     validate_run_id(&run_id)?;
     let root = current_root(&state)?;
-    let dir = run_dir(&root, &run_id);
+    let dir = crate::resolve(&root, &format!("experiments/runs/{run_id}"))?;
     if !dir.exists() {
         return Ok(());
     }

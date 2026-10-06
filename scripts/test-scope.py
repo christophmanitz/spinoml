@@ -497,12 +497,79 @@ def section_d() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────
+def section_e() -> None:
+    """Phase 50 — Rust writer ⇄ Python reader contract.
+
+    The committed fixture `src-tauri/tests/fixtures/scope.example.json` is the
+    schema the Rust `scope_file::write_roots` emits. We copy it (with the
+    placeholder paths repointed at temp dirs) into a private HOME and load
+    it through `scope.py`'s normal file loader, asserting mode `enforced`
+    with one root and one symlink target. A schema drift on either side
+    turns red.
+    """
+    print("\n\u2014 E. Rust writer ⇄ Python reader contract \u2014")
+    fixture_path = ROOT / "src-tauri" / "tests" / "fixtures" / "scope.example.json"
+    check("E fixture file present", fixture_path.is_file(), str(fixture_path))
+    raw = json.loads(fixture_path.read_text(encoding="utf-8"))
+    check("E fixture version 1", raw.get("version") == 1, str(raw))
+    check("E fixture roots is array", isinstance(raw.get("roots"), list))
+    check("E fixture symlink_targets is array", isinstance(raw.get("symlink_targets"), list))
+    # Schema parity: top-level keys are exactly version + roots + symlink_targets.
+    check("E fixture top-level keys exact",
+          set(raw.keys()) == {"version", "roots", "symlink_targets"},
+          str(sorted(raw.keys())))
+
+    tmp = Path(tempfile.mkdtemp(prefix="scope-E-"))
+    home = tmp / "home"
+    home.mkdir()
+    ws = tmp / "ws"
+    scratch = tmp / "scratch"
+    for d in (ws, scratch):
+        d.mkdir()
+    (ws / "inside.csv").write_text("a\n1\n", encoding="utf-8")
+    (scratch / "external.csv").write_text("b\n2\n", encoding="utf-8")
+
+    # Copy the fixture verbatim, then repoint the placeholders at temp dirs
+    # so scope.py's _normalize_root can realpath them. The SHAPE must not
+    # change — that is the schema drift the test guards.
+    scope_dir = home / ".cache" / "spinoml"
+    scope_dir.mkdir(parents=True)
+    sf = scope_dir / "scope.json"
+    repointed = {
+        "version": raw["version"],
+        "roots": [str(ws)],
+        "symlink_targets": [str(scratch)],
+    }
+    sf.write_text(json.dumps(repointed, indent=2), encoding="utf-8")
+    os.chmod(sf, 0o600)
+
+    scope.set_scope_for_tests(env={}, home=str(home), uid=os.getuid())
+    st = scope.scope_status()
+    check("E Rust-fixture mode enforced", st["mode"] == "enforced", str(st))
+    check("E Rust-fixture source file", st["source"] == "file", str(st))
+    check("E Rust-fixture root_count 1", st["root_count"] == 1, str(st))
+    check("E Rust-fixture symlink_target_count 1", st["symlink_target_count"] == 1, str(st))
+    check("E Rust-fixture no load_error", not st["load_error"], str(st))
+    # Both the root and the symlink target are usable.
+    resolved = scope.check_path(str(ws / "inside.csv"))
+    check("E Rust-fixture root usable", resolved == os.path.realpath(ws / "inside.csv"))
+    # Make a symlink that points outside the root, into the target — it must
+    # be allowed because the fixture declared the target.
+    link = ws / "into_scratch"
+    os.symlink(scratch / "external.csv", link)
+    resolved = scope.check_path(str(link))
+    check("E Rust-fixture symlink target usable",
+          resolved == os.path.realpath(scratch / "external.csv"))
+
+
+# ─────────────────────────────────────────────────────────────────────────
 def main() -> int:
     try:
         section_a()
         section_b()
         section_c()
         section_d()
+        section_e()
     finally:
         scope.set_scope_for_tests()
     print(f"\nscope-matrix: {PASS} pass, {FAIL} fail")

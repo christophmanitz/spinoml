@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{Manager, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 
+mod scope_file;
 mod ssh;
 mod pty;
 mod remote_sidecar;
@@ -185,7 +186,15 @@ fn resolve(root: &Path, relpath: &str) -> Result<PathBuf, String> {
             _ => return Err(format!("rejected path segment in {relpath}")),
         }
     }
-    Ok(root.join(rel))
+    // Validate that the JOINED path, after following symlinks, stays inside
+    // the workspace root or an allowed symlink target (R016). But return the
+    // LEXICAL `root.join(rel)` UNCHANGED: callers must act on the link itself,
+    // not its target. Returning the canonical path broke delete/rename of an
+    // allowed symlink (e.g. `datasets -> /work2/...`): deleting would remove
+    // the user's REAL dataset directory instead of the link.
+    let joined = root.join(rel);
+    scope_file::check_resolved(root, &joined)?;
+    Ok(joined)
 }
 
 pub(crate) fn current_root(state: &State<WorkspaceState>) -> Result<PathBuf, String> {
@@ -213,6 +222,11 @@ async fn pick_workspace_dir(app: tauri::AppHandle) -> Result<Option<String>, Str
     let buf = path
         .into_path()
         .map_err(|e| format!("path conversion: {e}"))?;
+    // Persist the new workspace root to the sidecar scope file BEFORE we
+    // accept it. A failure to write the scope file means the sidecars will
+    // run in unconfigured-open mode against this workspace; we refuse rather
+    // than silently leaving the user with a workspace the sidecar can't see.
+    scope_file::write_roots(&[buf.clone()])?;
     let state: State<WorkspaceState> = app.state();
     *state.root.lock().map_err(|e| e.to_string())? = Some(buf.clone());
     Ok(Some(buf.to_string_lossy().to_string()))
@@ -231,6 +245,12 @@ fn current_workspace_dir(state: State<WorkspaceState>) -> Option<String> {
 #[tauri::command]
 fn close_workspace_dir(state: State<WorkspaceState>) -> Result<(), String> {
     *state.root.lock().map_err(|e| e.to_string())? = None;
+    // Drop the local root from the scope file. A failure here is non-fatal
+    // (we are closing anyway; the next set_workspace_dir will overwrite the
+    // file), but we log so an operator notices a stale scope.
+    if let Err(e) = scope_file::clear_roots() {
+        eprintln!("[spinoml] failed to clear scope file on workspace close: {e}");
+    }
     Ok(())
 }
 
@@ -242,6 +262,9 @@ fn set_workspace_dir(state: State<WorkspaceState>, path: String) -> Result<Strin
     if !buf.is_dir() {
         return Err(format!("folder no longer exists: {path}"));
     }
+    // Same rationale as pick_workspace_dir: refuse if the sidecar can't see
+    // the workspace.
+    scope_file::write_roots(&[buf.clone()])?;
     *state.root.lock().map_err(|e| e.to_string())? = Some(buf.clone());
     Ok(buf.to_string_lossy().to_string())
 }
@@ -249,8 +272,24 @@ fn set_workspace_dir(state: State<WorkspaceState>, path: String) -> Result<Strin
 #[tauri::command]
 fn list_workspace(state: State<WorkspaceState>) -> Result<Vec<FsEntry>, String> {
     let root = current_root(&state)?;
+    list_workspace_impl(&root)
+}
+
+/// Pure listing helper (no Tauri `State`) so tests can exercise it directly.
+/// Walks the LEXICAL workspace tree; canonicalisation is used ONLY for the
+/// containment decision. A symlinked directory whose real target is an allowed
+/// symlink target (the common `datasets -> /work2/...` layout) is followed and
+/// listed under its lexical name. `rel` is always computed lexically from
+/// `root` — deriving it from the canonical target would fail `strip_prefix`
+/// for an allowed out-of-tree link and abort the whole listing. A visited set
+/// of canonical directory paths stops symlink cycles (`a -> .`, `a/b -> ..`).
+fn list_workspace_impl(root: &Path) -> Result<Vec<FsEntry>, String> {
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|e| format!("workspace root is not accessible: {e}"))?;
     let mut out: Vec<FsEntry> = Vec::new();
-    walk(&root, &root, &mut out)?;
+    let mut visited: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    visited.insert(canonical_root.clone());
+    walk(root, root, &canonical_root, &mut visited, &mut out)?;
     out.sort_by(|a, b| {
         a.is_dir
             .cmp(&b.is_dir)
@@ -260,7 +299,13 @@ fn list_workspace(state: State<WorkspaceState>) -> Result<Vec<FsEntry>, String> 
     Ok(out)
 }
 
-fn walk(root: &Path, dir: &Path, out: &mut Vec<FsEntry>) -> Result<(), String> {
+fn walk(
+    root: &Path,
+    dir: &Path,
+    canonical_root: &Path,
+    visited: &mut std::collections::HashSet<PathBuf>,
+    out: &mut Vec<FsEntry>,
+) -> Result<(), String> {
     let read = fs::read_dir(dir).map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
     for entry in read.flatten() {
         let p = entry.path();
@@ -268,21 +313,50 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<FsEntry>) -> Result<(), String> {
         if name.starts_with('.') {
             continue;
         }
+        // R016 — refuse to walk INTO anything whose canonical target is
+        // outside the workspace (or not an allowed symlink target). Without
+        // this, an LLM-run script could plant `datasets → /etc` and the
+        // explorer would expose /etc's contents.
+        let canonical_p = match fs::canonicalize(&p) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if !canonical_p.starts_with(canonical_root) && !is_in_symlink_targets(&canonical_p) {
+            continue;
+        }
+        // rel is LEXICAL (root-relative): never derived from the canonical
+        // target.
         let rel = p
             .strip_prefix(root)
             .map_err(|e| e.to_string())?
             .to_string_lossy()
             .replace('\\', "/");
-        let meta = entry.metadata().map_err(|e| e.to_string())?;
-        if meta.is_dir() {
+        // Decide "is a directory" from the resolved target (a symlinked dir
+        // has symlink_metadata().is_dir() == false).
+        let is_dir = fs::metadata(&canonical_p)
+            .map(|m| m.is_dir())
+            .unwrap_or(false);
+        if is_dir {
             out.push(FsEntry { name, relpath: rel.clone(), is_dir: true });
-            walk(root, &p, out)?;
+            // Cycle protection: recurse only into a canonical directory we
+            // have not already visited, so `a -> .` is listed once and never
+            // re-walked.
+            if visited.insert(canonical_p.clone()) {
+                walk(root, &p, canonical_root, visited, out)?;
+            }
         } else {
             // Everything visible. The frontend decides what's clickable.
             out.push(FsEntry { name, relpath: rel, is_dir: false });
         }
     }
     Ok(())
+}
+
+/// True if `p` is under any configured symlink target (env + scope file).
+fn is_in_symlink_targets(p: &Path) -> bool {
+    scope_file::allowed_roots_for_check()
+        .iter()
+        .any(|t| p.starts_with(t))
 }
 
 #[tauri::command]
@@ -306,19 +380,29 @@ fn write_workspace_file(
     fs::write(&full, content).map_err(|e| format!("write {}: {e}", full.display()))
 }
 
-#[tauri::command]
-fn delete_workspace_path(state: State<WorkspaceState>, relpath: String) -> Result<(), String> {
-    let root = current_root(&state)?;
-    let full = resolve(&root, &relpath)?;
-    if !full.starts_with(&root) {
-        return Err("refusing to delete outside workspace root".into());
-    }
-    let meta = fs::metadata(&full).map_err(|e| format!("stat {}: {e}", full.display()))?;
-    if meta.is_dir() {
+/// Delete a workspace path. Acts on the LEXICAL path so a symlink is removed
+/// as a link and never followed: `symlink_metadata` classifies the entry, and
+/// a symlink is always removed with `remove_file`, never `remove_dir_all`
+/// (which would delete the link TARGET's contents). `resolve()` validates
+/// containment first, so a link whose target escapes the workspace (and is not
+/// an allowed symlink target) is refused before anything is touched.
+fn delete_path_impl(root: &Path, relpath: &str) -> Result<(), String> {
+    let full = resolve(root, relpath)?;
+    let meta = fs::symlink_metadata(&full)
+        .map_err(|e| format!("stat {}: {e}", full.display()))?;
+    if meta.file_type().is_symlink() {
+        fs::remove_file(&full).map_err(|e| format!("rm {}: {e}", full.display()))
+    } else if meta.is_dir() {
         fs::remove_dir_all(&full).map_err(|e| format!("rmdir {}: {e}", full.display()))
     } else {
         fs::remove_file(&full).map_err(|e| format!("rm {}: {e}", full.display()))
     }
+}
+
+#[tauri::command]
+fn delete_workspace_path(state: State<WorkspaceState>, relpath: String) -> Result<(), String> {
+    let root = current_root(&state)?;
+    delete_path_impl(&root, &relpath)
 }
 
 #[tauri::command]
@@ -507,18 +591,40 @@ fn migrate_legacy_project(
         return Err("project already initialized; nothing to migrate".into());
     }
     ensure_subdirs(&root)?;
-    // Move root-level .spinoml and matching .py twins into models/.
+    // Move root-level .spinoml and matching .py twins into models/. Use
+    // symlink_metadata + canonicalize so a planted symlink at the workspace
+    // root (e.g. `evil.py → /etc/passwd`) cannot trick us into renaming the
+    // target into the workspace (R016).
     let models = root.join("models");
+    let canonical_root = fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
     if let Ok(rd) = fs::read_dir(&root) {
         for entry in rd.flatten() {
             let p = entry.path();
-            if !p.is_file() { continue; }
+            // Refuse symlinks entirely — a one-shot migration must not be
+            // a vector for moving arbitrary files into the workspace.
+            let meta = match fs::symlink_metadata(&p) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            // And refuse anything whose canonical path is outside the root
+            // (covers hardlinks pointing outside — fs::symlink_metadata
+            // returns is_symlink()=false for those).
+            let canonical_p = match fs::canonicalize(&p) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            if !canonical_p.starts_with(&canonical_root) {
+                continue;
+            }
             let name_os = entry.file_name();
             let fname = name_os.to_string_lossy().to_string();
             let lower = fname.to_lowercase();
             if lower.ends_with(".spinoml") || lower.ends_with(".py") {
                 let dest = models.join(&fname);
-                fs::rename(&p, &dest).map_err(|e| format!("move {fname}: {e}"))?;
+                fs::rename(&canonical_p, &dest).map_err(|e| format!("move {fname}: {e}"))?;
             }
         }
     }
@@ -577,7 +683,7 @@ fn read_note(state: State<WorkspaceState>, name: String) -> Result<String, Strin
     if name.contains('/') || name.contains('\\') {
         return Err("note name must be a plain filename".into());
     }
-    let p = root.join("notes").join(&name);
+    let p = resolve(&root, &format!("notes/{name}"))?;
     fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))
 }
 
@@ -587,9 +693,10 @@ fn write_note(state: State<WorkspaceState>, name: String, content: String) -> Re
     if name.contains('/') || name.contains('\\') {
         return Err("note name must be a plain filename".into());
     }
-    let dir = root.join("notes");
-    fs::create_dir_all(&dir).map_err(|e| format!("mkdir notes/: {e}"))?;
-    let p = dir.join(&name);
+    let p = resolve(&root, &format!("notes/{name}"))?;
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
     fs::write(&p, content).map_err(|e| format!("write {}: {e}", p.display()))
 }
 
@@ -600,9 +707,10 @@ fn append_note(state: State<WorkspaceState>, name: String, content: String) -> R
     if name.contains('/') || name.contains('\\') {
         return Err("note name must be a plain filename".into());
     }
-    let dir = root.join("notes");
-    fs::create_dir_all(&dir).map_err(|e| format!("mkdir notes/: {e}"))?;
-    let p = dir.join(&name);
+    let p = resolve(&root, &format!("notes/{name}"))?;
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
     let mut f = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -625,9 +733,10 @@ fn append_experiment(
     if filename.contains('/') || filename.contains('\\') {
         return Err("experiment filename must be a plain name".into());
     }
-    let dir = root.join("experiments");
-    fs::create_dir_all(&dir).map_err(|e| format!("mkdir experiments/: {e}"))?;
-    let p = dir.join(&filename);
+    let p = resolve(&root, &format!("experiments/{filename}"))?;
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
     let mut f = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -645,7 +754,7 @@ fn read_experiment(state: State<WorkspaceState>, filename: String) -> Result<Str
     if filename.contains('/') || filename.contains('\\') {
         return Err("experiment filename must be a plain name".into());
     }
-    let p = root.join("experiments").join(&filename);
+    let p = resolve(&root, &format!("experiments/{filename}"))?;
     if !p.exists() { return Ok(String::new()); }
     fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))
 }
@@ -662,10 +771,14 @@ struct DatasetEntry {
 #[tauri::command]
 fn list_datasets(state: State<WorkspaceState>) -> Result<Vec<DatasetEntry>, String> {
     let root = current_root(&state)?;
-    let dsdir = root.join("datasets");
+    // R016 — list under the canonical datasets dir so a symlinked datasets/
+    // (e.g. an attacker who got the LLM to symlink it elsewhere) cannot
+    // redirect the listing outside the workspace.
+    let dsdir = resolve(&root, "datasets")?;
     if !dsdir.exists() {
         fs::create_dir_all(&dsdir).map_err(|e| format!("mkdir datasets/: {e}"))?;
     }
+    let canonical_dsdir = fs::canonicalize(&dsdir).unwrap_or_else(|_| dsdir.clone());
     let mut out: Vec<DatasetEntry> = Vec::new();
     let read = fs::read_dir(&dsdir).map_err(|e| format!("read_dir {}: {e}", dsdir.display()))?;
     for entry in read.flatten() {
@@ -674,13 +787,21 @@ fn list_datasets(state: State<WorkspaceState>) -> Result<Vec<DatasetEntry>, Stri
         if name.starts_with('.') {
             continue;
         }
+        // Skip entries that escape the canonical datasets dir via symlink.
+        let entry_canonical = match fs::canonicalize(&p) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if !entry_canonical.starts_with(&canonical_dsdir) {
+            continue;
+        }
         let meta = entry.metadata().map_err(|e| e.to_string())?;
-        let size = if meta.is_file() { meta.len() } else { dir_size(&p).unwrap_or(0) };
+        let size = if meta.is_file() { meta.len() } else { dir_size(&entry_canonical).unwrap_or(0) };
         let rel = format!("datasets/{}", name);
         out.push(DatasetEntry {
             name,
             relpath: rel,
-            abspath: p.to_string_lossy().to_string(),
+            abspath: entry_canonical.to_string_lossy().to_string(),
             is_dir: meta.is_dir(),
             size_bytes: size,
         });
@@ -715,6 +836,19 @@ fn dataset_abspath(state: State<WorkspaceState>, relpath: String) -> Result<Stri
     Ok(full.to_string_lossy().to_string())
 }
 
+/// Rename a workspace path. `fs::rename` on a symlink moves the LINK itself,
+/// not its target; `resolve()` validates containment first and returns the
+/// lexical paths, so an allowed symlink (e.g. `datasets -> /work2/...`) is
+/// renamed without touching the real target directory.
+fn rename_path_impl(root: &Path, from_rel: &str, to_rel: &str) -> Result<(), String> {
+    let from = resolve(root, from_rel)?;
+    let to = resolve(root, to_rel)?;
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    fs::rename(&from, &to).map_err(|e| format!("rename: {e}"))
+}
+
 #[tauri::command]
 fn rename_workspace_path(
     state: State<WorkspaceState>,
@@ -722,12 +856,7 @@ fn rename_workspace_path(
     to_rel: String,
 ) -> Result<(), String> {
     let root = current_root(&state)?;
-    let from = resolve(&root, &from_rel)?;
-    let to = resolve(&root, &to_rel)?;
-    if let Some(parent) = to.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
-    }
-    fs::rename(&from, &to).map_err(|e| format!("rename: {e}"))
+    rename_path_impl(&root, &from_rel, &to_rel)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -880,4 +1009,341 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::resolve;
+
+    /// Build a fresh, isolated temp directory under std::env::temp_dir().
+    /// Each call returns a unique path (pid + nanos + counter), so parallel
+    /// test runners cannot collide on disk. Caller takes ownership; the
+    /// directory is not auto-cleaned (drop is explicit in each test).
+    fn unique_tempdir(label: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let p = std::env::temp_dir().join(format!(
+            "spinoml-resolve-test-{label}-{pid:x}-{nanos:x}-{n:x}"
+        ));
+        std::fs::create_dir_all(&p).expect("create temp dir");
+        p
+    }
+
+    #[test]
+    fn resolve_accepts_a_normal_relative_path() {
+        let root = unique_tempdir("normal");
+        let full = resolve(&root, "datasets/data.csv").unwrap();
+        assert!(full.starts_with(root.canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn resolve_rejects_dot_dot_lexically() {
+        let root = unique_tempdir("dotdot");
+        assert!(resolve(&root, "../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn resolve_rejects_absolute_lexically() {
+        let root = unique_tempdir("abs");
+        assert!(resolve(&root, "/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn resolve_accepts_new_file_in_existing_subdir() {
+        let root = unique_tempdir("newfile");
+        let full = resolve(&root, "models/best/foo.pt").unwrap();
+        // Canonical root + missing tail → canonical path under the root.
+        let real_root = root.canonicalize().unwrap();
+        assert!(full.starts_with(&real_root));
+        assert!(full.ends_with("models/best/foo.pt"));
+    }
+
+    #[test]
+    fn resolve_rejects_symlink_to_outside_when_no_symlink_target_configured() {
+        let root = unique_tempdir("symlink-out");
+        let outside = unique_tempdir("symlink-out-side");
+        std::fs::write(outside.join("secret"), "x").unwrap();
+        std::os::unix::fs::symlink(outside.join("secret"), root.join("link")).unwrap();
+        let res = resolve(&root, "link");
+        assert!(res.is_err(), "symlink escape must be rejected: {:?}", res);
+    }
+}
+
+/// R016 regression tests for the pure path helpers (`delete_path_impl`,
+/// `rename_path_impl`, `list_workspace_impl`). These run against real temp
+/// dirs and drive the actual scope checks. All env mutation happens under the
+/// shared `scope_file::ENV_LOCK` so these tests never stomp on the scope-file
+/// tests (or each other) when cargo runs them in parallel.
+#[cfg(test)]
+mod path_impl_tests {
+    use super::{delete_path_impl, list_workspace_impl, rename_path_impl, resolve};
+    use crate::scope_file::ENV_LOCK;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::MutexGuard;
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// Private HOME + env override for the duration of one test, serialised on
+    /// the shared ENV_LOCK. Nothing touches the developer's real HOME.
+    struct TestEnv {
+        dir: PathBuf,
+        prev_home: Option<std::ffi::OsString>,
+        prev_xdg: Option<std::ffi::OsString>,
+        prev_targets: Option<std::ffi::OsString>,
+        _guard: MutexGuard<'static, ()>,
+    }
+
+    impl TestEnv {
+        fn new() -> Self {
+            let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let pid = std::process::id();
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!(
+                "spinoml-path-impl-test-{pid:x}-{nanos:x}-{n:x}"
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            let prev_home = std::env::var_os("HOME");
+            let prev_xdg = std::env::var_os("XDG_RUNTIME_DIR");
+            let prev_targets = std::env::var_os("SPINOML_SYMLINK_TARGETS");
+            std::env::set_var("HOME", &dir);
+            std::env::remove_var("XDG_RUNTIME_DIR");
+            std::env::remove_var("SPINOML_SYMLINK_TARGETS");
+            Self { dir, prev_home, prev_xdg, prev_targets, _guard: guard }
+        }
+
+        fn work(&self) -> PathBuf {
+            self.dir.join("ws")
+        }
+
+        fn target(&self) -> PathBuf {
+            self.dir.join("target")
+        }
+
+        /// Configure `t` as an allowed symlink target via the env var.
+        fn allow(&self, t: &Path) {
+            std::env::set_var("SPINOML_SYMLINK_TARGETS", t.to_string_lossy().to_string());
+        }
+    }
+
+    impl Drop for TestEnv {
+        fn drop(&mut self) {
+            match &self.prev_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+            match &self.prev_xdg {
+                Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
+                None => std::env::remove_var("XDG_RUNTIME_DIR"),
+            }
+            match &self.prev_targets {
+                Some(v) => std::env::set_var("SPINOML_SYMLINK_TARGETS", v),
+                None => std::env::remove_var("SPINOML_SYMLINK_TARGETS"),
+            }
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn mkdir(p: &Path) {
+        std::fs::create_dir_all(p).unwrap();
+    }
+    fn write(p: &Path, s: &str) {
+        std::fs::write(p, s).unwrap();
+    }
+    fn symlink(src: &Path, dst: &Path) {
+        std::os::unix::fs::symlink(src, dst).unwrap();
+    }
+    fn link_exists(p: &Path) -> bool {
+        std::fs::symlink_metadata(p).is_ok()
+    }
+
+    // ── Defect 2: delete/rename act on the LINK, not its target ────────────
+
+    #[test]
+    fn delete_symlink_to_allowed_target_removes_link_not_target() {
+        let env = TestEnv::new();
+        let ws = env.work();
+        mkdir(&ws);
+        let target = env.target();
+        mkdir(&target);
+        write(&target.join("data.csv"), "a,b\n1,2\n");
+        symlink(&target, &ws.join("datasets"));
+        env.allow(&target);
+
+        delete_path_impl(&ws, "datasets").unwrap();
+
+        assert!(!link_exists(&ws.join("datasets")), "the link must be gone");
+        assert!(target.is_dir(), "the real target dir must survive");
+        assert!(target.join("data.csv").is_file(), "the target files must survive");
+    }
+
+    #[test]
+    fn delete_regular_dir_and_file_still_works() {
+        let env = TestEnv::new();
+        let ws = env.work();
+        mkdir(&ws.join("sub"));
+        write(&ws.join("sub/inner.txt"), "x");
+        write(&ws.join("f.txt"), "y");
+
+        delete_path_impl(&ws, "sub").unwrap();
+        assert!(!link_exists(&ws.join("sub")), "regular dir must be deleted");
+        delete_path_impl(&ws, "f.txt").unwrap();
+        assert!(!link_exists(&ws.join("f.txt")), "regular file must be deleted");
+    }
+
+    #[test]
+    fn delete_symlink_to_escaping_target_rejected_nothing_deleted() {
+        let env = TestEnv::new();
+        let ws = env.work();
+        mkdir(&ws);
+        let outside = env.dir.join("outside");
+        mkdir(&outside);
+        write(&outside.join("secret.txt"), "x");
+        symlink(&outside, &ws.join("evil"));
+        // No symlink target configured → the escape must be rejected.
+        let r = delete_path_impl(&ws, "evil");
+        assert!(r.is_err(), "escaping link must be rejected: {r:?}");
+        assert!(link_exists(&ws.join("evil")), "the link must still be there");
+        assert!(outside.join("secret.txt").is_file(), "outside data must be intact");
+    }
+
+    #[test]
+    fn rename_symlink_moves_link_not_target() {
+        let env = TestEnv::new();
+        let ws = env.work();
+        mkdir(&ws);
+        let target = env.target();
+        mkdir(&target);
+        write(&target.join("data.csv"), "a\n1\n");
+        symlink(&target, &ws.join("datasets"));
+        env.allow(&target);
+
+        rename_path_impl(&ws, "datasets", "datasets2").unwrap();
+
+        assert!(!link_exists(&ws.join("datasets")), "old link gone");
+        let meta = std::fs::symlink_metadata(ws.join("datasets2")).unwrap();
+        assert!(meta.file_type().is_symlink(), "new path must be the symlink");
+        assert!(target.is_dir(), "target dir survives");
+        assert!(target.join("data.csv").is_file(), "target file survives");
+    }
+
+    #[test]
+    fn resolve_through_allowed_symlink_returns_lexical_path_read_write() {
+        let env = TestEnv::new();
+        let ws = env.work();
+        mkdir(&ws);
+        let target = env.target();
+        mkdir(&target);
+        symlink(&target, &ws.join("datasets"));
+        env.allow(&target);
+
+        let p = resolve(&ws, "datasets/new.csv").unwrap();
+        assert_eq!(p, ws.join("datasets/new.csv"), "resolve must return the LEXICAL path");
+        // Reading/writing the lexical path goes through the link to the target.
+        write(&p, "hello");
+        assert_eq!(std::fs::read_to_string(target.join("new.csv")).unwrap(), "hello");
+    }
+
+    // ── Defect 3: listing follows allowed links, lexical relpaths, cycles ──
+
+    #[test]
+    fn list_workspace_lists_allowed_symlink_target_with_lexical_relpaths() {
+        let env = TestEnv::new();
+        let ws = env.work();
+        mkdir(&ws);
+        write(&ws.join("readme.txt"), "x");
+        let target = env.target();
+        mkdir(&target);
+        write(&target.join("data.csv"), "a\n1\n");
+        symlink(&target, &ws.join("datasets"));
+        env.allow(&target);
+
+        let entries = list_workspace_impl(&ws).unwrap();
+        let rels: Vec<&str> = entries.iter().map(|e| e.relpath.as_str()).collect();
+        assert!(rels.contains(&"datasets"), "missing datasets dir: {rels:?}");
+        assert!(rels.contains(&"datasets/data.csv"), "missing linked file: {rels:?}");
+        assert!(
+            rels.iter().all(|r| !r.contains("target")),
+            "relpaths must be lexical, not canonical: {rels:?}"
+        );
+    }
+
+    #[test]
+    fn list_workspace_omits_escaping_non_allowed_link() {
+        let env = TestEnv::new();
+        let ws = env.work();
+        mkdir(&ws);
+        write(&ws.join("ok.txt"), "x");
+        let outside = env.dir.join("outside");
+        mkdir(&outside);
+        write(&outside.join("secret.csv"), "x");
+        symlink(&outside, &ws.join("evil"));
+
+        let entries = list_workspace_impl(&ws).unwrap();
+        let rels: Vec<&str> = entries.iter().map(|e| e.relpath.as_str()).collect();
+        assert!(rels.contains(&"ok.txt"));
+        assert!(!rels.contains(&"evil"), "escaping link must be omitted: {rels:?}");
+        assert!(!rels.iter().any(|r| r.starts_with("evil/")), "{rels:?}");
+    }
+
+    #[test]
+    fn list_workspace_terminates_on_symlink_cycle_lists_each_file_once() {
+        let env = TestEnv::new();
+        let ws = env.work();
+        mkdir(&ws);
+        write(&ws.join("real.txt"), "x");
+        // self -> . (workspace root) and self2 -> self: a 2-cycle.
+        symlink(&ws, &ws.join("self"));
+        symlink(&ws.join("self"), &ws.join("self2"));
+
+        let entries = list_workspace_impl(&ws).unwrap();
+        let real_count = entries.iter().filter(|e| e.relpath == "real.txt").count();
+        assert_eq!(real_count, 1, "each real file must be listed once (found {real_count})");
+        let rels: Vec<&str> = entries.iter().map(|e| e.relpath.as_str()).collect();
+        assert!(rels.contains(&"self"), "{rels:?}");
+        assert!(rels.contains(&"self2"), "{rels:?}");
+    }
+
+    #[test]
+    fn list_workspace_skips_hidden_entries() {
+        let env = TestEnv::new();
+        let ws = env.work();
+        mkdir(&ws);
+        write(&ws.join("visible.txt"), "x");
+        write(&ws.join(".hidden"), "x");
+        mkdir(&ws.join(".hiddendir"));
+        write(&ws.join(".hiddendir/deep.txt"), "x");
+
+        let entries = list_workspace_impl(&ws).unwrap();
+        let rels: Vec<&str> = entries.iter().map(|e| e.relpath.as_str()).collect();
+        assert!(rels.contains(&"visible.txt"), "{rels:?}");
+        assert!(
+            rels.iter().all(|r| !r.starts_with('.')),
+            "hidden entries must be skipped: {rels:?}"
+        );
+    }
+
+    #[test]
+    fn list_workspace_preserves_sort_order() {
+        let env = TestEnv::new();
+        let ws = env.work();
+        mkdir(&ws.join("adir"));
+        mkdir(&ws.join("zdir"));
+        write(&ws.join("bfile.txt"), "x");
+        write(&ws.join("afile.txt"), "x");
+
+        let entries = list_workspace_impl(&ws).unwrap();
+        let rels: Vec<&str> = entries.iter().map(|e| e.relpath.as_str()).collect();
+        assert_eq!(rels, vec!["adir", "zdir", "afile.txt", "bfile.txt"], "{rels:?}");
+    }
 }

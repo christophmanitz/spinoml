@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "roots": [
+    "/ws"
+  ],
+  "symlink_targets": [
+    "/scratch/data"
+  ]
+}

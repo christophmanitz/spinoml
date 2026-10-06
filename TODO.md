@@ -2724,6 +2724,22 @@ where the application expects paths to remain inside a workspace/dataset directo
 > Scoping does not protect the exec endpoints (`/infer`, smoke, activations run model `code`)
 > — that is the sidecar token (Phase 77/78). Rust `resolve()` is still lexical (R016, LIMITATIONS).
 
+> **2026-10-06 — Rust half implemented (R016).** `src-tauri/src/scope_file.rs`: the shell writes
+> `scope.json` (atomic, 0600, parent 0700, canonical roots, `symlink_targets` + unknown keys preserved,
+> an untrusted existing file never trusted) whenever the local workspace is picked/opened and clears the
+> roots on close, so the managed sidecars switch from `unconfigured-open` to `enforced` as soon as a
+> workspace exists (before that they stay open — `SPINOML_REQUIRE_SCOPE` is deliberately not enabled
+> because the GUI flows could not be tested here). `resolve()` now validates the FULLY RESOLVED path
+> against the canonical root + configured symlink targets (`check_resolved`; dangling symlinks, loops
+> and symlinks to outside are rejected; the lexical path is returned so delete/rename act on a symlink
+> itself, never on the real dataset directory behind `datasets -> /work2/...`). `list_workspace`
+> follows allowed out-of-tree links with cycle protection, `training.rs` run/checkpoint paths go through
+> the same check. Review found and had fixed: a dangling-symlink escape, delete/rename acting on the
+> symlink TARGET, `list_workspace` aborting for allowed out-of-tree links, and an unchecked trust
+> predicate when reading `symlink_targets`. Verified: `cargo test` 86, `test:scope` 100 (new golden
+> fixture shared with the Rust writer test). Not verified: the real GUI; Windows/macOS (unix-only code
+> returns an error there).
+
 ---
 
 # 48. PHASE 47 – UNSAFE DESERIALIZATION

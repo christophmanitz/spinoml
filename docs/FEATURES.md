@@ -363,6 +363,10 @@ canvas) and the blocked training launch open the dialog via
   restriction, warning — the local app today) | `unconfigured-closed` (`SPINOML_REQUIRE_SCOPE=1`).
   Errors: `SCOPE_DENIED`, `PATH_SYMLINK_OUTSIDE`, `SCOPE_UNCONFIGURED`, `PATH_INVALID`, each with a
   one-line fix. Manifests/table cells that point outside are refused the same way.
+  The Rust shell writes this file itself (`src-tauri/src/scope_file.rs`) whenever a local workspace is
+  picked/opened (and clears the roots on close), so a workspace turns the managed sidecars `enforced`;
+  the Rust file commands check the fully resolved path the same way (symlinks out of the workspace need
+  an entry in `symlink_targets`).
 - **Safe `.pt` loading** (`sidecar-torch/safe_load.py`, embedded block in `training_template.py`):
   `weights_only=True` + PyG/numpy allow-list; a file needing arbitrary unpickling is refused with
   `UNSAFE_PICKLE` (datasets), a note (activations) or a failed run (trainer). Escape hatch for
@@ -415,6 +419,7 @@ canvas) and the blocked training launch open the dialog via
 
 ## Changelog (append one dated line per feature; newest first)
 
+- 2026-10-06 — **Scope file written by the app + symlink-aware Rust FS (R016)**: opening a local workspace now enforces the sidecar path scope (`src-tauri/src/scope_file.rs` writes `scope.json`); `resolve()` rejects escaping/dangling symlinks and delete/rename act on a link, never its target; `list_workspace` follows allowed out-of-tree links with cycle protection (see §8d).
 - 2026-10-06 — **Python silent-exception audit (Phase 50)**: `npm run verify:silent-except-py` fails any undocumented swallowing `except` in `sidecar-torch/*.py`; resume records `rng_restore` per random stream; a status file that cannot be read, an empty training loader and a corrupt manifest no longer produce false `done`/`resumable` (see `docs/engineering/SILENT_EXCEPTIONS.md`).
 - 2026-10-06 — **Sidecar authentication (Phase 77/78)**: per-launch token + Host/Origin allow-list on both sidecars (no more `CORS *`), `sidecarFetch` wrapper with an `auth failed` UI state, per-session remote token over ssh stdin, per-turn MCP bridge secret, random ask/request ids; also fixes the remote deploy that shipped only 2 of the sidecar's files (see §8e, `docs/engineering/SIDECAR_AUTH.md`).
 - 2026-10-06 — **Test infrastructure (Phase 67–72)**: `npm run suites` / `npm run ci` — one registry of 54 suites by test-pyramid category with hard per-suite timeouts, scrubbed environment (no API keys/ssh agent), port preflight, scoped leak detection and honest PASS/FAIL/SKIPPED/BLOCKED/TIMEOUT statuses; `npm run typecheck:scripts`; `.github/workflows/ci.yml` (defined, not yet run on GitHub); pinned `sidecar-torch/requirements.txt`.
