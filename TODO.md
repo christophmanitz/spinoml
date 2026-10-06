@@ -3195,6 +3195,14 @@ Predicted shape == actual shape
 Invalid mutation → no graph corruption
 ```
 
+> **2026-10-06 — implemented.** `npm run test:property` (seeded, `PROPERTY_SEED`/`PROPERTY_N`, ~9 s) checks the
+> properties on generated graphs: valid graph → accepted; generated code executes (forward AND backward, finite
+> gradients for every parameter); predicted shape and parameter count == an INDEPENDENT oracle (the generator
+> tracks tensor shapes and counts by hand — Linear in·out+out, Conv2d out·in·k²+out, BatchNorm 2F, Embedding v·d —
+> and never calls the app's inference); same graph → identical code (3×); save → load → generate identical.
+> `npm run test:fuzz` covers “invalid graph → rejected, no corruption” (Phase 66). Mutation-checked: skewing the
+> MLP oracle made `test:property` fail with the exact shape, a no-op `cycle` operator was flagged by `test:fuzz`.
+
 ---
 
 # 66. PHASE 65 – RANDOM GRAPH TESTING
@@ -3220,6 +3228,14 @@ Backward where applicable
 ```
 
 Do not generate arbitrary impossible graphs and expect all of them to be valid.
+
+> **2026-10-06 — implemented for six families.** 200 random VALID graphs per run (seed 1234): MLP stacks
+> (optional Dropout/BatchNorm1d), CNN (Conv2d kernels 1/3/5, stride, BatchNorm2d, MaxPool2d, Flatten), residual
+> (Add skip), branch+Concat, multi-input (2–3 Inputs merged), sequence (int64 → Embedding → Flatten → Linear).
+> All 200 pass the python execution/shape/param/gradient checks; 40 (spread over the families) also go through the
+> real torch sidecar `/infer` with the app's `inferShapes`: `n_params`, output shape and per-attribute shapes equal
+> shapes captured by independent forward hooks. Not covered: attention, recurrent, GNN, 1-D/3-D convolutions and
+> other pooling layers (LIMITATIONS).
 
 ---
 
@@ -3253,6 +3269,19 @@ Memory leak
 Silent acceptance
 Incorrect model
 ```
+
+> **2026-10-06 — implemented; found and fixed a real bug.** `npm run test:fuzz` applies 28 mutation operators to
+> valid graphs (948 mutants/run): structural (dangling node, unknown edge endpoints, duplicate node id, unknown layer,
+> self-loop, cycle, zero/negative dims), coerced (NaN/Infinity/string/object/out-of-range select), load-reject (null
+> required param), raw-structural (duplicate edge id, empty / `__proto__` / `constructor` / unicode / very long ids),
+> semantic (wrong `in_features`, huge dimension, bad reshape count, conv kernel larger than input, Concat/Add shape
+> mismatch) and a 10 000-node valid-chain stress. Every structural mutant must be rejected by `validateGraphState`,
+> `loadSnapshot` must return false leaving the store state deep-equal to before, `generate` must not throw; every
+> semantic mutant must come back from the real sidecar as a STRUCTURED error that `verificationFromInferResult`
+> classifies `invalid` (never valid, never unknown) with the sidecar still healthy. **Finding:** `validateGraphState`
+> threw “Maximum call stack size exceeded” on a valid 10 000-node chain (recursive cycle DFS in
+> `src/canvas/invariants.ts`) — a hostile or large imported `.spinoml` could crash the loader. Fixed with an
+> iterative DFS; `wouldCreateCycle` (BFS) and `generate` were probed up to 30 000 nodes (1.2 s) and are fine.
 
 ---
 

@@ -48,6 +48,8 @@
     "test:verifier": "tsx scripts/test-verifier.ts",
     "test:races": "tsx scripts/test-races.ts",
     "test:robustness": "tsx scripts/test-sidecar-robustness.ts",
+    "test:property": "tsx scripts/test-property.ts",
+    "test:fuzz": "tsx scripts/test-fuzz.ts",
     "test:deps-policy": "python scripts/test-deps-policy.py",
     "test:run-script": "python scripts/test-run-script.py",
     "test:datasets": "python scripts/test-datasets.py",

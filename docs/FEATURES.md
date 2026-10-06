@@ -382,6 +382,8 @@ canvas) and the blocked training launch open the dialog via
 
 ## Changelog (append one dated line per feature; newest first)
 
+- 2026-10-06 — **Property, random-graph and fuzz tests (Phase 64–66)**: `npm run test:property` (200 seeded random valid graphs over 6 families → accepted, code runs forward+backward, shapes/param counts equal an independent oracle, 40 via the real sidecar vs forward hooks) and `npm run test:fuzz` (948 invalid mutants/run: rejected cleanly, store unchanged, semantic errors come back structured and classified `invalid`). Found and fixed: `validateGraphState` stack overflow on a 10 000-node chain (now iterative).
+
 - 2026-10-06 — **Run manifest + git state + canonical hashes (Phase 58–63)**: every run writes `manifest.json` (`spinoml.run-manifest/1`: experiment id, git commit/branch/dirty files/untracked count, hashes incl. `config_identity_sha256`, seed, software incl. torch_geometric + OS, hardware, notes) atomically at start and at every terminal state; `reproducible_from_git` is true only for a known commit with no modified tracked file. See `docs/engineering/REPRODUCIBILITY.md`. `npm run verify:manifest` (76).
 - 2026-10-06 — **Silent-exception audit, Node sidecar (Phase 50)**: guard scans `sidecar-llm/*.mjs` too; 10 hidden failures became explicit tool errors (notes/list/read probes, run.json/metrics.json readers, `slurm_status`, model listing, mcp-bridge).
 

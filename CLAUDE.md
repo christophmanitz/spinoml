@@ -268,6 +268,12 @@ npm run verify:code-trust-wiring    # untrusted code never reaches /infer, smoke
 npm run test:deps-policy            # pip spec policy   (run inside the conda env)
 npm run test:run-script             # torch /run_script relpath policy (inside the conda env)
 npm run verify:paths                # Node symlink-aware path containment (48)
+npm run verify:reference            # generated model == hand-written PyTorch (params/forward/loss/grads)
+npm run verify:reference-train      # reference experiments through the REAL trainer (inside the conda env)
+npm run verify:manifest             # manifest.json + git state + config identity (inside the conda env)
+npm run test:property               # 200 random valid graphs vs an independent oracle (inside the conda env)
+npm run test:fuzz                   # 948 invalid mutants must be rejected cleanly (inside the conda env)
+npm run verify:silent-catch         # no undocumented swallowing catch in src/ or sidecar-llm/
 npm run test:scope                  # Python scope + hostile manifests + real HTTP (inside the conda env)
 npm run test:safe-load              # real malicious-pickle attempts (inside the conda env)
 npm run verify:opencode             # LLM sidecar must be up; asserts /opencode/models

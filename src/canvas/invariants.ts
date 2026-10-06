@@ -189,18 +189,32 @@ export function validateGraphState(nodes: LayerNode[], edges: Edge[]): GraphVali
     }
     const WHITE = 0, GREY = 1, BLACK = 2
     const color = new Map<string, number>(nodes.map((n) => [n.id, WHITE]))
-    const visit = (id: string): boolean => {
-      color.set(id, GREY)
-      for (const t of adj.get(id) ?? []) {
-        const c = color.get(t) ?? WHITE
-        if (c === GREY) return true // back edge
-        if (c === WHITE && visit(t)) return true
-      }
-      color.set(id, BLACK)
-      return false
-    }
+    // ITERATIVE depth-first search (explicit stack): a long valid chain — or a
+    // hostile imported file — must never overflow the call stack (found by the
+    // phase 66 fuzz test: a 10 000-node chain crashed the recursive version).
     let cyclic = false
-    for (const n of nodes) if (color.get(n.id) === WHITE && visit(n.id)) { cyclic = true; break }
+    for (const start of nodes) {
+      if (cyclic) break
+      if (color.get(start.id) !== WHITE) continue
+      const stack: { id: string; next: number }[] = [{ id: start.id, next: 0 }]
+      color.set(start.id, GREY)
+      while (stack.length > 0) {
+        const frame = stack[stack.length - 1]
+        const targets = adj.get(frame.id) ?? []
+        if (frame.next >= targets.length) {
+          color.set(frame.id, BLACK)
+          stack.pop()
+          continue
+        }
+        const t = targets[frame.next++]
+        const c = color.get(t) ?? WHITE
+        if (c === GREY) { cyclic = true; break } // back edge
+        if (c === WHITE) {
+          color.set(t, GREY)
+          stack.push({ id: t, next: 0 })
+        }
+      }
+    }
     if (cyclic) issues.push(err('cycle', 'graph contains a directed cycle (DAG required for codegen)', {}))
   }
 
