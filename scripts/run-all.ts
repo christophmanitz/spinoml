@@ -629,15 +629,25 @@ async function runOne(suite: Suite, caps: Capabilities, opts: { pythonOnly: bool
 
   // post-run leak detection: only processes that (a) did not exist before the suite and
   // (b) live in the suite's own process group / session count as leaked — and only those are killed.
-  const leaked = listProcs().filter((p) => !procsBefore.has(p.pid) && suitePgid > 0 && (p.pgid === suitePgid || p.sid === suitePgid))
+  // A sidecar that was just sent SIGTERM is legitimately still shutting down for a moment (Phase 13
+  // handlers reap children first), so give such processes a short grace before calling them leaked.
+  const findLeaked = () =>
+    listProcs().filter((p) => !procsBefore.has(p.pid) && suitePgid > 0 && (p.pgid === suitePgid || p.sid === suitePgid))
+  // A port counts as leaked only if it was free before this suite and busy after it.
+  const findBusy = async () =>
+    (await portsFree()).filter((p) => !p.free && portsBefore.find((b) => b.port === p.port)?.free === true)
+  let leaked = findLeaked()
+  let busy = await findBusy()
+  for (let i = 0; i < 40 && (leaked.length > 0 || busy.length > 0); i++) {
+    await new Promise((r) => setTimeout(r, 100))
+    leaked = findLeaked()
+    busy = await findBusy()
+  }
   if (leaked.length > 0) {
     base.status = 'FAIL'
     base.notes.push(`leaked process(es): ${leaked.map((p) => `${p.pid} (${p.args.slice(0, 60)})`).join(', ')}`)
     for (const p of leaked) await killPid(p.pid)
   }
-  // A port counts as leaked only if it was free before this suite and busy after it.
-  const ports = await portsFree()
-  const busy = ports.filter((p) => !p.free && portsBefore.find((b) => b.port === p.port)?.free === true)
   if (busy.length > 0) {
     base.status = 'FAIL'
     base.notes.push(`leaked port(s): ${busy.map((p) => p.port).join(', ')}`)

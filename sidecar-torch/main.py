@@ -1372,7 +1372,9 @@ def main() -> None:
     signal.signal(signal.SIGINT, _on_signal)
 
     try:
-        srv.serve_forever()
+        # poll_interval: serve_forever only notices shutdown() between polls (default 0.5 s);
+        # a short interval keeps SIGTERM → exit well under a second.
+        srv.serve_forever(poll_interval=0.1)
     finally:
         try:
             srv.server_close()
