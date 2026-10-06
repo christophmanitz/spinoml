@@ -120,3 +120,66 @@ error/unknown value the UI renders.
   `LayerExplain` runs, `chat/client` SSE, `datasets/store` history,
   `EvalRunModal` source inspect).
 - Evidence of the pre-fix scan: `docs/engineering/evidence/phase50-ts-before.txt`.
+
+# Node sidecar (`sidecar-llm/*.mjs`)
+
+The same guard and the same rules are applied to the Node LLM sidecar
+(`sidecar-llm/main.mjs`, `sidecar-llm/mcp-bridge.mjs`; the pure helpers
+`shell-safety.mjs` / `path-scope.mjs` are out of scope). A swallow here is
+acceptable only when it cannot make a **tool result** or the **chat** claim
+something untrue — the model reads these results as fact, so a false empty list
+("no runs", "no notes", "no models") or an invented value is a hidden failure.
+
+## Allow-list — Node sidecar swallowing sites (all EXPECTED)
+
+| Location | Pattern | Class | Reason (why the swallow cannot lie) | Action |
+|---|---|---|---|---|
+| `sidecar-llm/main.mjs:512` | `catch { return false }` | EXPECTED | `wsPathExists`: an absent file feeds an explicit "does not exist" tool error, never a write claim. | keep |
+| `sidecar-llm/main.mjs:1623` | `catch { return false }` | EXPECTED | `confirmContinue`: an unanswerable continue-prompt stops the turn; no tool result or artifact is affected. | keep |
+| `sidecar-llm/main.mjs:559` | `catch {}` | EXPECTED | `onChunk` listener: a throwing consumer must not break the run; stdout/stderr are still captured and returned. | keep |
+| `sidecar-llm/main.mjs:567` | `catch {}` | EXPECTED | `spawnCapture` timeout: SIGTERM on an already-exited child is pure cleanup. | keep |
+| `sidecar-llm/main.mjs:568` | `catch {}` | EXPECTED | `spawnCapture` timeout: the SIGKILL backstop on an already-exited child is pure cleanup. | keep |
+| `sidecar-llm/main.mjs:1485` | `catch {}` | EXPECTED | `run_script` confirm preview: a failed read shows the prompt without a preview, an explicit state. | keep |
+| `sidecar-llm/main.mjs:1712` | `catch {}` | EXPECTED | OpenAI tool-call `JSON.parse`: malformed model args become `{}` and schema validation returns an explicit tool error. | keep |
+| `sidecar-llm/main.mjs:1887` | `catch {}` | EXPECTED | OpenCode `killHard`: SIGTERM on a possibly-dead child is best-effort cleanup. | keep |
+| `sidecar-llm/main.mjs:1889` | `catch {}` | EXPECTED | OpenCode `killHard`: the SIGKILL backstop is best-effort cleanup. | keep |
+| `sidecar-llm/main.mjs:1981` | `.catch(() => {})` | EXPECTED | OpenCode close: dropping the disposable temp session dir is best-effort cleanup. | keep |
+| `sidecar-llm/main.mjs:1993` | `.catch(() => {})` | EXPECTED | OpenCode error path: dropping the disposable temp session dir is best-effort cleanup. | keep |
+| `sidecar-llm/main.mjs:2354` | `catch {}` | EXPECTED | SSE `emit`: a write after the client disconnected has no reader left to mislead. | keep |
+| `sidecar-llm/main.mjs:2365` | `catch {}` | EXPECTED | `setNoDelay` on a non-TCP socket: the heartbeat still works and no result is claimed. | keep |
+| `sidecar-llm/main.mjs:2367` | `catch {}` | EXPECTED | SSE heartbeat write: a write after the client disconnected has no reader left to mislead. | keep |
+| `sidecar-llm/main.mjs:2416` | `catch {}` | EXPECTED | SSE action-pump heartbeat write: a write after the client disconnected has no reader left to mislead. | keep |
+| `sidecar-llm/main.mjs:2601` | `catch {}` | EXPECTED | Final error frame when the client is already gone; already inside the explicit error path. | keep |
+| `sidecar-llm/mcp-bridge.mjs:48` | `.catch(() => null)` | EXPECTED | A non-JSON sidecar body is turned into an explicit HTTP error just below, not a silent success. | keep |
+
+## Fixed hidden failures (no longer swallowing)
+
+| Location (before) | Was | Now |
+|---|---|---|
+| `sidecar-llm/main.mjs` `notesList` local readdir | `.catch(() => [])` → "no notes" on an unreadable dir | `readdirOptional`: ENOENT → `[]` (explicit empty), any other error propagates |
+| `sidecar-llm/main.mjs` `notesList` stat | failed stat → invented `size: 0` | `size: null` + `stat_error`; `list_notes` renders "(size unknown)" |
+| `sidecar-llm/main.mjs` `wsListDir` (local + ssh) | `.catch(() => [])` / `ls … \|\| true` → run listing false-empty | `readdirOptional` locally; remotely `[ -d ]` → `[]` then a bare `ls` so a read error propagates |
+| `sidecar-llm/main.mjs` `wsReadFile` | `.catch(() => '')` / remote `cat … \|\| true` | ENOENT → `''`, permission/IO failure throws (remote probes `[ -e ]` first) |
+| `sidecar-llm/main.mjs` `wsListDirDetailed` (local + ssh) | `.catch(() => [])` / `ls … 2>/dev/null \|\| true` → `list_dir` false-empty | `readdirOptional` locally; remotely `[ -d ]` then a bare `ls`, so a read error propagates |
+| `sidecar-llm/main.mjs` `readSummaryEvents` | `catch { return '' }` → silent empty summary | returns `{ text, error }`; an unreadable events log surfaces as an explicit error |
+| `sidecar-llm/main.mjs` `runsList` run.json/metrics.json | `catch { /* skip */ }` → `{}` | `readRunJson` state + per-run `warning` (missing/corrupt/unreadable) shown on the run line |
+| `sidecar-llm/main.mjs` `runRead` run.json/metrics.json | `catch { /* skip */ }` → `{}` | `readRunJson` state reported as `warnings`; an unreadable events log throws |
+| `sidecar-llm/main.mjs` `downloadToDatasets` remote size | `parseInt(...) \|\| 0` → invented 0 bytes | throws "size could not be determined" instead of a false byte count |
+| `sidecar-llm/main.mjs` `listOpenCodeModels` | ignored exit/timeout → empty model list | throws on timeout/abort/non-zero exit; `/opencode/models` returns an explicit error |
+| `sidecar-llm/main.mjs` `slurmStatus` | ignored exit/timeout → `UNKNOWN` | throws on timeout/abort/ssh-255; `UNKNOWN` only for a real scheduler answer |
+| `sidecar-llm/mcp-bridge.mjs` stdin dispatch | `handle(msg).catch(() => {})` → request left unanswered (opencode hangs) | replies with an explicit JSON-RPC `INTERNAL_ERROR` |
+
+## Summary — Node sidecar
+
+- Sites detected by the Node AST scan before the fix: **27**.
+- Swallowing sites remaining after the fix (all EXPECTED, documented above): **17**.
+- AST-flagged sites that became explicit handlers: **10** (`notesList` readdir,
+  `wsListDir`, `wsReadFile`, `wsListDirDetailed`, `readSummaryEvents`,
+  `runsList` run.json + metrics.json, `runRead` run.json + metrics.json,
+  mcp-bridge dispatch).
+- Additional non-swallowing hidden handlers fixed (no empty/literal catch, so the
+  guard does not flag them): **6** (`notesList` stat, `downloadToDatasets` size,
+  `listOpenCodeModels`, `slurmStatus`, `wsListDir` remote `\|\| true`,
+  `wsListDirDetailed` remote `\|\| true`).
+- Total hidden failures fixed: **16**.
+- Evidence of the pre-fix scan: `docs/engineering/evidence/phase50-node-before.txt`.

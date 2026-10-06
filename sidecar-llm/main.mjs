@@ -239,6 +239,19 @@ function makeWorkspace(project) {
 // ────────────────────────────────────────────────────────────────────────────
 // MCP tool surface.
 
+// Read a directory for a LISTING tool. A genuinely absent directory is an
+// explicit empty list (a fresh project has no notes/ or runs/ yet); any other
+// failure (permissions, IO, a scope rejection) propagates so the model is never
+// told "nothing there" when the truth is "could not read it".
+async function readdirOptional(abs, options) {
+  try {
+    return options ? await fs.readdir(abs, options) : await fs.readdir(abs)
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return []
+    throw e
+  }
+}
+
 // Safe notes helpers — scoped to a single project root passed per-turn.
 function safeNoteFilename(name) {
   const base = path.basename(name || '')
@@ -277,14 +290,19 @@ async function notesList(ws) {
       })
   }
   const dir = await resolveWsPath(ws, 'notes')
-  const items = await fs.readdir(dir).catch(() => [])
+  const items = await readdirOptional(dir)
   const filtered = items.filter((f) => /\.(md|txt)$/i.test(f) && !f.startsWith('.'))
   const out = []
   for (const f of filtered.sort()) {
     try {
       const st = await fs.stat(path.join(dir, f))
       out.push({ name: f, size: st.size, mtime: new Date(st.mtimeMs).toISOString() })
-    } catch { out.push({ name: f, size: 0 }) }
+    } catch (e) {
+      // A stat failure must not claim a false size of 0; the notes tool renders
+      // null as "(size unknown)" so the model can distinguish "0 bytes" from
+      // "couldn't stat the file".
+      out.push({ name: f, size: null, mtime: null, stat_error: e.message })
+    }
   }
   return out
 }
@@ -337,7 +355,11 @@ async function downloadToDatasets(ws, url, filename) {
        curl -fsSL --max-time 300 --proto '=http,https' --proto-redir '=http,https' --max-redirs 5 ${shellQuote(safeUrl)} -o ${shellQuotePath(p)} && \
        wc -c < ${shellQuotePath(p)}`,
     )
-    const bytes = parseInt(out.trim(), 10) || 0
+    const bytes = parseInt(out.trim(), 10)
+    if (!Number.isFinite(bytes) || bytes < 0) {
+      // Never report an invented size of 0 for a file we just downloaded.
+      throw new Error('download finished but its size could not be determined')
+    }
     return { relpath: `datasets/${safe}`, bytes }
   }
   const dest = await resolveWsPath(ws, `datasets/${safe}`, { forWrite: true })
@@ -370,22 +392,35 @@ async function writeDatasetFile(ws, filename, content) {
 }
 
 // ── Generic read-only workspace helpers (local FS or SSH) — used by the run
-//    tools. Read-only and best-effort: a missing dir/file yields [] / ''. ──
+//    tools. A missing dir/file is an explicit empty value; a read FAILURE
+//    (permissions, IO, transport) propagates so a caller never reports an
+//    empty/absent result as fact. ──
 async function wsListDir(ws, reldir) {
   if (ws.isRemote) {
-    const out = await runSsh(ws.sshTarget, `ls -1 ${shellQuotePath(`${ws.root}/${reldir}`)} 2>/dev/null || true`)
+    // A missing dir is an explicit empty list; a permission/transport failure
+    // exits non-zero and runSsh throws instead of reading as "no runs".
+    const d = shellQuotePath(`${ws.root}/${reldir}`)
+    const out = await runSsh(ws.sshTarget, `if [ ! -d ${d} ]; then exit 0; fi; ls -1 ${d}`)
     return out.split('\n').map((s) => s.trim()).filter(Boolean)
   }
   const abs = await resolveWsPath(ws, safeRelpath(reldir))
-  return await fs.readdir(abs).catch(() => [])
+  return await readdirOptional(abs)
 }
 
 async function wsReadFile(ws, relpath) {
   if (ws.isRemote) {
-    return await runSsh(ws.sshTarget, `cat ${shellQuotePath(`${ws.root}/${relpath}`)} 2>/dev/null || true`)
+    // An absent file yields '' (exit 0); a read failure (permissions, ssh)
+    // exits non-zero and runSsh throws, so callers can tell missing from unreadable.
+    const p = shellQuotePath(`${ws.root}/${relpath}`)
+    return await runSsh(ws.sshTarget, `if [ -e ${p} ]; then cat ${p}; fi`)
   }
   const abs = await resolveWsPath(ws, safeRelpath(relpath))
-  return await fs.readFile(abs, 'utf8').catch(() => '')
+  try {
+    return await fs.readFile(abs, 'utf8')
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return ''
+    throw e
+  }
 }
 
 // ── Generic agent FS + exec helpers (Phase: agent workspace tools) ──────────
@@ -477,7 +512,7 @@ async function wsPathExists(ws, relpath) {
     return out.includes('MLF_YES')
   }
   const abs = await resolveWsPath(ws, safe)
-  try { await fs.access(abs); return true } catch { return false }
+  try { await fs.access(abs); return true } catch { /* absent feeds an explicit "does not exist" error, never a write claim */ return false }
 }
 
 async function wsReadTextStrict(ws, relpath, cap = 100000) {
@@ -497,14 +532,16 @@ async function wsListDirDetailed(ws, reldir) {
   const safe = reldir ? safeRelpath(reldir) : ''
   if (ws.isRemote) {
     const target = safe ? `${ws.root}/${safe}` : ws.root
-    const out = await runSsh(ws.sshTarget, `cd ${shellQuotePath(target)} && ls -1Ap 2>/dev/null || true`)
+    // Same contract as the local branch: absent dir → empty list, but a real
+    // listing failure must not be reported as "empty or missing directory".
+    const out = await runSsh(ws.sshTarget, `if [ ! -d ${shellQuotePath(target)} ]; then exit 0; fi; cd ${shellQuotePath(target)} && ls -1Ap`)
     return out.split('\n').map((s) => s.trim()).filter(Boolean).map((name) => ({
       name: name.replace(/\/$/, ''),
       is_dir: name.endsWith('/'),
     }))
   }
   const abs = await resolveWsPath(ws, safe || '.')
-  const ents = await fs.readdir(abs, { withFileTypes: true }).catch(() => [])
+  const ents = await readdirOptional(abs, { withFileTypes: true })
   return ents.map((e) => ({ name: e.name, is_dir: e.isDirectory() }))
 }
 
@@ -532,8 +569,8 @@ function spawnCapture(file, args, opts = {}) {
     if (timeoutMs) {
       timer = setTimeout(() => {
         timedOut = true
-        try { child.kill('SIGTERM') } catch { /* already gone */ }
-        setTimeout(() => { try { child.kill('SIGKILL') } catch { /* already gone */ } }, 3000)
+        try { child.kill('SIGTERM') } catch { /* process already exited — pure cleanup */ }
+        setTimeout(() => { try { child.kill('SIGKILL') } catch { /* process already exited — pure cleanup */ } }, 3000)
       }, timeoutMs)
     }
     child.on('error', (e) => { if (timer) clearTimeout(timer); resolve({ code: -1, stdout, stderr: stderr + String(e), timedOut, aborted }) })
@@ -592,6 +629,14 @@ async function slurmStatus(ws, jobId) {
   if (!id) throw new Error('invalid job id')
   // squeue covers PENDING/RUNNING; sacct covers finished jobs. Try both.
   const r = await execIn(ws, `squeue -j ${id} -h -o %T 2>/dev/null; sacct -j ${id} --format=State -n -P 2>/dev/null | head -1`)
+  // A timeout/abort or an ssh transport failure (exit 255) is NOT a job state —
+  // surface it instead of inventing an "UNKNOWN" the model would read as fact.
+  if (r.timedOut) throw new Error('slurm_status probe timed out')
+  if (r.aborted) throw new Error('slurm_status probe was stopped')
+  if (r.code === 255) {
+    const tail = r.stderr.trim().split('\n').filter(Boolean).slice(-1)[0] || ''
+    throw new Error(`ssh to the workspace host failed (255)${tail ? `: ${tail}` : ''}`)
+  }
   const state = (r.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean)[0] || 'UNKNOWN'
   return { jobId: id, state }
 }
@@ -643,21 +688,57 @@ function safeRunId(id) {
   return base
 }
 
+// Read one JSON run artifact and report an EXPLICIT state. `missing` (no file)
+// is a legitimate state — metrics.json is optional and externally launched runs
+// may lack run.json — while `corrupt`/`unreadable` must never masquerade as an
+// empty config the model would read as "this run has no settings".
+async function readRunJson(ws, relpath) {
+  let text
+  try {
+    text = await wsReadFile(ws, relpath)
+  } catch (e) {
+    return { value: {}, state: 'unreadable', error: e.message }
+  }
+  if (!text.trim()) return { value: {}, state: 'missing', error: null }
+  try {
+    return { value: JSON.parse(text), state: 'ok', error: null }
+  } catch (e) {
+    return { value: {}, state: 'corrupt', error: e.message }
+  }
+}
+
 const RUNS_DIR = 'experiments/runs'
 const RUN_LIST_CAP = 25
 
 // Read ONLY the epoch.end / run.done lines of a run's events.jsonl — cheap even
 // when the file carries thousands of per-batch lines (remote: grep on the host;
-// local: filter after read). These lines carry the loss/epoch summary.
+// local: filter after read). These lines carry the loss/epoch summary. A missing
+// log is an explicit empty summary; an unreadable log returns an explicit error
+// the caller surfaces — never a silent empty summary that looks like "no epochs".
 async function readSummaryEvents(ws, id) {
   const p = `${RUNS_DIR}/${id}/events.jsonl`
-  try {
-    if (ws.isRemote) {
-      return await runSsh(ws.sshTarget, `grep -hE '"(epoch.end|run.done)"' ${shellQuotePath(`${ws.root}/${p}`)} 2>/dev/null || true`)
+  if (ws.isRemote) {
+    const f = shellQuotePath(`${ws.root}/${p}`)
+    // grep exits 1 for "no match" (a legitimately empty summary) and 2 for a
+    // real read error: map only 1 → 0, let anything else make runSsh throw.
+    const cmd = `if [ ! -e ${f} ]; then exit 0; fi; grep -hE '"(epoch.end|run.done)"' ${f} || { rc=$?; [ $rc -eq 1 ] && exit 0; exit $rc; }`
+    try {
+      return { text: await runSsh(ws.sshTarget, cmd), error: null }
+    } catch (e) {
+      return { text: '', error: e.message }
     }
-    const raw = await fs.readFile(await resolveWsPath(ws, p), 'utf8')
-    return raw.split('\n').filter((l) => l.includes('epoch.end') || l.includes('run.done')).join('\n')
-  } catch { return '' }
+  }
+  let raw
+  try {
+    raw = await fs.readFile(await resolveWsPath(ws, p), 'utf8')
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { text: '', error: null }
+    return { text: '', error: e.message }
+  }
+  return {
+    text: raw.split('\n').filter((l) => l.includes('epoch.end') || l.includes('run.done')).join('\n'),
+    error: null,
+  }
 }
 
 // Derive (best_val_loss, completed_epochs) from the filtered events: min
@@ -686,10 +767,17 @@ async function runsList(ws) {
   const capped = ids.slice(0, RUN_LIST_CAP)
   const out = []
   for (const id of capped) {
-    let cfg = {}; let met = {}
-    try { cfg = JSON.parse(await wsReadFile(ws, `${RUNS_DIR}/${id}/run.json`)) } catch { /* skip */ }
-    try { met = JSON.parse(await wsReadFile(ws, `${RUNS_DIR}/${id}/metrics.json`)) } catch { /* skip */ }
-    const ev = scanRunEvents(await readSummaryEvents(ws, id))
+    const cfgR = await readRunJson(ws, `${RUNS_DIR}/${id}/run.json`)
+    const metR = await readRunJson(ws, `${RUNS_DIR}/${id}/metrics.json`)
+    const evR = await readSummaryEvents(ws, id)
+    const cfg = cfgR.value; const met = metR.value
+    const warnings = []
+    for (const [name, r] of [['run.json', cfgR], ['metrics.json', metR]]) {
+      if (r.state === 'missing') warnings.push(`${name} missing`)
+      else if (r.state !== 'ok') warnings.push(`${name} ${r.state}: ${r.error}`)
+    }
+    if (evR.error) warnings.push(`events.jsonl unreadable: ${evR.error}`)
+    const ev = scanRunEvents(evR.text)
     out.push({
       run_id: id,
       label: cfg.run_label ?? null,
@@ -698,6 +786,7 @@ async function runsList(ws) {
       dataset: cfg.dataset?.relpath ?? cfg.dataset?.path ?? null,
       best_val_loss: met.best_val_loss ?? cfg.best_val_loss ?? ev.bestValLoss ?? null,
       epochs: cfg.training?.epochs ?? cfg.epochs ?? ev.completedEpochs ?? null,
+      warning: warnings.length ? warnings.join('; ') : null,
     })
   }
   return { runs: out, total: ids.length, shown: capped.length }
@@ -709,10 +798,15 @@ async function runsList(ws) {
 // `sample.preds`) are dropped.
 async function runRead(ws, runId) {
   const id = safeRunId(runId)
-  let config = {}
-  try { config = JSON.parse(await wsReadFile(ws, `${RUNS_DIR}/${id}/run.json`)) } catch { /* skip */ }
-  let metrics = {}
-  try { metrics = JSON.parse(await wsReadFile(ws, `${RUNS_DIR}/${id}/metrics.json`)) } catch { /* skip */ }
+  const cfgR = await readRunJson(ws, `${RUNS_DIR}/${id}/run.json`)
+  const metR = await readRunJson(ws, `${RUNS_DIR}/${id}/metrics.json`)
+  const config = cfgR.value
+  const metrics = metR.value
+  const warnings = []
+  for (const [name, r] of [['run.json', cfgR], ['metrics.json', metR]]) {
+    if (r.state === 'missing') warnings.push(`${name} missing`)
+    else if (r.state !== 'ok') warnings.push(`${name} ${r.state}: ${r.error}`)
+  }
 
   const events = await wsReadFile(ws, `${RUNS_DIR}/${id}/events.jsonl`)
   const history = []
@@ -732,7 +826,7 @@ async function runRead(ws, runId) {
       default: break
     }
   }
-  return { run_id: id, status: metrics.status ?? config.status ?? 'unknown', config, n_params: nParams, dataset, history, earlystop, done, failed }
+  return { run_id: id, status: metrics.status ?? config.status ?? 'unknown', config, warnings, n_params: nParams, dataset, history, earlystop, done, failed }
 }
 
 function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, pushEvent, turnSignal, autoApproveShell = false) {
@@ -1096,7 +1190,7 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
           try {
             const items = await notesList(workspace)
             if (!items.length) return content('(no notes yet)')
-            return content(items.map((n) => `${n.name} — ${n.size} bytes`).join('\n'))
+            return content(items.map((n) => `${n.name} — ${n.size == null ? '(size unknown)' : `${n.size} bytes`}`).join('\n'))
           } catch (e) {
             return content(`error: ${e.message}`, true)
           }
@@ -1258,7 +1352,8 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
             const r = await runsList(workspace)
             if (!r.runs.length) return content('(no training runs yet)')
             const lines = r.runs.map((x) =>
-              `${x.run_id}  [${x.status}]  loss=${x.best_val_loss ?? '—'}  model=${x.model_path ?? '?'}  epochs=${x.epochs ?? '?'}`)
+              `${x.run_id}  [${x.status}]  loss=${x.best_val_loss ?? '—'}  model=${x.model_path ?? '?'}  epochs=${x.epochs ?? '?'}`
+              + (x.warning ? `  ⚠ ${x.warning}` : ''))
             const note = r.total > r.shown ? `\n(${r.shown} of ${r.total} shown — newest first)` : ''
             return content(lines.join('\n') + note)
           } catch (e) {
@@ -1530,7 +1625,11 @@ async function confirmContinue(askUser, emit, steps) {
       prompt: `Ich habe ${steps} Schritte gemacht und bin noch nicht fertig. Weitermachen?`,
       payload: { reason: 'max_turns', steps },
     })
-  } catch { return false }
+  } catch {
+    // An unanswerable continue-prompt stops the turn (the alternative is looping
+    // forever); no tool result or stored artifact is affected.
+    return false
+  }
   if (!isAffirmative(answer)) { emit({ type: 'status', value: 'error', message: `gestoppt nach ${steps} Schritten` }); return false }
   emit({ type: 'status', value: 'thinking' })
   return true
@@ -1719,6 +1818,14 @@ async function listOpenCodeModels() {
   const now = Date.now()
   if (now - opencodeModelsCache.at < OPENCODE_MODELS_TTL_MS) return opencodeModelsCache.list
   const r = await spawnCapture(OPENCODE_BIN, ['models'], { timeoutMs: 15_000 })
+  // A failed/timed-out `opencode models` must not look like "no models": throw
+  // so GET /opencode/models returns an explicit error instead of an empty list.
+  if (r.timedOut) throw new Error(`\`${OPENCODE_BIN} models\` timed out`)
+  if (r.aborted) throw new Error(`\`${OPENCODE_BIN} models\` was aborted`)
+  if (r.code !== 0) {
+    const tail = `${r.stdout}\n${r.stderr}`.split('\n').map((s) => s.trim()).filter(Boolean).slice(-3).join(' ')
+    throw new Error(`\`${OPENCODE_BIN} models\` exited ${r.code}${tail ? `: ${tail}` : ''}`)
+  }
   const lines = `${r.stdout}\n${r.stderr}`
     .split('\n').map((s) => s.trim()).filter((s) => /^[^\s/]+\/[^\s/]+$/.test(s))
   opencodeModelsCache = { at: Date.now(), list: [...new Set(lines)].sort() }
@@ -1782,9 +1889,9 @@ async function runOpenCode(specs, systemPrompt, history, user, emit, opts, reque
 
   const killHard = (soft = false) => {
     forcedEnd = true
-    try { child.kill('SIGTERM') } catch { /* already dead */ }
+    try { child.kill('SIGTERM') } catch { /* process already exited — best-effort kill */ }
     if (soft) {
-      const t = setTimeout(() => { try { child.kill('SIGKILL') } catch { /* n/a */ } }, 3000)
+      const t = setTimeout(() => { try { child.kill('SIGKILL') } catch { /* process already exited — best-effort kill */ } }, 3000)
       t.unref()
     }
   }
@@ -1888,7 +1995,7 @@ async function runOpenCode(specs, systemPrompt, history, user, emit, opts, reque
     child.on('error', (e) => {
       clearTimeout(deadline)
       clearTimeout(startDeadline)
-      fs.rm(sessionDir, { recursive: true, force: true }).catch(() => {})
+      fs.rm(sessionDir, { recursive: true, force: true }).catch(() => { /* disposable session dir cleanup */ })
       resolve(finalText)
       emit({ type: 'status', value: 'error', message: `OpenCode-Start fehlgeschlagen: ${e.message}` })
     })
@@ -2249,7 +2356,7 @@ async function handleChat(req, res) {
   })
 
   // Guarded so a late write after the client disconnects can't crash the turn.
-  function emit(ev) { try { res.write(`data: ${JSON.stringify(ev)}\n\n`) } catch { /* socket gone */ } }
+  function emit(ev) { try { res.write(`data: ${JSON.stringify(ev)}\n\n`) } catch { /* client already disconnected — no reader left to mislead */ } }
 
   // WebKitGTK (the Tauri webview on Linux) buffers a streamed fetch() body and
   // doesn't surface bytes to the reader until enough accumulate or the stream
@@ -2262,7 +2369,7 @@ async function handleChat(req, res) {
   // lines (": …") are ignored by the EventSource spec and by our SSE parser.
   try { res.socket?.setNoDelay(true) } catch { /* not a TCP socket */ }
   const heartbeatPad = ':' + ' '.repeat(16384) + '\n\n'
-  const heartbeat = setInterval(() => { try { res.write(heartbeatPad) } catch { /* socket gone */ } }, 1000)
+  const heartbeat = setInterval(() => { try { res.write(heartbeatPad) } catch { /* client already disconnected — no reader left to mislead */ } }, 1000)
 
   // Per-turn ask/answer plumbing. The registry lets us reject any still-pending
   // question when the turn ends or the client disconnects (no hung handlers).
@@ -2311,7 +2418,7 @@ async function handleChat(req, res) {
       // through the webview's read buffer at once so the card shows instantly
       // (the 1s heartbeat is only the backstop).
       if (a.event && a.event.type === 'ask') {
-        try { res.write(heartbeatPad) } catch { /* socket gone */ }
+        try { res.write(heartbeatPad) } catch { /* client already disconnected — no reader left to mislead */ }
       }
     }
   })()
@@ -2496,7 +2603,7 @@ const server = createServer(async (req, res) => {
     try { await handleChat(req, res) }
     catch (e) {
       if (!res.headersSent) sendJson(res, 500, { error: `${e.name}: ${e.message}` })
-      else { try { res.write(`data: ${JSON.stringify({ type: 'status', value: 'error', message: e.message })}\n\n`); res.end() } catch {} }
+      else { try { res.write(`data: ${JSON.stringify({ type: 'status', value: 'error', message: e.message })}\n\n`); res.end() } catch { /* client already disconnected — already in the error path */ } }
     }
     return
   }

@@ -21,6 +21,7 @@ import * as ts from 'typescript'
 
 const ROOT = process.cwd()
 const SRC = join(ROOT, 'src')
+const NODE_DIR = join(ROOT, 'sidecar-llm')
 const DOC = join(ROOT, 'docs', 'engineering', 'SILENT_EXCEPTIONS.md')
 const SHOW_ALL = process.argv.includes('--all')
 
@@ -48,6 +49,14 @@ function listSourceFiles(dir: string): string[] {
     else if (ent.isFile() && (ent.name.endsWith('.ts') || ent.name.endsWith('.tsx'))) out.push(p)
   }
   return out.sort()
+}
+
+// Top-level `sidecar-llm/*.mjs` only — never recurse (node_modules lives there).
+function listNodeFiles(): string[] {
+  return readdirSync(NODE_DIR, { withFileTypes: true })
+    .filter((ent) => ent.isFile() && ent.name.endsWith('.mjs'))
+    .map((ent) => join(NODE_DIR, ent.name))
+    .sort()
 }
 
 function rel(file: string): string {
@@ -152,11 +161,18 @@ function visit(node: ts.Node, sf: ts.SourceFile, file: string, sites: Site[]) {
 
 // ── collect ──────────────────────────────────────────────────────────────
 
+const srcFiles = listSourceFiles(SRC)
+const nodeFiles = listNodeFiles()
 const sites: Site[] = []
-for (const abs of listSourceFiles(SRC)) {
+for (const abs of srcFiles) {
   const src = readFileSync(abs, 'utf8')
   const kind = abs.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
   const sf = ts.createSourceFile(abs, src, ts.ScriptTarget.Latest, true, kind)
+  visit(sf, sf, rel(abs), sites)
+}
+for (const abs of nodeFiles) {
+  const src = readFileSync(abs, 'utf8')
+  const sf = ts.createSourceFile(abs, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
   visit(sf, sf, rel(abs), sites)
 }
 sites.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
@@ -174,7 +190,7 @@ function parseDoc(): DocRow[] {
     // cells[0] === '' (leading pipe)
     if (cells.length < 4) continue
     const loc = cells[1].replace(/`/g, '')
-    if (!/\.(ts|tsx):\d+$/.test(loc)) continue
+    if (!/\.(ts|tsx|mjs|js):\d+$/.test(loc)) continue
     const file = loc.replace(/:\d+$/, '')
     const pattern = cells[2].replace(/`/g, '')
     rows.push({ file, pattern, classification: cells[3] })
@@ -192,7 +208,7 @@ for (const r of docRows) {
 // ── report ──────────────────────────────────────────────────────────────
 
 console.log('phase 50: silent-exception guard')
-console.log(`  scanned ${listSourceFiles(SRC).length} source files, ${sites.length} swallowing site(s)`)
+console.log(`  scanned ${srcFiles.length} src + ${nodeFiles.length} node files, ${sites.length} swallowing site(s)`)
 
 if (SHOW_ALL) {
   for (const s of sites) {

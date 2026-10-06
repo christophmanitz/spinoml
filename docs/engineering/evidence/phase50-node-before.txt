@@ -1,0 +1,36 @@
+# Phase 50 (Node sidecar) — guard run BEFORE the fixes: new scripts/verify-silent-catch.ts against sidecar-llm/*.mjs and the allow-list from git HEAD 8d4d22e
+
+phase 50: silent-exception guard
+  scanned 132 src + 4 node files, 83 swallowing site(s)
+  ✗ sidecar-llm/main.mjs:280 — .catch(() => []) has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:380 — .catch(() => []) has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:388 — .catch(() => '') has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:480 — catch { return false } has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:507 — .catch(() => []) has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:535 — catch {} has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:536 — catch {} has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:660 — catch { return '' } has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:690 — catch {} has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:691 — catch {} has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:713 — catch {} has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:715 — catch {} has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:1533 — catch { return false } has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:1785 — catch {} has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:1787 — catch {} has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:1891 — .catch(() => {}) has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:2252 — catch {} has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:2265 — catch {} has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:2314 — catch {} has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs:2499 — catch {} has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/mcp-bridge.mjs:48 — .catch(() => null) has no justifying comment (>=15 chars prose, not "ignore")
+  ✗ sidecar-llm/main.mjs — .catch(() => []): 3 detected, 0 documented in SILENT_EXCEPTIONS.md
+  ✗ sidecar-llm/main.mjs — .catch(() => ''): 1 detected, 0 documented in SILENT_EXCEPTIONS.md
+  ✗ sidecar-llm/main.mjs — catch { return false }: 2 detected, 0 documented in SILENT_EXCEPTIONS.md
+  ✗ sidecar-llm/main.mjs — catch {}: 16 detected, 0 documented in SILENT_EXCEPTIONS.md
+  ✗ sidecar-llm/main.mjs — catch { return '' }: 1 detected, 0 documented in SILENT_EXCEPTIONS.md
+  ✗ sidecar-llm/main.mjs — .catch(() => {}): 2 detected, 0 documented in SILENT_EXCEPTIONS.md
+  ✗ sidecar-llm/mcp-bridge.mjs — .catch(() => null): 1 detected, 0 documented in SILENT_EXCEPTIONS.md
+  ✗ sidecar-llm/mcp-bridge.mjs — .catch(() => {}): 1 detected, 0 documented in SILENT_EXCEPTIONS.md
+
+29 silent-catch violation(s)
+exit: 1

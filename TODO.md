@@ -2808,6 +2808,15 @@ Fix hidden failures.
 > baseline. **Still open:** Python sidecars (`except …: pass`, broad `except Exception: return …`),
 > the Node sidecar (16 empty catches) and 39 Rust `let _ =`/`.ok()`/`unwrap` sites (no toolchain).
 
+> **2026-10-06 — Node sidecar half implemented.** The guard now also scans `sidecar-llm/*.mjs`
+> (`ts.ScriptKind.JS`; 132 src + 4 node files, 73 allow-listed sites). The AST scan found 27 Node sites:
+> 17 EXPECTED (kept, with reasons) and 10 that became explicit handlers (16 related changes in total) so the
+> model gets an explicit error instead of a default that looks like data: notes list (ENOENT vs
+> unreadable), local/remote `list_dir`/`read_file` probes, run summary events (`{text,error}`), `run.json`/
+> `metrics.json` readers (explicit corrupt/unreadable state + warnings), download size, opencode model
+> listing exit/timeout, `slurmStatus` (a timeout, abort or ssh exit 255 is an error, never an invented
+> `UNKNOWN`), mcp-bridge rejected handler → JSON-RPC error. Before-fix guard
+> output: `docs/engineering/evidence/phase50-node-before.txt`. **Still open:** Python sidecars and 39 Rust sites.
 ---
 
 # 52. PHASE 51 – RESOURCE LEAK TESTING

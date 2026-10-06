@@ -9,6 +9,7 @@
 // side.
 
 import { readFileSync, existsSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 
 let failures = 0
@@ -18,6 +19,7 @@ function check(name: string, cond: boolean) {
 }
 
 const src = (p: string) => readFileSync(join(process.cwd(), 'src', p), 'utf8')
+const node = (p: string) => readFileSync(join(process.cwd(), 'sidecar-llm', p), 'utf8')
 
 console.log('phase 50: silent-exception fixes')
 
@@ -108,6 +110,68 @@ console.log('phase 50: silent-exception fixes')
   check('guard script exists', existsSync(join(process.cwd(), 'scripts/verify-silent-catch.ts')))
   check('allow-list document exists', existsSync(join(process.cwd(), 'docs/engineering/SILENT_EXCEPTIONS.md')))
   check('evidence of pre-fix scan exists', existsSync(join(process.cwd(), 'docs/engineering/evidence/phase50-ts-before.txt')))
+}
+
+// 12. Node sidecar (sidecar-llm/*.mjs) — the same audit, functional where a
+//     pure helper can be exercised, source-text otherwise (main.mjs is a live
+//     HTTP server, so importing it in a check would bind a port / need network).
+{
+  const main = node('main.mjs')
+  const bridge = node('mcp-bridge.mjs')
+
+  // fixed site: notesList local readdir falsely empty
+  check('readdirOptional distinguishes ENOENT from a read failure',
+    main.includes('async function readdirOptional(') && main.includes("if (e && e.code === 'ENOENT') return []") && main.includes('const items = await readdirOptional(dir)'))
+  // fixed site: notesList stat invented size 0
+  check('failed note stat reports size null + stat_error (rendered "(size unknown)")',
+    main.includes('size: null, mtime: null, stat_error: e.message') && main.includes("'(size unknown)'"))
+  // fixed site: wsListDir falsely empty (local .catch, remote `|| true`)
+  check('wsListDir uses readdirOptional', /async function wsListDir\([\s\S]{0,500}readdirOptional\(abs\)/.test(main))
+  check('wsListDir remote branch surfaces a listing failure',
+    main.includes('if [ ! -d ${d} ]; then exit 0; fi; ls -1 ${d}') && !main.includes("ls -1 ${shellQuotePath(`${ws.root}/${reldir}`)} 2>/dev/null || true"))
+  // fixed site: wsReadFile swallowed unreadable as ''
+  check('wsReadFile throws on non-ENOENT and probes existence remotely',
+    main.includes('if [ -e ${p} ]; then cat ${p}; fi') && /async function wsReadFile\([\s\S]{0,800}if \(e && e.code === 'ENOENT'\) return ''/.test(main))
+  check('no bare readFile(...).catch(() => \'\') remains', !main.includes("fs.readFile(abs, 'utf8').catch(() => '')"))
+  // fixed site: wsListDirDetailed falsely empty
+  check('wsListDirDetailed uses readdirOptional with dirents', main.includes('readdirOptional(abs, { withFileTypes: true })'))
+  check('wsListDirDetailed remote branch surfaces a listing failure',
+    main.includes('if [ ! -d ${shellQuotePath(target)} ]; then exit 0; fi; cd ${shellQuotePath(target)} && ls -1Ap') && !main.includes('ls -1Ap 2>/dev/null || true'))
+  // fixed site: readSummaryEvents silent empty summary
+  check('readSummaryEvents returns an explicit { text, error }',
+    main.includes("return { text: await runSsh(ws.sshTarget, cmd), error: null }") && !main.includes("} catch { return '' }"))
+  // fixed site: runsList run.json/metrics.json skipped
+  check('runsList reads via readRunJson and surfaces a per-run warning',
+    main.includes('async function readRunJson(')
+    && main.includes("state: 'missing'")
+    && main.includes('warning: warnings.length ? warnings.join')
+    && main.includes("readRunJson(ws, `${RUNS_DIR}/${id}/run.json`)"))
+  check('no run.json/metrics.json `catch { skip }` remains', !main.includes('catch { /* skip */ }'))
+  // fixed site: runRead run.json/metrics.json skipped + events swallowed
+  check('runRead reports readRunJson state as warnings',
+    /async function runRead\([\s\S]{0,700}warnings/.test(main) && main.includes('warnings, n_params: nParams'))
+  // fixed site: downloadToDatasets invented byte count
+  check('downloadToDatasets rejects an undeterminable size',
+    main.includes('!Number.isFinite(bytes) || bytes < 0') && !main.includes('parseInt(out.trim(), 10) || 0'))
+  // fixed site: listOpenCodeModels dropped exit/timeout -> empty model list
+  check('listOpenCodeModels throws on timeout/abort/non-zero exit',
+    main.includes('timed out') && main.includes('if (r.code !== 0) {') && main.includes('models\\` exited'))
+  // fixed site: slurmStatus dropped transport failure -> UNKNOWN
+  check('slurmStatus throws on timeout/abort/ssh-255',
+    main.includes('slurm_status probe timed out') && main.includes('if (r.code === 255) {'))
+  // fixed site: mcp-bridge silently dropped a rejected handler
+  check('mcp-bridge replies with an explicit JSON-RPC INTERNAL_ERROR',
+    bridge.includes("code: 'INTERNAL_ERROR'") && !bridge.includes("handle(msg).catch(() => { /* the async handlers resolve their own errors */ })"))
+
+  // functional: both edited files are syntactically valid JS
+  for (const f of ['main.mjs', 'mcp-bridge.mjs']) {
+    let ok = true
+    try { execFileSync(process.execPath, ['--check', join(process.cwd(), 'sidecar-llm', f)], { stdio: 'ignore' }) }
+    catch { ok = false }
+    check(`node --check sidecar-llm/${f}`, ok)
+  }
+  check('node allow-list documented', readFileSync(join(process.cwd(), 'docs/engineering/SILENT_EXCEPTIONS.md'), 'utf8').includes('## Allow-list — Node sidecar'))
+  check('node pre-fix evidence exists', existsSync(join(process.cwd(), 'docs/engineering/evidence/phase50-node-before.txt')))
 }
 
 if (failures > 0) {

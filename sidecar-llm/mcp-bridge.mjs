@@ -45,7 +45,7 @@ async function sidecarJson(pathname, body, timeoutMs = 30000) {
       body: JSON.stringify(body),
       signal: ctrl.signal,
     })
-    const json = await r.json().catch(() => null)
+    const json = await r.json().catch(() => /* non-JSON body handled as an explicit error just below */ null)
     if (!r.ok || !json) {
       return { error: `sidecar HTTP ${r.status}: ${JSON.stringify(json)}` }
     }
@@ -136,7 +136,13 @@ process.stdin.on('data', (chunk) => {
     if (!line) continue
     let msg
     try { msg = JSON.parse(line) } catch { continue }
-    handle(msg).catch(() => { /* the async handlers resolve their own errors */ })
+    // An unexpected handler failure must not leave the request unanswered
+    // (opencode would hang on it) — reply with an explicit JSON-RPC error.
+    handle(msg).catch((e) => {
+      if (msg && msg.id != null) {
+        send({ jsonrpc: '2.0', id: msg.id, error: { code: 'INTERNAL_ERROR', message: String(e?.message ?? e) } })
+      }
+    })
   }
 })
 process.stdin.on('end', () => process.exit(0))
