@@ -13,11 +13,11 @@ Code generation        | `verify-codegen` 13/13 ✓ + `test:determinism` ✓ (re
 Training codegen       | `verify-traingen` ✓ (compile, multitask, eval-only) | immersive failure tests | §24 training failure tests
 Shape inference        | `verify-sidecar` ✓ + `test:verifier` ✓ (fail-closed gate) + `test:races` ✓ (stale-response replay) + `verify:graph-revision` ✓ (graph revision + runCounter guard, stale shape drop) | live multi-request on real sidecar | §8/9/10/40
 Dataset handling       | `verify-sidecar` ✓ + `test:datasets` ✓ + `verify:graph-revision` ✓ + `verify:concurrent` ✓ (per-dataset seq + refreshSeq + smoke graphRev, no stale overwrite) | leak tests, parquet (pyarrow absent), remote pre-12b | §19/40/41 + `test:safe-load` ✓ (85; real RCE attempts, all 18 example artifacts load) + `test:scope` ✓ (manifest escapes)
-Training runs (local)  | `verify-traingen` e2e ✓ + `verify:states` ✓ + `verify:events` ✓ + `verify:cancel` ✓ | — | §30/31/32
+Training runs (local)  | `verify-traingen` e2e ✓ + `verify:states` ✓ + `verify:events` ✓ + `verify:cancel` ✓ + `verify:manifest` ✓ (76: git clean/dirty/staged/untracked/no-repo/no-git/detached, hashes, config identity invariants, failed/cancelled/eval-only manifests, no paths/env/hostname, atomicity) | — | §30/31/32
 Training runs (remote) | `verify:submission` ✓ + `verify:slurm` ✓ + `verify:recovery` ✓ (close→restart→reconnect re-queries live pid/status/squeue/sacct, not cache; detached survival; atomic claim) | — | §33/36/37
 Persistence            | `npm run test:persistence` ✓ (P001/P011: round-trip, malformed-file matrix, schema versions, fail-closed) | autosave (localStorage) browser smoke | §4.3, §5
 Torch sidecar          | `verify-sidecar` 6/6+activations ✓ + `test:robustness` ✓ (11-case matrix: startup, structured errors with `error_code` on every path, slow-client stall cap, abort resistance, kill→restart recovery) | auth/path-scope tests        | §77/78 security
-LLM sidecar            | `verify-opencode` ✓ (+manual ask/confirm) + `verify:command-injection` ✓ (args split/quote round-tripped through a real `sh`, SSRF blocklist + DNS-resolving `safeFetch` with fake lookup/fetch, ssh target policy, runScript `./` prefix)      | `/respond`/auto-approve auth | §14/15, §77
+LLM sidecar            | `verify-opencode` ✓ (+manual ask/confirm) + `verify:command-injection` ✓ (args split/quote round-tripped through a real `sh`, SSRF blocklist + DNS-resolving `safeFetch` with fake lookup/fetch, ssh target policy, runScript `./` prefix)      | `/respond`/auto-approve auth | §14/15, §77 + `verify:silent-catch`/`verify:silent-fixes` ✓ (Node half of phase 50)
 MCP                    | `verify-opencode` (via opencode bridge) ✓      | spec-parity across providers | §16 MCP validation
 Tauri/Rust             | `cargo check` ✓ + `cargo test` (ssh failures + slurm 13 tests) ✓ + `alias_validation_tests` (Phase 44, **written but UNCOMPILED here — no toolchain, see LIMITATIONS §1**) | command integration tests    | §1.6 (env), §48 Rust errors
 Filesystem (local)     | `verify:paths` ✓ (48, Node resolver) + `test:scope` ✓ (88, Python scope: path matrix, modes/config, dataset_handlers incl. hostile manifests, real-HTTP) | Rust `resolve()` symlinks (lexical only, no toolchain) | §45/46
@@ -67,7 +67,7 @@ Security (sidecars)   | `verify:command-injection` ✓ + `test:deps-policy` ✓ 
 
 Prereq for all `verify:*` that exec Python: conda env `mlforge-dev` active
 (`python` is not on the bare PATH). `verify:opencode` additionally needs the
-LLM sidecar on 127.0.0.1:7422 and the OpenCode CLI.
+LLM sidecar on 127.0.0.1:7422 and the OpenCode CLI. + `verify:silent-catch`/`verify:silent-fixes` ✓ (Node half of phase 50)
 
 ## Test-ID cross-reference
 

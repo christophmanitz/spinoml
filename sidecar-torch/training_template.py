@@ -277,6 +277,7 @@ def _finish_cancel(epoch: int, note: str = "") -> None:
         _CANCEL_RECORDED["v"] = True
         emit("run.cancelled", epoch=epoch, applied=True, note=note)
     METRICS.write_text(json.dumps({"status": "cancelled", "epoch": epoch}, indent=2))
+    _manifest_write("cancelled", status="cancelled", finished_at=_now())
 
 
 def cancel_run(epoch: int, note: str = "") -> None:
@@ -293,6 +294,8 @@ def fail(stage: str, msg: str, tb: str | None = None) -> None:
     # in events but must NOT resurrect the run.
     transition_status("failed")
     METRICS.write_text(json.dumps({"status": "failed", "stage": stage, "error": msg}, indent=2))
+    _manifest_write("failed", status="failed", finished_at=_now(),
+                    failure={"stage": stage, "message": _strip_abs_paths(str(msg))[:500]})
     sys.stderr.write(f"[spinoml-train] FAILED in {stage}: {msg}\n")
     if tb:
         sys.stderr.write(tb)
@@ -525,6 +528,14 @@ def _env_info(torch_mod, device, amp: str | None, git_root: Path | None = None) 
         info["numpy"] = np.__version__
     except Exception:  # noqa: BLE001
         pass
+    # PyG decides whether graph models are reproducible across machines; read the
+    # installed version from package metadata (no slow import). None = not installed.
+    import importlib.metadata as _md
+    try:
+        info["torch_geometric"] = _md.version("torch_geometric")
+    except _md.PackageNotFoundError:
+        info["torch_geometric"] = None
+    info["os"] = platform.platform()  # e.g. Linux-6.8-x86_64-with-glibc2.39: no hostname/user
     info["device"] = device.type
     if device.type == "cuda":
         try:
@@ -551,6 +562,330 @@ def _env_info(torch_mod, device, amp: str | None, git_root: Path | None = None) 
             pass
     info["unsafe_pickle"] = unsafe_pickle_allowed()
     return info
+
+
+# ─── Run manifest (Phase 54) ────────────────────────────────────────────────
+# A machine-readable record of exactly what a run was: git state, content hashes,
+# a canonical "config identity" hash (equal for equal inputs, different when any
+# input differs), seed/software/hardware, and an explicit, HONEST statement of
+# whether the run is reproducible from a git commit. It never claims
+# reproducibility when the working tree was dirty. Written atomically at launch,
+# after config.env, and at every terminal state; a write failure is recorded as a
+# `manifest.error` event and NEVER changes the run's outcome.
+
+MANIFEST = RUN_DIR / "manifest.json"
+MANIFEST_SCHEMA = "spinoml.run-manifest/1"
+_MANIFEST_STATE: dict = {}
+
+# Training keys that feed the config identity. Excluded on purpose because they
+# don't change WHAT is run, only the bookkeeping around it: run_id/run_label/
+# created_at/status (top level), backend + slurm submission settings, dataset
+# path/relpath, model_path, resume_from, and eval_only/validate execution mode.
+# Paths and names must never influence identity — only content hashes and
+# hyperparameters do (split/seed are also recorded separately below).
+_IDENTITY_TRAINING_KEYS = (
+    "epochs", "batch_size", "val_split", "split_strategy", "seed",
+    "log_every_n_steps", "shuffle", "num_workers", "drop_last",
+    "val_every_n_epochs", "gradient_accumulation_steps",
+    "optimizer", "loss", "heads", "scheduler", "metrics", "callbacks",
+)
+
+
+def _sha256_file(path: Path) -> str | None:
+    """Plain sha256 of a file's bytes, or None when it cannot be read."""
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception as exc:  # noqa: BLE001  # recorded via the None return
+        sys.stderr.write(f"[spinoml-train] manifest: cannot hash {path.name}: {exc}\n")
+        return None
+
+
+def _strip_abs_paths(text: str) -> str:
+    """Replace absolute-path-like tokens with <path> so the manifest never leaks paths."""
+    import re
+    return re.sub(r"(?<![\w.])/[^\s:'\"]+", "<path>", text)
+
+
+def _first_stderr_line(text: str) -> str:
+    """First non-empty stderr line with absolute paths stripped (≤200 chars)."""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        return _strip_abs_paths(line)[:200]
+    return "git command failed"
+
+
+def _classify_git_error(stderr: str) -> str:
+    """Map a git failure to a manifest `reason` string."""
+    low = (stderr or "").lower()
+    if "not a git repository" in low or "not a git repo" in low:
+        return "not a git repository"
+    return _first_stderr_line(stderr)
+
+
+def _parse_tracked_status(out: str) -> list[str]:
+    """Parse porcelain v1 (untracked=no) into workspace-relative changed paths."""
+    files: list[str] = []
+    for line in (out or "").splitlines():
+        if len(line) < 4:
+            continue
+        rest = line[3:].strip()
+        parts = rest.split(" -> ", 1) if " -> " in rest else [rest]  # renames: both sides
+        for p in parts:
+            p = p.strip().strip('"')
+            if p and p not in files:
+                files.append(p)
+    return files
+
+
+def _git_state(git_root: Path) -> dict:
+    """Collect best-effort git provenance for `git_root`; never raises."""
+    state = {
+        "available": False, "commit": None, "branch": None,
+        "dirty_tracked": None, "dirty_files": [], "untracked_count": None,
+        "reason": None,
+    }
+
+    def _run(args: list[str]) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(git_root), *args],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+
+    try:
+        head = _run(["rev-parse", "HEAD"])
+    except FileNotFoundError:
+        state["reason"] = "git executable not found"
+        return state
+    except subprocess.TimeoutExpired:
+        state["reason"] = "git timed out"
+        return state
+    except Exception as exc:  # noqa: BLE001
+        state["reason"] = _first_stderr_line(str(exc))
+        return state
+    if head.returncode != 0:
+        state["reason"] = _classify_git_error(head.stderr)
+        return state
+    commit = head.stdout.strip().lower()
+    if len(commit) != 40 or any(c not in "0123456789abcdef" for c in commit):
+        state["reason"] = "git returned an unexpected HEAD value"
+        return state
+    state["available"] = True
+    state["commit"] = commit
+    try:
+        br = _run(["rev-parse", "--abbrev-ref", "HEAD"])
+        if br.returncode == 0:
+            b = br.stdout.strip()
+            state["branch"] = None if b in ("", "HEAD") else b
+        else:
+            state["reason"] = _first_stderr_line(br.stderr)
+        st = _run(["status", "--porcelain=v1", "--untracked-files=no"])
+        if st.returncode == 0:
+            files = _parse_tracked_status(st.stdout)
+            state["dirty_files"] = files[:50]
+            state["dirty_tracked"] = bool(files)
+        else:
+            state["reason"] = state["reason"] or _first_stderr_line(st.stderr)
+        run_rel = f"experiments/runs/{RUN_DIR.name}"
+        ut = _run(["status", "--porcelain=v1", "--untracked-files=normal",
+                   "--", ".", f":(exclude){run_rel}"])
+        if ut.returncode == 0:
+            state["untracked_count"] = sum(1 for ln in ut.stdout.splitlines() if ln.startswith("??"))
+        else:
+            state["reason"] = state["reason"] or _first_stderr_line(ut.stderr)
+    except subprocess.TimeoutExpired:
+        state["reason"] = "git timed out"
+    except Exception as exc:  # noqa: BLE001
+        state["reason"] = state["reason"] or _first_stderr_line(str(exc))
+    if state["reason"] is not None:
+        state["dirty_tracked"] = None  # a failed git call must never look "clean"
+    return state
+
+
+def _config_identity(cfg: dict) -> tuple[str, list[str]]:
+    """Canonical config-identity sha256 over content hashes + hyperparameters."""
+    snap = cfg.get("snapshot") or {}
+    ds = cfg.get("dataset") or {}
+    train = cfg.get("training") or {}
+    fp = ds.get("fingerprint") if isinstance(ds.get("fingerprint"), dict) else None
+    pre_hashes = sorted(
+        hashlib.sha256(str(step.get("script", "")).encode("utf-8")).hexdigest()
+        for step in (snap.get("preprocessing") or []) if isinstance(step, dict)
+    )
+    trust_hashes = sorted(
+        str(t.get("sha256", "")) for t in (snap.get("code_trust") or []) if isinstance(t, dict)
+    )
+    training = {k: train[k] for k in _IDENTITY_TRAINING_KEYS if k in train}
+    identity = {
+        "graph_sha256": snap.get("graph_sha256"),
+        "model_py_sha256": snap.get("model_py_sha256"),
+        "preprocessing_sha256": pre_hashes,
+        "code_trust_sha256": trust_hashes,
+        "training": training,
+        "dataset": {
+            "fingerprint": (f"{fp.get('alg')}:{fp.get('hash')}" if fp and fp.get("hash") else None),
+            "kind": ds.get("kind"),
+            "feature_columns": ds.get("feature_columns"),
+            "target_column": ds.get("target_column"),
+            "heads": train.get("heads"),
+            "adapter": (cfg.get("validate") or {}).get("adapter"),
+        },
+        "split": {
+            "strategy": train.get("split_strategy"),
+            "val_split": train.get("val_split"),
+            "seed": train.get("seed"),
+        },
+        "seed": train.get("seed"),
+    }
+    blob = json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    fields = [
+        "graph_sha256", "model_py_sha256", "preprocessing_sha256", "code_trust_sha256",
+    ] + [f"training.{k}" for k in sorted(training)] + [
+        "dataset.fingerprint", "dataset.kind", "dataset.feature_columns",
+        "dataset.target_column", "dataset.heads", "dataset.adapter",
+        "split.strategy", "split.val_split", "split.seed", "seed",
+    ]
+    return hashlib.sha256(blob).hexdigest(), fields
+
+
+def _collect_hashes(cfg: dict) -> tuple[dict, list[str]]:
+    """Content hashes for the manifest: graph/model/train bytes + config identity."""
+    snap = cfg.get("snapshot") or {}
+    ds = cfg.get("dataset") or {}
+    fp = ds.get("fingerprint") if isinstance(ds.get("fingerprint"), dict) else None
+    identity_sha, fields = _config_identity(cfg)
+    return {
+        "graph_sha256": snap.get("graph_sha256") or _sha256_file(RUN_DIR / "model.spinoml"),
+        "model_py_sha256": snap.get("model_py_sha256") or _sha256_file(RUN_DIR / "model.py"),
+        "train_py_sha256": _sha256_file(RUN_DIR / "train.py"),
+        "dataset_fingerprint": (f"{fp.get('alg')}:{fp.get('hash')}" if fp and fp.get("hash") else None),
+        "config_identity_sha256": identity_sha,
+    }, fields
+
+
+def _manifest_env_split(env: dict) -> tuple[dict, dict]:
+    """_env_info → (software, hardware) subsets; drops python_exe (absolute path)."""
+    software_keys = ("python", "torch", "torch_geometric", "numpy", "cuda", "cudnn", "os")
+    hardware_keys = ("gpu", "gpu_mem_mb", "cpus", "ram_bytes")
+    return ({k: env[k] for k in software_keys if k in env},
+            {k: env[k] for k in hardware_keys if k in env})
+
+
+def _manifest_notes(git: dict, fp_mode: str | None, device: str | None) -> list[str]:
+    """Explicit, human-readable limitations that actually apply to THIS run."""
+    notes: list[str] = []
+    if git.get("dirty_tracked") is True:
+        notes.append("workspace has uncommitted changes to tracked files")
+    if git.get("commit") is None and git.get("reason") == "not a git repository":
+        notes.append("workspace is not a git repository: reproducibility from git is not claimed")
+    uc = git.get("untracked_count")
+    if isinstance(uc, int) and uc > 0:
+        notes.append(f"{uc} untracked files in the workspace are not part of the commit")
+    if fp_mode == "reference":
+        notes.append("dataset fingerprint mode 'reference' pins only the reference file, not the downloaded data")
+    if device == "cuda":
+        notes.append("device cuda: bit-level reproducibility is not claimed (nondeterministic CUDA reductions)")
+    if unsafe_pickle_allowed():
+        notes.append("unsafe pickle loading was enabled for this run")
+    return notes
+
+
+def _manifest_summary(best_val_loss: float | None, epochs_done: int | None,
+                      n_params: int | None) -> dict | None:
+    """Terminal run summary (numbers only), or None when not applicable."""
+    if best_val_loss is None and epochs_done is None and n_params is None:
+        return None
+    return {
+        "best_val_loss": None if best_val_loss is None else round(float(best_val_loss), 6),
+        "epochs_done": epochs_done,
+        "n_params": n_params,
+    }
+
+
+def _manifest_cleanup_tmp(tmp: Path, stage: str) -> None:
+    """Remove a leftover temp manifest; a cleanup failure is recorded, not swallowed."""
+    try:
+        if tmp.exists():
+            tmp.unlink()
+    except Exception as exc:  # noqa: BLE001
+        emit("manifest.error", stage=stage, error=f"tmp cleanup: {exc}")
+
+
+def _manifest_write(stage: str, **updates) -> None:
+    """Atomically (re)write manifest.json; a failure is emitted, never fatal."""
+    if not _MANIFEST_STATE:
+        return
+    _MANIFEST_STATE.update(updates)
+    fp_mode = (_MANIFEST_STATE.get("dataset") or {}).get("fingerprint_mode")
+    _MANIFEST_STATE["notes"] = _manifest_notes(
+        _MANIFEST_STATE.get("git") or {}, fp_mode, _MANIFEST_STATE.get("device"))
+    tmp = MANIFEST.with_name(MANIFEST.name + ".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_MANIFEST_STATE, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, MANIFEST)
+        try:
+            dfd = os.open(str(MANIFEST.parent), os.O_RDONLY)
+            try:
+                os.fsync(dfd)
+            finally:
+                os.close(dfd)
+        except Exception as exc:  # noqa: BLE001
+            emit("manifest.error", stage=stage, error=f"dir fsync: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        emit("manifest.error", stage=stage, error=str(exc))
+    finally:
+        _manifest_cleanup_tmp(tmp, stage)
+
+
+def _manifest_init(cfg: dict) -> None:
+    """Prime the running manifest right after run.provenance (pre-dataset-load)."""
+    global _MANIFEST_STATE
+    git = _git_state(WORKSPACE_ROOT)
+    hashes, fields = _collect_hashes(cfg)
+    ds = cfg.get("dataset") or {}
+    train = cfg.get("training") or {}
+    fp = ds.get("fingerprint") if isinstance(ds.get("fingerprint"), dict) else None
+    _MANIFEST_STATE = {
+        "schema": MANIFEST_SCHEMA,
+        "experiment_id": RUN_DIR.name,
+        "created_at": _now(),
+        "finished_at": None,
+        "status": "running",
+        "failure": None,
+        "git": git,
+        "reproducible_from_git": bool(git.get("commit")
+                                      and git.get("dirty_tracked") is False
+                                      and git.get("reason") is None),
+        "hashes": hashes,
+        "seed": int(train.get("seed", 42)),
+        "dtype": None,
+        "device": None,
+        "software": {},
+        "hardware": {},
+        "dataset": {
+            "kind": ds.get("kind"),
+            "fingerprint_mode": (fp.get("mode") if fp else None),
+        },
+        "split": {
+            "strategy": train.get("split_strategy"),
+            "val_split": train.get("val_split"),
+            "seed": train.get("seed"),
+        },
+        "code_trust_count": len((cfg.get("snapshot") or {}).get("code_trust") or []),
+        "unsafe_pickle": unsafe_pickle_allowed(),
+        "summary": None,
+        "identity_fields": fields,
+        "notes": [],
+    }
+    _manifest_write("running")
 
 
 # ─── Multitask plumbing ─────────────────────────────────────────────────────
@@ -1586,6 +1921,10 @@ def main() -> None:
          unsafe_pickle=unsafe_pickle_allowed(),
          split={"val_split": val_split, "seed": seed, "strategy": split_strategy})
     try:
+        _manifest_init(cfg)
+    except Exception as e:  # noqa: BLE001
+        emit("manifest.error", stage="init", error=str(e))
+    try:
         emit("dataset.fingerprint", **_verify_fingerprint(ds_cfg))
     except Exception as e:  # noqa: BLE001
         emit("dataset.fingerprint", ok=False, error=type(e).__name__)
@@ -1707,9 +2046,17 @@ def main() -> None:
     # dtype, hardware, optional workspace git commit) so a run's outcome can be
     # attributed to the exact stack it actually executed on.
     try:
-        emit("config.env", **_env_info(torch, device, cb["amp"], WORKSPACE_ROOT))
+        env_info = _env_info(torch, device, cb["amp"], WORKSPACE_ROOT)
+        emit("config.env", **env_info)
     except Exception as e:  # noqa: BLE001
+        env_info = {}
         emit("config.env", error=str(e))
+    try:
+        _software, _hardware = _manifest_env_split(env_info)
+        _manifest_write("config.env", device=device.type, dtype=env_info.get("dtype"),
+                        software=_software, hardware=_hardware)
+    except Exception as e:  # noqa: BLE001
+        emit("manifest.error", stage="config.env", error=str(e))
     es_best = float("inf") if (early and early["mode"] == "min") else float("-inf")
     es_wait = 0
 
@@ -1805,6 +2152,8 @@ def main() -> None:
                 "n_params": int(n_params), "metrics": extra or None,
             }, indent=2))
             set_status("done")
+            _manifest_write("done", status="done", finished_at=_now(),
+                            summary=_manifest_summary(val_loss, 0, int(n_params)))
             return
         except Exception as e:  # noqa: BLE001
             fail("validate", str(e), traceback.format_exc())
@@ -2027,6 +2376,9 @@ def main() -> None:
         "gpu": gpu_name,
         "env": env_summary,
     }, indent=2))
+    if final_status == "done":
+        _manifest_write("done", status="done", finished_at=_now(),
+                        summary=_manifest_summary(best_val, epochs, int(n_params)))
 
 
 if __name__ == "__main__":

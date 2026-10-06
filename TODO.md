@@ -3049,6 +3049,11 @@ Adapt this to the existing project architecture.
 
 Do not duplicate information unnecessarily.
 
+> **2026-10-06 — documented, structure already existed.** The run directory
+> (`experiments/runs/<id>/`: `run.json`, `model.spinoml`, `model.py`, `train.py`, `manifest.json`,
+> `metrics.json`, `events.jsonl`, `checkpoints/`, logs) is the artifact; no second structure was
+> invented. Each file, its writer and the test that proves it: `docs/engineering/REPRODUCIBILITY.md` §1/§2.
+
 ---
 
 # 60. PHASE 59 – SCIENTIFIC RUN MANIFEST
@@ -3071,6 +3076,15 @@ Create a machine-readable manifest containing, where available:
 
 Use the project's existing metadata structures if appropriate.
 
+> **2026-10-06 — implemented.** `train.py` writes `manifest.json` (schema
+> `spinoml.run-manifest/1`) atomically at start (before data loading), after the environment is known
+> and at every terminal state (done incl. eval-only, failed with stage/message, cancelled): experiment id,
+> created/finished, git, hashes (graph, generated model, `train.py`, dataset fingerprint, config
+> identity), seed, dtype, device, software, hardware, dataset kind/fingerprint mode, split, approved-code
+> count, `unsafe_pickle`, summary, `identity_fields` and explicit `notes`. No absolute paths, hostname,
+> user or environment values (asserted). A manifest write failure never changes the training outcome and
+> is recorded as `manifest.error`. `npm run verify:manifest` (76 checks, real `train.py` runs, ~50 s).
+
 ---
 
 # 61. PHASE 60 – GIT STATE
@@ -3086,6 +3100,14 @@ If the experiment uses uncommitted source changes, record that fact.
 
 Never falsely claim an experiment is reproducible from a Git commit if uncommitted changes were involved.
 
+> **2026-10-06 — implemented.** Full commit, branch (null when detached), tracked changes (staged or
+> unstaged, ≤ 50 relative paths) and untracked count excluding the run's own directory, read with argv
+> lists. `reproducible_from_git` is true ONLY if the commit is known and no tracked file is modified;
+> not a repository, `git` missing/timed out, any failed git call or uncommitted changes give false plus a
+> `reason`/note, and a failed call can never look clean (`dirty_tracked: null`). Tested in a real temp
+> repo: clean, modified, staged-only, untracked-only, no repo, PATH without git, detached HEAD.
+> Limit: older git (< 1.8.5, no `-C`) reports an explicit reason instead of a state.
+
 ---
 
 # 62. PHASE 61 – GENERATED CODE ARTIFACT
@@ -3095,6 +3117,11 @@ Save the exact generated model code used by the experiment.
 This is important because the code generator itself may change in the future.
 
 The historical experiment must retain the exact generated code.
+
+> **2026-10-06 — already satisfied, now cross-checked.** `model.py` is written into the run directory at
+> launch and its sha256 is frozen in `run.json.snapshot` and in the manifest; `verify:reference-train` and
+> `verify:manifest` assert the run-dir file is byte-equal to the freshly generated code and to an independent
+> hash.
 
 ---
 
@@ -3115,6 +3142,12 @@ GPU
 
 as available.
 
+> **2026-10-06 — implemented (extended).** `config.env` and `manifest.software/hardware` record python,
+> torch, **torch_geometric (version or explicit null)**, numpy, CUDA/cuDNN, **OS/platform string**, device,
+> dtype, GPU name/memory, CPU count, RAM. No hostname/user/absolute path (asserted). Node and Rust versions
+> are deliberately not recorded: a training run uses neither. The SpinoML app version is not recorded
+> (gap, see LIMITATIONS).
+
 ---
 
 # 64. PHASE 63 – HASHING
@@ -3129,6 +3162,12 @@ Generated model
 ```
 
 The purpose is to determine whether two experiments actually used identical inputs/configuration.
+
+> **2026-10-06 — implemented.** Stable hashes: graph (`graph_sha256`, file bytes), generated model
+> (`model_py_sha256`), dataset (fingerprint), and `config_identity_sha256` = SHA-256 of canonical JSON
+> (sorted keys, no whitespace) over the manifest's `identity_fields`, excluding run id, label,
+> timestamps, paths and submission settings. Equal for identical inputs from different directories;
+> changes with lr, seed, dataset content or graph (`verify:manifest` case 7).
 
 ---
 

@@ -22,6 +22,7 @@
     "verify:states": "tsx scripts/verify-states.ts",
     "verify:events": "tsx scripts/verify-events.ts",
     "verify:cancel": "tsx scripts/verify-cancel.ts",
+    "verify:manifest": "tsx scripts/verify-manifest.ts",
     "verify:submission": "tsx scripts/verify-submission.ts",
     "verify:ssh": "tsx scripts/verify-ssh.ts",
     "verify:credentials": "tsx scripts/verify-credentials.ts",

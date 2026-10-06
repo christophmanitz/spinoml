@@ -121,9 +121,9 @@
 ## 6. Not yet audited
 
 Phases of `TODO.md` that have no "implemented" note are not done. In particular:
-Rust `unwrap`/`panic` audit (48), the Python/Node/Rust half of the silent-exception
-audit (50; the TypeScript half is done), resource leak and long-run tests (51/52),
-run manifest + git dirty state (59/60), property/fuzz tests (64–66), CI (69),
+Rust `unwrap`/`panic` audit (48), the Python and Rust halves of the silent-exception
+audit (50; TypeScript and Node are done), resource leak and long-run tests (51/52),
+property/fuzz tests (64–66), CI (69),
 retries/timeouts (71/72), result integrity and resumable state (73/74), the
 sidecar token + localhost review (77/78), dependency audit (79) and the final
 reliability report (90).
@@ -132,3 +132,7 @@ reliability report (90).
 `verify:reference`/`verify:reference-train` prints `SKIPPED  CUDA` (Phase 56). The
 generated-model equivalence and the same-seed reproducibility were measured on CPU only;
 no GPU claim is made (R044).
+
+**Reproducibility limits (Phase 59–63).** `reproducible_from_git` needs `git` with `-C` (≥ 1.8.5) on the machine that
+runs `train.py`; older git (some login nodes) yields an explicit reason and `false`. Node/Rust versions and the
+SpinoML app version are not recorded in the manifest. See `REPRODUCIBILITY.md` §5.

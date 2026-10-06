@@ -382,6 +382,9 @@ canvas) and the blocked training launch open the dialog via
 
 ## Changelog (append one dated line per feature; newest first)
 
+- 2026-10-06 — **Run manifest + git state + canonical hashes (Phase 58–63)**: every run writes `manifest.json` (`spinoml.run-manifest/1`: experiment id, git commit/branch/dirty files/untracked count, hashes incl. `config_identity_sha256`, seed, software incl. torch_geometric + OS, hardware, notes) atomically at start and at every terminal state; `reproducible_from_git` is true only for a known commit with no modified tracked file. See `docs/engineering/REPRODUCIBILITY.md`. `npm run verify:manifest` (76).
+- 2026-10-06 — **Silent-exception audit, Node sidecar (Phase 50)**: guard scans `sidecar-llm/*.mjs` too; 10 hidden failures became explicit tool errors (notes/list/read probes, run.json/metrics.json readers, `slurm_status`, model listing, mcp-bridge).
+
 - 2026-10-06 — **Silent-exception audit, frontend (Phase 50)**: 24 hidden failures made visible (`.py`-twin write/rename/remove errors banner `pyTwinError`, malformed run.json/events in run detail/compare, canvas bind failures, a failed remote capability probe no longer shows the local backend and blocks the training start); the other 56 swallows are documented in `docs/engineering/SILENT_EXCEPTIONS.md`. `npm run verify:silent-catch`, `npm run verify:silent-fixes` (33).
 - 2026-10-06 — **Reference experiments + generated-vs-hand-written equivalence (Phase 53–57)**: `examples/reference-experiments/{mlp,cnn,multi-input}/` (graph fixtures + README: how to run). `npm run verify:reference` (generated model == hand-written PyTorch: params, forward f32/f64, loss, gradients, negative control), `npm run verify:reference-train` (real trainer: complete artifact set, checkpoint↔model, same-seed rerun identical). CUDA is reported as SKIPPED where unavailable.
 
