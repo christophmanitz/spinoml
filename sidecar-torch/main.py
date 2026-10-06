@@ -33,6 +33,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import dataset_handlers as ds_mod
+import deps_policy
 
 # Default 7421 keeps local-mode behaviour unchanged. Override via env so a
 # remote deploy (Phase 12b) can pick a free port on the HPC login node
@@ -774,8 +775,12 @@ def deps_check(specs: list[str]) -> dict:
     requested versions resolve, what pip would add/upgrade, and currently
     installed versions. Needs network access (pip queries the index)."""
     import importlib.metadata as im
-
-    specs = [s.strip() for s in specs if isinstance(s, str) and s.strip()]
+    # Validate specs using the policy module
+    from deps_policy import validate_specs
+    ok, val = validate_specs(specs)
+    if not ok:
+        return {"ok": False, "error": val, "error_code": "INVALID_SPEC"}
+    specs = val  # cleaned, deduped list
     requested = []
     for s in specs:
         base = _dist_name(s)
@@ -790,7 +795,7 @@ def deps_check(specs: list[str]) -> dict:
                 "requested": [], "would_install": [], "log": "no dependencies specified"}
 
     cmd = [sys.executable, "-m", "pip", "install", "--dry-run", "--quiet",
-           "--disable-pip-version-check", "--no-input", "--report", "-"] + specs
+           "--disable-pip-version-check", "--no-input", "--report", "-", "--"] + specs
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
     except subprocess.TimeoutExpired:
@@ -821,11 +826,16 @@ def deps_check(specs: list[str]) -> dict:
 
 def deps_install(specs: list[str]) -> dict:
     """Actually install `specs` into this interpreter's env. Long-running."""
-    specs = [s.strip() for s in specs if isinstance(s, str) and s.strip()]
+    # Validate specs using the policy module
+    from deps_policy import validate_specs
+    ok, val = validate_specs(specs)
+    if not ok:
+        return {"ok": False, "error": val, "error_code": "INVALID_SPEC"}
+    specs = val
     if not specs:
         return {"ok": False, "error": "no dependencies specified"}
     cmd = [sys.executable, "-m", "pip", "install",
-           "--disable-pip-version-check", "--no-input"] + specs
+           "--disable-pip-version-check", "--no-input", "--"] + specs
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
     except subprocess.TimeoutExpired:
@@ -845,13 +855,36 @@ def run_workspace_script(payload: dict) -> dict:
     import subprocess
     import re as _re
     root = os.path.expanduser(str(payload.get("root") or ""))
-    rel = str(payload.get("relpath") or "agent/data_pipeline.py").replace("\\", "/").lstrip("/")
+    rel_raw = payload.get("relpath")
+    rel = str(rel_raw if rel_raw is not None else "agent/data_pipeline.py").replace("\\", "/").lstrip("/")
     code = payload.get("code")
     mode = "slurm" if str(payload.get("mode") or "shell") == "slurm" else "shell"
     if not root or not os.path.isdir(root):
         return {"ok": False, "error": f"workspace root not found: {root!r}"}
-    if ".." in rel.split("/"):
-        return {"ok": False, "error": "relpath may not contain '..'"}
+
+    # Validate `rel` BEFORE writing or executing anything. `rel` used to be
+    # interpolated into argv / a `bash -lc` command string, so a name like
+    # `x; touch /tmp/pwn` or `--wrap=...` could run arbitrary code or hand an
+    # attacker-controlled option to sbatch. Only plain, extension-whitelisted
+    # relative paths are accepted.
+    if not rel:
+        return {"ok": False, "error": "relpath must not be empty", "error_code": "INVALID_RELPATH"}
+    if len(rel) > 255:
+        return {"ok": False, "error": "relpath exceeds 255 characters", "error_code": "INVALID_RELPATH"}
+    if not _re.fullmatch(r"[\w.+@%,=/ -]+", rel, flags=_re.UNICODE):
+        return {"ok": False, "error": "relpath contains disallowed characters", "error_code": "INVALID_RELPATH"}
+    if rel.startswith("./"):
+        rel = rel[2:]
+    segments = rel.split("/")
+    if any(seg == "" for seg in segments):
+        return {"ok": False, "error": "relpath contains an empty path segment", "error_code": "INVALID_RELPATH"}
+    if any(seg in (".", "..") for seg in segments):
+        return {"ok": False, "error": "relpath may not contain '.' or '..' segments", "error_code": "INVALID_RELPATH"}
+    if any(seg.startswith("-") for seg in segments):
+        return {"ok": False, "error": "path segments may not start with '-'", "error_code": "INVALID_RELPATH"}
+    if not rel.endswith((".py", ".sh", ".sbatch", ".slurm")):
+        return {"ok": False, "error": "extension must be one of .py, .sh, .sbatch, .slurm", "error_code": "INVALID_RELPATH"}
+
     abspath = os.path.join(root, rel)
     if isinstance(code, str):
         try:
@@ -864,17 +897,15 @@ def run_workspace_script(payload: dict) -> dict:
         return {"ok": False, "error": f"no code given and {rel} does not exist"}
     try:
         if mode == "slurm":
-            r = subprocess.run(["sbatch", rel], cwd=root, capture_output=True, text=True, timeout=120)
+            r = subprocess.run(["sbatch", "./" + rel], cwd=root, capture_output=True, text=True, timeout=120)
             m = _re.search(r"Submitted batch job (\d+)", f"{r.stdout}\n{r.stderr}")
             return {"ok": r.returncode == 0, "mode": "slurm", "code": r.returncode,
                     "stdout": r.stdout[-8000:], "stderr": r.stderr[-8000:],
                     "job_id": m.group(1) if m else None}
         if rel.endswith(".py"):
-            cmd = [sys.executable, "-u", rel]
-        elif rel.endswith(".sh"):
-            cmd = ["bash", rel]
+            cmd = [sys.executable, "-u", "./" + rel]
         else:
-            cmd = ["bash", "-lc", rel]
+            cmd = ["bash", "./" + rel]
         r = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=600)
         return {"ok": r.returncode == 0, "mode": "shell", "code": r.returncode,
                 "stdout": r.stdout[-16000:], "stderr": r.stderr[-16000:], "timed_out": False}

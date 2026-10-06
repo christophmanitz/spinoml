@@ -40,6 +40,7 @@ import { z } from 'zod'
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
+import { splitArgs, quoteArgv, checkDownloadUrl, checkSshTarget, safeFetch } from './shell-safety.mjs'
 
 const PORT = 7422
 
@@ -196,8 +197,12 @@ function shellQuotePath(s) {
 }
 
 function runSsh(target, remoteCmd, stdin) {
+  const targetCheck = checkSshTarget(target)
+  if (!targetCheck.ok) {
+    return Promise.reject(new Error(`invalid ssh target: ${targetCheck.error}`))
+  }
   return new Promise((resolve, reject) => {
-    const child = spawn('ssh', [...SSH_OPTS, target, remoteCmd], {
+    const child = spawn('ssh', [...SSH_OPTS, '--', target, remoteCmd], {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     let stdout = ''
@@ -312,19 +317,23 @@ async function notesAppend(ws, name, body) {
 }
 
 async function downloadToDatasets(ws, url, filename) {
-  if (!/^https?:\/\//i.test(url)) {
-    throw new Error('url must start with http:// or https://')
+  const checked = checkDownloadUrl(url)
+  if (!checked.ok) {
+    throw new Error(`url rejected: ${checked.error}`)
   }
+  const safeUrl = checked.url
   const safe = safeDatasetFilename(filename)
   if (ws.isRemote) {
     const dir = `${ws.root}/datasets`
     const p = `${dir}/${safe}`
     // -fsSL → fail on HTTP errors, silent progress, follow redirects.
     // --max-time 300s keeps a hung download from hanging the chat turn.
+    // --proto/--proto-redir/--max-redirs pin curl to http(s) and a small
+    // redirect budget so an allowed URL can't bounce into another scheme.
     const out = await runSsh(
       ws.sshTarget,
       `mkdir -p ${shellQuotePath(dir)} && \
-       curl -fsSL --max-time 300 ${shellQuote(url)} -o ${shellQuotePath(p)} && \
+       curl -fsSL --max-time 300 --proto '=http,https' --proto-redir '=http,https' --max-redirs 5 ${shellQuote(safeUrl)} -o ${shellQuotePath(p)} && \
        wc -c < ${shellQuotePath(p)}`,
     )
     const bytes = parseInt(out.trim(), 10) || 0
@@ -333,7 +342,7 @@ async function downloadToDatasets(ws, url, filename) {
   const dir = path.join(ws.root, 'datasets')
   await fs.mkdir(dir, { recursive: true })
   const dest = path.join(dir, safe)
-  const res = await fetch(url, { redirect: 'follow' })
+  const res = await safeFetch(safeUrl)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const buf = Buffer.from(await res.arrayBuffer())
   await fs.writeFile(dest, buf)
@@ -526,15 +535,22 @@ const SHELL_TIMEOUT_LOCAL_MS = 10 * 60 * 1000  // local laptop: more headroom
 // and parses the job id (returns immediately — the heavy work runs on a node).
 async function runScript(ws, relpath, mode, args, notify, signal) {
   const safe = safeRelpath(relpath)
-  const argStr = args ? ` ${args}` : ''
+  const parsedArgs = splitArgs(args)
+  if (!parsedArgs.ok) {
+    return { mode, code: -1, stdout: '', stderr: `invalid args: ${parsedArgs.error}`, jobId: null, timedOut: false, aborted: false }
+  }
+  const argStr = parsedArgs.argv.length ? ` ${quoteArgv(parsedArgs.argv)}` : ''
   // `-u` → unbuffered Python so prints stream to the chat live (an ssh pipe is
   // not a TTY, so the default block buffering would otherwise hide all output
   // until the script exits, making a slow run look frozen).
   const interp = /\.py$/i.test(safe) ? 'python -u ' : /\.sh$/i.test(safe) ? 'bash ' : ''
   const cd = `cd ${shellQuotePath(ws.root)}`
+  // './' prefix: a workspace-relative name that starts with '-' (e.g.
+  // `--wrap=...`) must never be parsed by sbatch/python/bash as an OPTION.
+  const target = shellQuotePath(`./${safe}`)
   if (mode === 'slurm') {
     if (notify) notify(`$ sbatch ${safe}${argStr}\n`)
-    const r = await execIn(ws, `${cd} && sbatch ${shellQuotePath(safe)}${argStr}`, { timeoutMs: 60000, signal })
+    const r = await execIn(ws, `${cd} && sbatch ${target}${argStr}`, { timeoutMs: 60000, signal })
     const m = `${r.stdout}\n${r.stderr}`.match(/Submitted batch job (\d+)/)
     if (notify) notify(`${r.stdout}${r.stderr}`)
     return { mode, code: r.code, stdout: capText(r.stdout), stderr: capText(r.stderr), jobId: m ? m[1] : null, timedOut: r.timedOut, aborted: r.aborted }
@@ -542,7 +558,7 @@ async function runScript(ws, relpath, mode, args, notify, signal) {
   const timeoutMs = ws.isRemote ? SHELL_TIMEOUT_REMOTE_MS : SHELL_TIMEOUT_LOCAL_MS
   if (notify) notify(`$ ${interp}${safe}${argStr}\n`)
   const onChunk = notify ? (s) => notify(s) : undefined
-  const r = await execIn(ws, `${cd} && ${interp}${shellQuotePath(safe)}${argStr}`, { onChunk, timeoutMs, signal })
+  const r = await execIn(ws, `${cd} && ${interp}${target}${argStr}`, { onChunk, timeoutMs, signal })
   return { mode, code: r.code, stdout: capText(r.stdout), stderr: capText(r.stderr), jobId: null, timedOut: r.timedOut, aborted: r.aborted }
 }
 
@@ -1347,6 +1363,9 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
           } catch { /* if the existence probe itself fails, fall through and let the run surface the real error */ }
           let preview = ''
           try { preview = await wsReadTextStrict(workspace, safe, 2000) } catch { /* show prompt without preview */ }
+          const parsedArgs = splitArgs(args)
+          if (!parsedArgs.ok) return content(`invalid args: ${parsedArgs.error}`, true)
+          const argsQuoted = parsedArgs.argv.length ? ` ${quoteArgv(parsedArgs.argv)}` : ''
           // Every run is gated by a confirm dialog. shell runs are also capped
           // (60s on a remote login node), stream live, and are killable with Stop.
           const onLogin = m === 'shell' && workspace.isRemote
@@ -1363,8 +1382,8 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
               approved = await askUser({
                 kind: 'confirm',
                 prompt: (m === 'slurm'
-                  ? `SLURM-Job abschicken: sbatch ${safe}${args ? ` ${args}` : ''}?`
-                  : `Skript ausführen: ${safe}${args ? ` ${args}` : ''} (shell)?`)
+                  ? `SLURM-Job abschicken: sbatch ${safe}${argsQuoted}?`
+                  : `Skript ausführen: ${safe}${argsQuoted} (shell)?`)
                   + (onLogin ? '  ⚠ Login-Node, max. 2 min — für schwere Jobs SLURM.' : ''),
                 payload: { path: safe, mode: m, args: args ?? '', preview, on_login_node: onLogin },
               })

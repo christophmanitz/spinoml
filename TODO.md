@@ -2580,7 +2580,31 @@ symlinks
 
 where the application expects paths to remain inside a workspace/dataset directory.
 
----
+> **2026-10-06 — implemented (Rust part UNCOMPILED).** Search result: no `shell=True`/`os.system`
+> anywhere; `exec(compile(...))` of model code in the torch sidecar is by design (now gated, see
+> Phase 43). Real defects found and fixed: (1) LLM `run_script` `args` were concatenated unquoted
+> into the shell command → `splitArgs`/`quoteArgv` (`sidecar-llm/shell-safety.mjs`), proven by
+> round-tripping hostile strings through a real `sh`, and the confirmation text now shows the
+> quoted argv that really runs; script targets get a `./` prefix so `--wrap=…` can't become an
+> sbatch option. (2) torch `/run_script`: the fallback `["bash","-lc", relpath]` executed the
+> FILE NAME as a shell command string (write `x; touch /tmp/pwn`, then run it) and `sbatch rel`
+> accepted option-like names → relpath whitelist (`[\w.+@%,=/ -]`, no leading `-`, extension
+> `.py/.sh/.sbatch/.slurm`), `./`-prefixed argv, nothing written when rejected. (3) `/deps/check`
+> and `/deps/install` passed arbitrary pip arguments (`--index-url`, VCS URLs, local paths) →
+> `sidecar-torch/deps_policy.py` (plain PEP 508 name+version only; `torch`/`pip`/`setuptools`
+> refused; `--` before specs). (4) `download_to_datasets` SSRF + an exfiltration chain (internal
+> URL → file → `read_file` → LLM) → `checkDownloadUrl`, fail-closed `isBlockedAddress` (IPv4/IPv6
+> incl. mapped/NAT64/6to4/Teredo), local `safeFetch` resolving DNS and checking every redirect hop,
+> curl `--proto/--max-redirs` on the remote branch. (5) ssh: `remote_sidecar.rs`
+> `ensure_remote_sidecar` passed the webview-supplied alias to `ssh` UNVALIDATED (a single argv
+> element like `-oProxyCommand=…` is local command execution) and every spawn lacked `--` →
+> `validate_alias` (now rejects a leading `-`, shared by `ssh.rs`/`pty.rs`/`remote_sidecar.rs`),
+> `--` before every target, `shell_quote` on `SPINOML_PYTHON` in the `sh -c` launcher.
+> Verified by `verify:command-injection` (162), `test:deps-policy` (34), `test:run-script` (125,
+> mocked `subprocess.run`), `verify:sidecar` (new rejects). **The Rust edits cannot be compiled on
+> this machine (no toolchain) — R042/LIMITATIONS §1.** Still open: path scoping (Phase 45/46),
+> pickle (47), sidecar auth/CORS (77/78); the torch `/run_script` endpoint still takes `root` from
+> the payload.
 
 # 48. PHASE 47 – UNSAFE DESERIALIZATION
 

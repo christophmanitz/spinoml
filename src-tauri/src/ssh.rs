@@ -39,9 +39,15 @@ pub struct RemoteWorkspace {
 
 // ─── validation ───────────────────────────────────────────────────────────
 
-fn validate_alias(alias: &str) -> Result<(), String> {
+pub(crate) fn validate_alias(alias: &str) -> Result<(), String> {
     if alias.is_empty() || alias.len() > 128 {
         return Err("ssh target must be 1..128 chars".into());
+    }
+    // A leading '-' would be parsed by ssh as an OPTION (e.g. `-J`, `-F`), not
+    // as the destination: argument injection. Every ssh spawn additionally
+    // puts `--` before the target, but reject it here so it never gets that far.
+    if alias.starts_with('-') {
+        return Err("ssh target must not start with '-' (it would be parsed as an ssh option)".into());
     }
     for ch in alias.chars() {
         // SSH target = either a `Host` alias from ~/.ssh/config (e.g.
@@ -302,7 +308,8 @@ fn ssh_exec_blocking(alias: &str, remote_cmd: &str, stdin_data: Option<&[u8]>) -
     for o in SSH_OPTS {
         cmd.arg(o);
     }
-    cmd.arg(alias).arg(remote_cmd);
+    // `--` ends option parsing: the target can never be taken for an ssh option.
+    cmd.arg("--").arg(alias).arg(remote_cmd);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd.stdin(if stdin_data.is_some() { Stdio::piped() } else { Stdio::null() });
     let mut child = cmd
@@ -1607,5 +1614,34 @@ mod ssh_failure_tests {
         let clean_token = sanitize_credentials(token_leak);
         assert!(!clean_token.contains("abcdef12345678901234567890"));
         assert!(clean_token.contains("[REDACTED_TOKEN]"));
+    }
+}
+
+#[cfg(test)]
+mod alias_validation_tests {
+    use super::validate_alias;
+
+    #[test]
+    fn accepts_config_aliases_and_user_at_host() {
+        for ok in ["leipzig-hpc", "zw93onug@login01.sc.uni-leipzig.de", "host.example.org:22", "a_b.c-d"] {
+            assert!(validate_alias(ok).is_ok(), "{ok} should be accepted");
+        }
+    }
+
+    #[test]
+    fn rejects_leading_dash_option_injection() {
+        // ssh would parse these as OPTIONS, not as the destination.
+        for bad in ["-oProxyCommand=x", "-J", "-F", "-", "-v", "--"] {
+            assert!(validate_alias(bad).is_err(), "{bad} must be rejected");
+        }
+    }
+
+    #[test]
+    fn rejects_shell_metacharacters_whitespace_and_bad_length() {
+        for bad in ["a b", "a;b", "a$(x)", "a`x`", "a|b", "a&b", "a>b", "a\nb", "a\rb", "a\0b", "a'b", "a\"b", ""] {
+            assert!(validate_alias(bad).is_err(), "{bad:?} must be rejected");
+        }
+        assert!(validate_alias(&"a".repeat(129)).is_err());
+        assert!(validate_alias(&"a".repeat(128)).is_ok());
     }
 }

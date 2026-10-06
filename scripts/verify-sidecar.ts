@@ -231,6 +231,35 @@ async function main() {
     if (c.expectErrorContains) console.log(`  ✓ error mentioned "${c.expectErrorContains}"`)
   }
 
+  // ── /deps endpoints validation ───────────────────────────────────────
+  {
+    const badCheck = await fetch(`${SIDECAR}/deps/check`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ specs: ["--index-url=http://127.0.0.1:9/simple", "numpy"] }),
+    })
+    const resCheck = await badCheck.json()
+    if (resCheck.ok !== false || resCheck.error_code !== "INVALID_SPEC") {
+      console.log('  ✗ deps/check did not reject invalid spec')
+      failed++
+    } else {
+      console.log('  ✓ deps/check correctly rejected invalid spec')
+    }
+
+    const badInstall = await fetch(`${SIDECAR}/deps/install`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ specs: ["-r", "/etc/passwd"] }),
+    })
+    const resInst = await badInstall.json()
+    if (resInst.ok !== false || resInst.error_code !== "INVALID_SPEC") {
+      console.log('  ✗ deps/install did not reject invalid spec')
+      failed++
+    } else {
+      console.log('  ✓ deps/install correctly rejected invalid spec')
+    }
+  }
+
   // ── /activations endpoint (Explain-mode dataflow viz) ──────────────────────
   {
     const actCase = {

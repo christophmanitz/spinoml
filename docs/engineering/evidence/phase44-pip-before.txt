@@ -1,0 +1,6 @@
+# Phase 44 — pip-spec policy, BEFORE the fix (sidecar from git HEAD 4e78ab9, port 7499)
+# POST /deps/check {specs:["--index-url=http://127.0.0.1:9/simple","numpy"]}  (dry-run only, unreachable index)
+# expected AFTER fix: ok=false, error_code=INVALID_SPEC, no pip spawned
+
+elapsed: 0.48s
+{"ok": true, "compatible": true, "python": "3.12.13", "requested": [{"spec": "--index-url=http://127.0.0.1:9/simple", "name": "--index-url", "installed": null}, {"spec": "numpy", "name": "numpy", "installed": "2.5.3"}], "would_install": [], "log": "already satisfied"}

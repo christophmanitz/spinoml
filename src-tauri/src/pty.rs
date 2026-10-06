@@ -154,19 +154,16 @@ fn build_command(args: &PtySpawnArgs) -> Result<CommandBuilder, String> {
                 .alias
                 .as_ref()
                 .ok_or_else(|| "remote-ssh requires alias".to_string())?;
-            for ch in alias.chars() {
-                if !(ch.is_ascii_alphanumeric()
-                    || ch == '.' || ch == '_' || ch == '-'
-                    || ch == '@' || ch == ':')
-                {
-                    return Err(format!("ssh target contains illegal char: {ch:?}"));
-                }
-            }
+            // Single source of truth for what a valid ssh target is (also
+            // rejects a leading '-', which ssh would parse as an option).
+            crate::ssh::validate_alias(alias)?;
             let mut cmd = CommandBuilder::new("ssh");
             for o in crate::ssh::SSH_OPTS_INTERACTIVE {
                 cmd.arg(o);
             }
             cmd.arg("-tt");
+            // `--` ends option parsing: the target can never be taken for an ssh option.
+            cmd.arg("--");
             cmd.arg(alias);
             let remote_cmd = match args.remote_root.as_deref() {
                 Some(r) if !r.is_empty() => {

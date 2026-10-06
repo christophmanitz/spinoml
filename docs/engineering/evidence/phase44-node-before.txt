@@ -1,0 +1,101 @@
+
+> spinoml@0.0.0 verify:command-injection
+> tsx scripts/verify-command-injection.ts
+
+phase 44: node sidecar command-injection / SSRF
+
+=== A. splitArgs/quoteArgv round-trip through sh ===
+  ✓ round-trip "--epochs 10 --lr=0.1"
+  ✓ round-trip "\"a b\" 'c d'"
+  ✓ round-trip "a\\ b"
+  ✓ round-trip "--seed 0"
+  ✓ round-trip "--name \"hello world\""
+  ✓ round-trip "a b c"
+  ✓ round-trip "''"
+  ✓ round-trip "\"\""
+  ✓ round-trip "one"
+  ✓ round-trip "--lr=0.1"
+  ✓ round-trip "--config agent/config.yaml"
+  ✓ round-trip "; touch SENTINEL"
+  ✓ round-trip "$(touch SENTINEL)"
+  ✓ round-trip "`touch SENTINEL`"
+  ✓ round-trip "a && touch SENTINEL"
+  ✓ round-trip "a | tee SENTINEL"
+  ✓ round-trip "> SENTINEL"
+  ✓ round-trip "a;b"
+  ✓ round-trip "*"
+  ✓ round-trip "~"
+  ✓ round-trip "$HOME"
+  ✓ round-trip "${IFS}"
+  ✓ round-trip "-- --x"
+  ✓ round-trip "--opt=\"x y\""
+  ✓ round-trip "a < SENTINEL"
+  ✓ round-trip "a >> SENTINEL"
+  ✓ round-trip "SENTINEL;"
+  ✓ round-trip "\"touch SENTINEL\""
+  ✓ round-trip "--x;touch SENTINEL"
+  ✓ round-trip "$(id);touch SENTINEL"
+
+=== B. splitArgs rejects bad input ===
+  ✓ reject unbalanced single quote
+  ✓ reject unbalanced double quote
+  ✓ reject newline
+  ✓ reject carriage return
+  ✓ reject NUL
+  ✓ reject more than 64 args
+  ✓ reject input longer than 4096
+  ✓ empty string -> ok, argv []
+  ✓ undefined -> ok, argv []
+
+=== C. checkDownloadUrl SSRF policy ===
+  ✓ allow https://rest.uniprot.org/uniprotkb/P12345.fasta
+  ✓ allow https://files.rcsb.org/download/1ABC.pdb
+  ✓ allow https://raw.githubusercontent.com/a/b/c/iris.csv
+  ✓ allow http://archive.ics.uci.edu/ml/machine-learning-databases/iris/iris.data
+  ✓ allow https://93.184.216.34/x
+  ✓ block "http://169.254.169.254/latest/meta-data/"
+  ✓ block "http://127.0.0.1:7421/infer"
+  ✓ block "http://localhost/x"
+  ✓ block "http://[::1]/x"
+  ✓ block "http://2130706433/"
+  ✓ block "http://0x7f.0.0.1/"
+  ✓ block "http://017700000001/"
+  ✓ block "http://127.1/"
+  ✓ block "http://[::ffff:127.0.0.1]/"
+  ✓ block "http://[::ffff:7f00:1]/"
+  ✓ block "http://10.0.0.5/"
+  ✓ block "http://192.168.1.1/"
+  ✓ block "http://172.16.0.1/"
+  ✓ block "http://100.64.0.1/"
+  ✓ block "http://metadata.internal/"
+  ✓ block "http://foo.local/"
+  ✓ block "https://user:pw@example.com/"
+  ✓ block "ftp://example.com/x"
+  ✓ block "file:///etc/passwd"
+  ✓ block "javascript:alert(1)"
+  ✓ block "https://example.com:22/"
+  ✓ block "https://example.com:7421/"
+  ✓ block ""
+  ✓ block "not a url"
+
+=== D. checkSshTarget policy ===
+  ✓ accept "leipzig-hpc"
+  ✓ accept "zw93onug@login01.sc.uni-leipzig.de"
+  ✓ reject option-like -oProxyCommand=x
+  ✓ reject option-like -J
+  ✓ reject space
+  ✓ reject semicolon
+  ✓ reject command substitution
+  ✓ reject empty
+  ✓ reject 129 chars
+  ✓ reject newline
+
+=== E. main.mjs wiring ===
+  ✗ imports ./shell-safety.mjs
+  ✗ old `argStr = args ?` concatenation is gone
+  ✗ spawn('ssh' is preceded by checkSshTarget
+  ✗ spawn('ssh' args contain '--' before target
+  ✗ downloadToDatasets calls checkDownloadUrl
+  ✗ downloadToDatasets adds --proto flags
+
+6 check(s) failed

@@ -485,6 +485,9 @@ pub fn start_training_run(
     // Detached launch. setsid → own session (survives app close); stdio to
     // files; stdin /dev/null. $! is the python pid (setsid exec's into it).
     let python = std::env::var("SPINOML_PYTHON").unwrap_or_else(|_| "python".into());
+    // `python` is interpolated into an `sh -c` string, so it must be quoted
+    // (an interpreter path with spaces or metacharacters stays ONE word).
+    let python = crate::ssh::shell_quote(&python);
     let script = format!(
         "setsid {python} -u train.py > stdout.log 2> stderr.log < /dev/null & echo $! > pid",
     );

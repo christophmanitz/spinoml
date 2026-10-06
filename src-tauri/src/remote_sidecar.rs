@@ -73,7 +73,8 @@ fn emit(app: &AppHandle, status: &RemoteSidecarStatus) {
 fn run_remote(alias: &str, remote_cmd: &str, stdin: Option<&[u8]>) -> Result<String, String> {
     let mut cmd = Command::new("ssh");
     for o in SSH_OPTS { cmd.arg(o); }
-    cmd.arg(alias).arg(remote_cmd);
+    // `--` ends option parsing: the target can never be taken for an ssh option.
+    cmd.arg("--").arg(alias).arg(remote_cmd);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
     let mut child = cmd.spawn().map_err(|e| format!("spawn ssh: {e}"))?;
@@ -235,7 +236,8 @@ fn build_run_command(alias: &str, root: &str) -> Command {
     cmd.arg("-L").arg(format!(
         "127.0.0.1:{}:127.0.0.1:{}", REMOTE_LOCAL_PORT, REMOTE_REMOTE_PORT
     ));
-    cmd.arg(alias);
+    // `--` ends option parsing: the target can never be taken for an ssh option.
+    cmd.arg("--").arg(alias);
     let root_q = shell_quote_path(root);
     let env_sh = shell_quote_path(&format!("{}/.spinoml/env.sh", root.trim_end_matches('/')));
     // The remote command:
@@ -291,6 +293,10 @@ pub async fn ensure_remote_sidecar(
     force: Option<bool>,
 ) -> Result<RemoteSidecarStatus, String> {
     let force = force.unwrap_or(false);
+    // The alias comes from the webview and goes straight to `ssh`: validate it
+    // exactly like every ssh_* command in ssh.rs does (no leading '-', no
+    // shell metacharacters), BEFORE any process is spawned.
+    crate::ssh::validate_alias(&alias)?;
     // Serialize bootstraps so concurrent ensures (StrictMode double-effect)
     // can't free_local_tunnel_port each other's tunnel. The loser waits here,
     // then short-circuits on the live `current` below.
