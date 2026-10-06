@@ -157,6 +157,10 @@ console.log('  [resume from checkpoint]')
   check('run.resumed emitted', !!resumed, JSON.stringify(resumed))
   check('resume start_epoch = 6', resumed?.start_epoch === 6, JSON.stringify(resumed?.start_epoch))
   check('resume global_step carried over', typeof resumed?.global_step === 'number' && (resumed!.global_step as number) > 0)
+  // The resume event records what happened to every random stream — never silent.
+  const rngRestore = resumed?.rng_restore as Record<string, string> | undefined
+  check('run.resumed records rng_restore', !!rngRestore && typeof rngRestore === 'object', JSON.stringify(rngRestore ?? 'missing'))
+  check('torch/numpy/python streams restored', rngRestore?.torch === 'restored' && rngRestore?.numpy === 'restored' && rngRestore?.python === 'restored', JSON.stringify(rngRestore ?? {}))
   const epochStarts = events.filter((e) => e.kind === 'epoch.start').map((e) => e.epoch)
   check('continues at epoch 6,7,8', JSON.stringify(epochStarts) === JSON.stringify([6, 7, 8]), JSON.stringify(epochStarts))
   check('run B done', readFileSync(join(dirB, 'status'), 'utf8').trim() === 'done')
@@ -286,6 +290,30 @@ console.log('  [corrupted checkpoint rejected]')
   const failedEv = events.find((e) => e.kind === 'run.failed') as Record<string, unknown> | undefined
   check('run.failed emitted (stage resume)', failedEv?.stage === 'resume', JSON.stringify(failedEv?.stage))
   check('status = failed', readFileSync(join(dirE, 'status'), 'utf8').trim() === 'failed')
+}
+
+// ── 7. an RNG stream that cannot be restored is RECORDED, not swallowed ──
+console.log('  [rng restore failure is recorded]')
+{
+  // A checkpoint whose torch RNG state is invalid (wrong size): the resume must still
+  // work (e.g. a CUDA stream on a CPU-only machine is legitimately unrestorable) but the
+  // run.resumed event must say which stream failed instead of claiming a bitwise continuation.
+  const badPt = join(dirA, 'checkpoints', 'badrng.pt')
+  pyEval(
+    'import torch, sys\nck = torch.load(sys.argv[1], map_location="cpu", weights_only=False)\n'
+    + 'ck["rng"]["torch"] = torch.zeros(3, dtype=torch.uint8)\n'
+    + 'ck["rng"].pop("numpy", None)\ntorch.save(ck, sys.argv[2])\nprint("{}")',
+    [join(dirA, 'checkpoints', 'last.pt'), badPt],
+  )
+  const dirR = makeRunDir('r', { resumeFrom: badPt, epochs: 1 })
+  const r = run(dirR)
+  check('resume with an unrestorable RNG stream still completes', r.ok, r.stderr ?? '')
+  const events = readFileSync(join(dirR, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  const resumed = events.find((e) => e.kind === 'run.resumed') as Record<string, unknown> | undefined
+  const rr = resumed?.rng_restore as Record<string, string> | undefined
+  check('torch stream failure is recorded', typeof rr?.torch === 'string' && rr.torch.startsWith('failed:'), JSON.stringify(rr ?? 'missing'))
+  check('missing numpy stream is recorded as absent', rr?.numpy === 'absent in checkpoint', JSON.stringify(rr ?? 'missing'))
+  check('python stream still restored', rr?.python === 'restored', JSON.stringify(rr ?? 'missing'))
 }
 
 console.log(failures === 0 ? '\n✓ all checkpoint checks passed' : `\n✗ ${failures} check(s) failed`)

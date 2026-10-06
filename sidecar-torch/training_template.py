@@ -97,12 +97,12 @@ def register_safe_globals() -> list[str]:
         _add("torch_geometric.data.Data", getattr(_pg_data, "Data", None))
         _add("torch_geometric.data.data.DataEdgeAttr", getattr(_pg_data, "DataEdgeAttr", None))
         _add("torch_geometric.data.data.DataTensorAttr", getattr(_pg_data, "DataTensorAttr", None))
-    except ImportError:
+    except ImportError:  # optional dependency: PyG absent → these globals are not registered
         pass
     try:
         import torch_geometric.data as _pg
         _add("torch_geometric.data.HeteroData", getattr(_pg, "HeteroData", None))
-    except ImportError:
+    except ImportError:  # optional dependency: PyG absent → HeteroData global not registered
         pass
     try:
         import torch_geometric.data.storage as _pg_store
@@ -110,7 +110,7 @@ def register_safe_globals() -> list[str]:
         _add("torch_geometric.data.storage.NodeStorage", getattr(_pg_store, "NodeStorage", None))
         _add("torch_geometric.data.storage.EdgeStorage", getattr(_pg_store, "EdgeStorage", None))
         _add("torch_geometric.data.storage.BaseStorage", getattr(_pg_store, "BaseStorage", None))
-    except ImportError:
+    except ImportError:  # optional dependency: PyG absent → storage globals not registered
         pass
     try:
         import numpy as _np
@@ -136,7 +136,7 @@ def register_safe_globals() -> list[str]:
                     _cls = getattr(_np_dtypes, _name, None)
                     if isinstance(_cls, type):
                         _add("numpy.dtypes." + _name, _cls)
-        except ImportError:
+        except ImportError:  # optional: numpy.dtypes unavailable on this build → skip
             pass
     try:
         torch.serialization.add_safe_globals(allow)
@@ -217,20 +217,33 @@ def set_status(s: str) -> bool:
 # never happen. Returns True when the transition was applied.
 
 _TERMINAL_STATUSES = ("done", "failed", "cancelled")
+# A read failure that is NOT an absent file (permissions, IO, …) is surfaced as
+# this sentinel rather than as "" — "" is the "not started yet" state, and
+# silently treating an unreadable status as not-started would let a transition
+# overwrite a real terminal state (Phase 30 CANCELLED → SUCCEEDED must be
+# impossible). transition_status rejects every transition while the status is
+# the sentinel; main() converts it into an explicit failed run.
+_STATUS_UNREADABLE = "<unreadable>"
 
 
 def _read_status() -> str:
     try:
         return STATUS.read_text(encoding="utf-8").strip()
-    except Exception:  # noqa: BLE001
+    except FileNotFoundError:  # genuinely absent = not started yet (fail-safe default)
         return ""
+    except Exception:  # noqa: BLE001  # any other read failure: explicit unknown, not ""
+        return _STATUS_UNREADABLE
 
 
 def transition_status(next_status: str) -> bool:
     """Apply a status transition through the Phase-30 state machine.
     Allowed: queued→running, queued→cancelled, running→terminal,
-    idempotent re-write of the SAME value. Everything else is rejected."""
+    idempotent re-write of the SAME value. Everything else is rejected.
+    An unreadable status is never a valid current state — every transition
+    is refused until the file is readable again."""
     cur = _read_status()
+    if cur == _STATUS_UNREADABLE:
+        return False  # unknown state: refuse to invent a transition (Phase 30 invariant)
     if cur == next_status:
         STATUS.write_text(next_status + "\n", encoding="utf-8")
         return True
@@ -338,47 +351,54 @@ def _rng_state() -> dict:
     state: dict = {"torch": torch.get_rng_state()}
     try:
         state["torch_cuda"] = torch.cuda.get_rng_state_all()
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # no CUDA backend here → nothing to capture (best-effort)
         pass
     try:
         import numpy as np
         state["numpy"] = np.random.get_state()
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # NumPy absent → no NumPy stream to capture (best-effort)
         pass
     try:
         import random
         state["python"] = random.getstate()
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # stdlib random always present; capture is best-effort
         pass
     return state
 
 
-def _restore_rng(state: dict) -> None:
-    """Restore RNG states captured by _rng_state (best-effort, never fatal —
-    a missing backend simply keeps the fresh-seed stream)."""
+def _restore_rng(state: dict) -> dict:
+    """Restore RNG states captured by _rng_state. Never fatal (resuming on a
+    machine without CUDA must still work), but never silent either: returns
+    {stream: "restored" | "absent in checkpoint" | "failed: <reason>"} and the
+    caller records it in the `run.resumed` event — a resume whose random
+    streams could not be restored is NOT a bitwise continuation, and the run
+    record has to say so."""
     import torch
-    if "torch" in state:
+    status: dict = {}
+
+    def attempt(name: str, present: bool, restore) -> None:
+        if not present:
+            status[name] = "absent in checkpoint"
+            return
         try:
-            torch.set_rng_state(state["torch"])
-        except Exception:  # noqa: BLE001
-            pass
-    if state.get("torch_cuda"):
-        try:
-            torch.cuda.set_rng_state_all(state["torch_cuda"])
-        except Exception:  # noqa: BLE001
-            pass
-    if "numpy" in state:
-        try:
-            import numpy as np
-            np.random.set_state(state["numpy"])
-        except Exception:  # noqa: BLE001
-            pass
-    if "python" in state:
-        try:
-            import random
-            random.setstate(state["python"])
-        except Exception:  # noqa: BLE001
-            pass
+            restore()
+            status[name] = "restored"
+        except Exception as e:  # noqa: BLE001  # recorded in `status` below and in run.resumed
+            status[name] = f"failed: {type(e).__name__}: {e}"
+
+    def _numpy() -> None:
+        import numpy as np
+        np.random.set_state(state["numpy"])
+
+    def _stdlib() -> None:
+        import random
+        random.setstate(state["python"])
+
+    attempt("torch", "torch" in state, lambda: torch.set_rng_state(state["torch"]))
+    attempt("torch_cuda", bool(state.get("torch_cuda")), lambda: torch.cuda.set_rng_state_all(state["torch_cuda"]))
+    attempt("numpy", "numpy" in state, _numpy)
+    attempt("python", "python" in state, _stdlib)
+    return status
 
 
 def _atomic_save(obj, path: Path) -> None:
@@ -400,13 +420,13 @@ def _atomic_save(obj, path: Path) -> None:
                 os.fsync(dfd)
             finally:
                 os.close(dfd)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # dir fsync is durability polish; the rename happened
             pass
     finally:
         if tmp.exists():
             try:
                 tmp.unlink()
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # best-effort temp cleanup; final file in place
                 pass
 
 
@@ -526,14 +546,14 @@ def _env_info(torch_mod, device, amp: str | None, git_root: Path | None = None) 
         info["cuda"] = torch_mod.version.cuda or None
         try:
             info["cudnn"] = torch_mod.backends.cudnn.version()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # build without cuDNN → version unknown, field omitted
             pass
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # torch metadata unavailable → field omitted, unknown
         pass
     try:
         import numpy as np
         info["numpy"] = np.__version__
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # NumPy absent → version field omitted (unknown, not faked)
         pass
     # PyG decides whether graph models are reproducible across machines; read the
     # installed version from package metadata (no slow import). None = not installed.
@@ -548,14 +568,14 @@ def _env_info(torch_mod, device, amp: str | None, git_root: Path | None = None) 
         try:
             info["gpu"] = torch_mod.cuda.get_device_name(0)
             info["gpu_mem_mb"] = round(torch_mod.cuda.get_device_properties(0).total_memory / 1e6)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # CUDA query failed → GPU fields omitted (unknown)
             pass
     info["dtype"] = "bf16" if amp == "bf16" else ("fp16" if amp else "fp32")
     info["cpus"] = os.cpu_count()
     try:
         page = os.sysconf("SC_PAGESIZE")
         info["ram_bytes"] = os.sysconf("SC_PHYS_PAGES") * page
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # sysconf unsupported → RAM field omitted (unknown)
         pass
     if git_root is not None:
         try:
@@ -565,7 +585,7 @@ def _env_info(torch_mod, device, amp: str | None, git_root: Path | None = None) 
             ).decode().strip()
             if out:
                 info["git_commit"] = out
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # not a git repo / git absent → commit omitted
             pass
     info["unsafe_pickle"] = unsafe_pickle_allowed()
     return info
@@ -919,7 +939,7 @@ def _is_finite_loss(v) -> bool:
     try:
         import math
         return math.isfinite(float(v))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # non-numeric loss → unusable → integrity must fail closed
         return False
 
 
@@ -1026,7 +1046,7 @@ def _verify_run_integrity(eval_only: bool) -> dict:
                         continue
                     try:
                         ev = json.loads(ln)
-                    except Exception:
+                    except Exception:  # a torn/corrupt event line is skipped; required kinds still checked
                         continue
                     if isinstance(ev, dict):
                         k = ev.get("kind")
@@ -1149,14 +1169,21 @@ def _compute_resumable(final_status: str) -> dict:
             if isinstance(mf, dict) and isinstance(mf.get("hashes"), dict):
                 run_graph = mf["hashes"].get("graph_sha256")
                 run_model = mf["hashes"].get("model_py_sha256")
-    except Exception:  # noqa: BLE001  # corrupt manifest is not a fatal here
-        pass
+    except Exception:  # noqa: BLE001  # recorded via the unknown-hashes check below
+        run_graph = None
+        run_model = None
     if (run_graph is None or run_model is None) \
             and _MANIFEST_STATE and isinstance(_MANIFEST_STATE.get("hashes"), dict):
         run_graph = run_graph or _MANIFEST_STATE["hashes"].get("graph_sha256")
         run_model = run_model or _MANIFEST_STATE["hashes"].get("model_py_sha256")
-    same_graph = (not run_graph) or (not ckpt_graph) or ckpt_graph == run_graph
-    same_model = (not run_model) or (not ckpt_model) or ckpt_model == run_model
+    if run_graph is None or run_model is None:
+        # The run's OWN hashes could not be read (missing/corrupt manifest).
+        # Treating that as a match would claim "resumable" for a checkpoint that
+        # may belong to a different model — an invented value. Report UNKNOWN.
+        return {"resumable": False, "resume_from": None, "epoch": None,
+                "reason": "run hashes unavailable (manifest unreadable)"}
+    same_graph = (not ckpt_graph) or ckpt_graph == run_graph
+    same_model = (not ckpt_model) or ckpt_model == run_model
     if not (same_graph and same_model):
         return {"resumable": False, "resume_from": None, "epoch": None,
                 "reason": "checkpoint belongs to a different model"}
@@ -1415,7 +1442,7 @@ def _manifest_mol_graph(smi: str, cache_dir):
     if fp is not None:
         try:
             torch.save(d, fp)
-        except Exception:
+        except Exception:  # mol-graph disk cache is best-effort; the graph is still in memory
             pass
     return d
 
@@ -1536,7 +1563,7 @@ def _manifest_espf_tokenize(base, value, spec, cache_dir=None):
     if fp is not None:
         try:
             torch.save(t, fp)
-        except Exception:
+        except Exception:  # ESPF token disk cache is best-effort; the ids are still returned
             pass
     return t
 
@@ -2098,6 +2125,10 @@ def main() -> None:
         if _read_status() == "cancelled":
             _finish_cancel(0, "cancelled before start")
             return
+        if _read_status() == _STATUS_UNREADABLE:
+            # Do not run with an unknown run state: the terminal-state machine
+            # cannot protect a file it cannot read. Fail explicitly instead.
+            fail("config", "run status file is unreadable — refusing to start with an unknown state")
     t0 = time.time()
     emit("run.start", pid=os.getpid())
 
@@ -2339,7 +2370,12 @@ def main() -> None:
                 model(*xb0) if is_graph else model(xb0)
             model.to(device)  # re-pin lazily-materialized params onto the device
         except StopIteration:
-            pass
+            # An empty training loader (e.g. drop_last=True with batch_size >
+            # training rows) means there is NOTHING to train on. Silently
+            # skipping the dummy forward would let every epoch report
+            # train_loss=0.0 and the run end "done" — a false SUCCESS. Fail loud.
+            fail("split", "training loader is empty (drop_last=True with batch_size larger "
+                          "than the training split?) — refusing to report an untrained run as done")
         optimizer = build_optimizer(train_cfg.get("optimizer", {}), model.parameters())
         scheduler = build_scheduler(train_cfg.get("scheduler", {}), optimizer, epochs)
         n_params = sum(p.numel() for p in model.parameters())
@@ -2514,10 +2550,10 @@ def main() -> None:
             start_epoch = int(ckpt.get("epoch", -1)) + 1
             global_step = int(ckpt.get("global_step", 0))
             # Phase 26 — continue from the saved random streams where available.
-            if isinstance(ckpt.get("rng"), dict):
-                _restore_rng(ckpt["rng"])
+            rng_restore = _restore_rng(ckpt["rng"]) if isinstance(ckpt.get("rng"), dict) else {"all": "absent in checkpoint"}
             emit("run.resumed", source=str(resume_from), start_epoch=start_epoch,
-                 global_step=global_step, prev_val_loss=ckpt.get("val_loss"))
+                 global_step=global_step, prev_val_loss=ckpt.get("val_loss"),
+                 rng_restore=rng_restore)
         except Exception as e:  # noqa: BLE001
             fail("resume", f"cannot resume from {resume_from!r}: {e}", traceback.format_exc())
 
@@ -2553,7 +2589,7 @@ def main() -> None:
                 last_done = epoch - 1
                 try:
                     _atomic_save(build_ckpt(last_done), CKPT_DIR / "last.pt")
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001  # save is best-effort; resumable check reports honestly
                     pass
                 # Phase 30 — cancel through the state machine (idempotent;
                 # double cancellation is a no-op after the first terminal write).
@@ -2674,7 +2710,7 @@ def main() -> None:
         last_done = (canc_epoch if canc_epoch is not None else start_epoch) - 1
         try:
             _atomic_save(build_ckpt(last_done), CKPT_DIR / "last.pt")
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # save is best-effort; resumable check reports honestly
             pass
         _finish_cancel(canc_epoch or 0, f"cancelled (signal {c})")
         return
@@ -2689,7 +2725,7 @@ def main() -> None:
         if last_done >= start_epoch and last_done >= 0:
             try:
                 _atomic_save(build_ckpt(last_done), CKPT_DIR / "last.pt")
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # save is best-effort; resumable check reports honestly
                 pass
         fail("train", str(e), traceback.format_exc())
 
@@ -2744,6 +2780,11 @@ def main() -> None:
         # (e.g. an outside observer wrote 'failed'). Don't emit run.done; the
         # existing terminal state wins.
         if final_status == "failed":
+            return
+        if final_status == _STATUS_UNREADABLE:
+            # The status file became unreadable during finalisation. Never
+            # report done on an unknown state — fail explicitly.
+            fail("config", "run status file became unreadable before finalisation")
             return
     if final_status == "done":
         _manifest_write("done", status="done", finished_at=_now(),

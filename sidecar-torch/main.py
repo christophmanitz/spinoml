@@ -336,7 +336,7 @@ def infer(
     # Recount AFTER forward so lazy (in_channels=-1) params are materialized.
     try:
         n_params = int(sum(p.numel() for p in model.parameters()))
-    except Exception:
+    except Exception:  # keep the earlier count; param iteration cannot falsify a result
         pass
 
     return {"ok": True, "shapes": shapes, "n_params": n_params}
@@ -452,7 +452,7 @@ def smoke_test(
     # Recount AFTER forward so lazy (in_channels=-1) params are materialized.
     try:
         n_params = int(sum(p.numel() for p in model.parameters()))
-    except Exception:
+    except Exception:  # keep the earlier count; param iteration cannot falsify a result
         pass
 
     if isinstance(out, torch.Tensor):
@@ -569,7 +569,7 @@ def _espf_label_preview(prev: dict | None, opt: dict | None) -> dict | None:
         subs = ds_mod.espf_substructures({"codebook": cb})
         if subs:
             prev = {**prev, "labels": [subs[i] if 0 <= i < len(subs) else "?" for i in prev["values"]]}
-    except Exception:
+    except Exception:  # labels are a best-effort overlay; the token preview is still shown
         pass
     return prev
 

@@ -129,8 +129,8 @@
 ## 6. Not yet audited
 
 Phases of `TODO.md` that have no "implemented" note are not done. In particular:
-Rust `unwrap`/`panic` audit (48), the Python and Rust halves of the silent-exception
-audit (50; TypeScript and Node are done), resource leak and long-run tests (51/52 — known leak:
+Rust `unwrap`/`panic` audit (48), the Rust half of the silent-exception
+audit (50; TypeScript, Node and Python are done), resource leak and long-run tests (51/52 — known leak:
 an empty `/tmp/spinoml-opencode-*` directory remains when the LLM sidecar is killed while an opencode
 turn is in flight; normal turns and client aborts clean up, see `test:opencode-lifecycle`),
 CI (69),

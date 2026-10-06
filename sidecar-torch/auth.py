@@ -193,7 +193,7 @@ def token_matches(supplied: str | None, cfg: AuthConfig) -> bool:
     try:
         a = supplied.encode("utf-8")
         b = cfg.token.encode("utf-8")
-    except (UnicodeEncodeError, AttributeError):
+    except (UnicodeEncodeError, AttributeError):  # malformed token value → no match, fail closed
         return False
     return hmac.compare_digest(a, b)
 

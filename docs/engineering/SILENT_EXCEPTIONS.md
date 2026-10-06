@@ -184,3 +184,112 @@ something untrue — the model reads these results as fact, so a false empty lis
   `wsListDirDetailed` remote `\|\| true`).
 - Total hidden failures fixed: **16**.
 - Evidence of the pre-fix scan: `docs/engineering/evidence/phase50-node-before.txt`.
+
+# Python sidecar + trainer (`sidecar-torch/*.py`)
+
+The same guard and the same rules are applied to the Python sources
+(`sidecar-torch/main.py`, `dataset_handlers.py`, `safe_load.py`, `scope.py`,
+`deps_policy.py`, `auth.py`, `training_template.py`). A swallow here is
+acceptable only when it cannot make a **status**, **result**, **metric** or
+**dataset claim** untrue. The trainer and the dataset handlers are
+paper-grade: a swallowed error that lets a run/dataset claim something untrue
+is a correctness bug, not style.
+
+`scripts/verify-silent-except-py.py` (`npm run verify:silent-except-py`) uses
+the stdlib `ast` to find every handler whose body is only `pass` / `...` / a
+docstring / `continue` / `break` / `return` / `return <literal>`, or a
+`contextlib.suppress(...)`. Matching is by **file + normalised pattern text**,
+so line-number drift is tolerated; a pattern occurring N times in a file must
+appear N times here.
+
+## Python allow-list — current swallowing sites (all EXPECTED)
+
+| Location | Pattern | Class | Reason (why the swallow cannot lie) | Action |
+|---|---|---|---|---|
+| `sidecar-torch/auth.py:132` | `except Exception: pass` | EXPECTED | `scrub_environ`: a read-only environ mapping (test double) cannot be mutated; production `os.environ` supports `pop`, so the token is still scrubbed. | keep |
+| `sidecar-torch/auth.py:196` | `except (UnicodeEncodeError, AttributeError): return False` | EXPECTED | `token_matches`: a malformed supplied token fails the constant-time compare (no match, fail closed). | keep |
+| `sidecar-torch/dataset_handlers.py:95` | `except OSError: pass` | EXPECTED | `.txt` kind-sniff failure just leaves the kind `unknown`, never a wrong kind. | keep |
+| `sidecar-torch/dataset_handlers.py:135` | `except OSError: return None` | EXPECTED | unreadable directory → no primary table found; the kind stays `unknown`, an explicit state. | keep |
+| `sidecar-torch/dataset_handlers.py:174` | `except OSError: return []` | EXPECTED | unreadable directory → no `.pt` discovered; detection stays `unknown`, not a false empty dataset. | keep |
+| `sidecar-torch/dataset_handlers.py:186` | `except OSError: return False` | EXPECTED | unreadable directory → not classified as an image folder; kind stays `unknown`. | keep |
+| `sidecar-torch/dataset_handlers.py:195` | `except OSError: continue` | EXPECTED | an unreadable class subdir is skipped while probing; folder detection is heuristic and stays honest. | keep |
+| `sidecar-torch/dataset_handlers.py:244` | `except ScopeError: continue` | EXPECTED | `_fingerprint_dir`: a file resolving outside the scope is never hashed. | keep |
+| `sidecar-torch/dataset_handlers.py:277` | `except Exception: return None` | EXPECTED | `_fingerprint_manifest`: a fingerprint is optional provenance; `None` is the documented unknown, never a false identity. | keep |
+| `sidecar-torch/dataset_handlers.py:307` | `except (OSError, ScopeError): return None` | EXPECTED | `_fingerprint_for`: same — an unfingerprintable source reports no id instead of inventing one. | keep |
+| `sidecar-torch/dataset_handlers.py:415` | `except OSError: pass` | EXPECTED | `_describe_dir_bundle`: an unreadable side-file listing yields an empty summary; the primary table was already parsed and is the real claim. | keep |
+| `sidecar-torch/dataset_handlers.py:449` | `except ScopeError: continue` | EXPECTED | a symlinked-out image is never opened or thumbnailed. | keep |
+| `sidecar-torch/dataset_handlers.py:464` | `except Exception: continue` | EXPECTED | one failed thumbnail is skipped; the other thumbnails and `sample_size` stay valid. | keep |
+| `sidecar-torch/dataset_handlers.py:466` | `except ImportError: pass` | EXPECTED | optional dependency: Pillow absent → no thumbnails, but the class/size structure is still shown. | keep |
+| `sidecar-torch/dataset_handlers.py:645` | `except Exception: pass` | EXPECTED | tensor `min`/`max`/`mean` are informational; the tensor itself loaded and its shape/dtype are reported. | keep |
+| `sidecar-torch/dataset_handlers.py:682` | `except ImportError: pass` | EXPECTED | optional dependency: Biopython absent → the line-based fallback parser handles the `.pdb`. | keep |
+| `sidecar-torch/dataset_handlers.py:966` | `except Exception: pass` | EXPECTED | a corrupt cached mol `.pt` is rebuilt from the SMILES; the cache is derived data, never truth. | keep |
+| `sidecar-torch/dataset_handlers.py:975` | `except Exception: pass` | EXPECTED | mol-graph disk caching is best-effort; sampling still works without the cache. | keep |
+| `sidecar-torch/dataset_handlers.py:1123` | `except FileNotFoundError: return []` | EXPECTED | no ESPF codebook → no substructure labels; the token preview is still shown. | keep |
+| `sidecar-torch/dataset_handlers.py:1153` | `except FileNotFoundError: return None` | EXPECTED | no ESPF codebook → nothing to cache; a later training run raises an actionable error, not a success. | keep |
+| `sidecar-torch/dataset_handlers.py:1167` | `except Exception: return None` | EXPECTED | the `.espf` cache write is best-effort; the sidecar still tokenizes in memory. | keep |
+| `sidecar-torch/dataset_handlers.py:1537` | `except Exception: pass` | EXPECTED | a column histogram is informational; the column summary is still emitted. | keep |
+| `sidecar-torch/dataset_handlers.py:1574` | `except ScopeError: continue` | EXPECTED | `_stats_image_folder`: an image outside the scope is not counted. | keep |
+| `sidecar-torch/dataset_handlers.py:1579` | `except Exception: continue` | EXPECTED | a failed image open is skipped; the other sampled sizes are still counted. | keep |
+| `sidecar-torch/dataset_handlers.py:1623` | `except Exception: pass` | EXPECTED | a tensor histogram is informational; `std`/`zeros_frac` are still reported. | keep |
+| `sidecar-torch/main.py:339` | `except Exception: pass` | EXPECTED | `infer` `n_params` recount is best-effort; the pre-forward count is retained and a param count is not a correctness claim. | keep |
+| `sidecar-torch/main.py:455` | `except Exception: pass` | EXPECTED | `smoke_test` `n_params` recount, same as above. | keep |
+| `sidecar-torch/main.py:572` | `except Exception: pass` | EXPECTED | ESPF substructure labels are a best-effort overlay for the Explain view; the raw token preview is still shown. | keep |
+| `sidecar-torch/main.py:686` | `except Exception: pass` | EXPECTED | best-effort lazy (in_channels=-1) init probe; a real shape error surfaces at the real, hooked forward pass. | keep |
+| `sidecar-torch/main.py:782` | `except Exception: pass` | EXPECTED | viz post-processing (input/output previews + weight snapshots) only; the captured activations are kept. | keep |
+| `sidecar-torch/safe_load.py:65` | `except ImportError: pass` | EXPECTED | optional dependency: PyG absent → those globals are simply not registered. | keep |
+| `sidecar-torch/safe_load.py:70` | `except ImportError: pass` | EXPECTED | optional dependency: PyG absent → `HeteroData` global not registered. | keep |
+| `sidecar-torch/safe_load.py:78` | `except ImportError: pass` | EXPECTED | optional dependency: PyG absent → storage globals not registered. | keep |
+| `sidecar-torch/safe_load.py:104` | `except ImportError: pass` | EXPECTED | optional: `numpy.dtypes` unavailable on this build → no extra dtype globals. | keep |
+| `sidecar-torch/safe_load.py:108` | `except AttributeError: pass` | EXPECTED | torch < 2.4 has no safe-globals API; plain tensors/dicts still load, other globals are refused. | keep |
+| `sidecar-torch/scope.py:69` | `except AttributeError: return None` | EXPECTED | platform has no `os.getuid` (Windows) → the uid is reported unknown, not invented. | keep |
+| `sidecar-torch/scope.py:271` | `except ValueError: return False` | EXPECTED | `commonpath` mismatch (different drives / mixed abs-rel) → not inside the root (fail closed). | keep |
+| `sidecar-torch/training_template.py:100` | `except ImportError: pass` | EXPECTED | synced safe-load block: optional PyG globals (mirror of `safe_load.py`). | keep |
+| `sidecar-torch/training_template.py:105` | `except ImportError: pass` | EXPECTED | synced safe-load block: optional `HeteroData` global. | keep |
+| `sidecar-torch/training_template.py:113` | `except ImportError: pass` | EXPECTED | synced safe-load block: optional PyG storage globals. | keep |
+| `sidecar-torch/training_template.py:139` | `except ImportError: pass` | EXPECTED | synced safe-load block: optional `numpy.dtypes` globals. | keep |
+| `sidecar-torch/training_template.py:143` | `except AttributeError: pass` | EXPECTED | synced safe-load block: torch < 2.4 has no safe-globals API. | keep |
+| `sidecar-torch/training_template.py:232` | `except FileNotFoundError: return ''` | EXPECTED | an absent status file genuinely means "not started"; any other read error uses the explicit `_STATUS_UNREADABLE` sentinel instead. | keep |
+| `sidecar-torch/training_template.py:354` | `except Exception: pass` | EXPECTED | RNG capture: no CUDA backend → nothing to capture (best-effort; determinism event documents the caveat). | keep |
+| `sidecar-torch/training_template.py:359` | `except Exception: pass` | EXPECTED | RNG capture: NumPy absent → no NumPy stream to capture (best-effort). | keep |
+| `sidecar-torch/training_template.py:364` | `except Exception: pass` | EXPECTED | RNG capture: stdlib random capture is best-effort. | keep |
+| `sidecar-torch/training_template.py:416` | `except Exception: pass` | EXPECTED | `_atomic_save` directory fsync is durability polish; the rename has already happened. | keep |
+| `sidecar-torch/training_template.py:422` | `except Exception: pass` | EXPECTED | `_atomic_save` temp-file cleanup is best-effort; the final file is already in place. | keep |
+| `sidecar-torch/training_template.py:542` | `except Exception: pass` | EXPECTED | `_env_info`: a build without cuDNN omits the version (unknown, not faked). | keep |
+| `sidecar-torch/training_template.py:544` | `except Exception: pass` | EXPECTED | `_env_info`: torch metadata unavailable → the field is omitted (unknown). | keep |
+| `sidecar-torch/training_template.py:549` | `except Exception: pass` | EXPECTED | `_env_info`: NumPy absent → version field omitted (unknown). | keep |
+| `sidecar-torch/training_template.py:564` | `except Exception: pass` | EXPECTED | `_env_info`: a failing CUDA query omits the GPU fields (unknown). | keep |
+| `sidecar-torch/training_template.py:571` | `except Exception: pass` | EXPECTED | `_env_info`: `sysconf` unsupported → RAM field omitted (unknown). | keep |
+| `sidecar-torch/training_template.py:581` | `except Exception: pass` | EXPECTED | `_env_info`: not a git repo / git absent → the commit field is omitted, never invented. | keep |
+| `sidecar-torch/training_template.py:935` | `except (TypeError, ValueError): return False` | EXPECTED | `_is_finite_loss`: a non-numeric loss is not finite → integrity fails closed. | keep |
+| `sidecar-torch/training_template.py:1042` | `except Exception: continue` | EXPECTED | a torn/corrupt event line is skipped; the required event kinds are still checked by name. | keep |
+| `sidecar-torch/training_template.py:1438` | `except Exception: pass` | EXPECTED | mol-graph disk cache write is best-effort; the graph is returned from memory. | keep |
+| `sidecar-torch/training_template.py:1559` | `except Exception: pass` | EXPECTED | ESPF token disk cache write is best-effort; the ids are returned from memory. | keep |
+| `sidecar-torch/training_template.py:2186` | `except (TypeError, AttributeError): pass` | EXPECTED | older torch without `warn_only`: determinism is documented, not enforced (never a success claim). | keep |
+| `sidecar-torch/training_template.py:2585` | `except Exception: pass` | EXPECTED | cancel-at-boundary `last.pt` save is best-effort; the cancellation is already recorded and `_compute_resumable` reports honestly. | keep |
+| `sidecar-torch/training_template.py:2706` | `except Exception: pass` | EXPECTED | signal-cancel `last.pt` save is best-effort; the cancellation is already recorded. | keep |
+| `sidecar-torch/training_template.py:2721` | `except Exception: pass` | EXPECTED | failure-path `last.pt` save is best-effort; the failure is already recorded and the run is not claimed resumable. | keep |
+
+## Fixed hidden failures (no longer swallowing)
+
+| Location (before) | Was | Now |
+|---|---|---|
+| `sidecar-torch/training_template.py` `_read_status` | `except Exception: return ""` — an unreadable status looked like "not started", so a late terminal write could overwrite a real terminal state (CANCELLED → SUCCEEDED). | `FileNotFoundError` → `""`; any other read error → the explicit `_STATUS_UNREADABLE` sentinel, which blocks every transition, and `main()` turns it into a failed run. |
+| `sidecar-torch/training_template.py` dummy-forward `except StopIteration` | `pass` — an empty training loader (`drop_last=True` with `batch_size` > training rows) skipped lazy init and every epoch reported `train_loss=0.0`, ending `done`. | `fail("split", …)` — an untrained run can never be reported done. |
+| `sidecar-torch/training_template.py` `_compute_resumable` | a corrupt/unreadable manifest left the run hashes unknown, which was treated as a match → `resumable: true` for a checkpoint that might belong to another model. | unknown run hashes → `resumable: false`, reason `run hashes unavailable (manifest unreadable)`. |
+| `sidecar-torch/dataset_handlers.py` `espf_vocab_size` | a missing ESPF codebook returned `2` — an invented, unusably small `num_embeddings` while `tokenize_espf` actually fell back to the char-level tokenizer. | returns the fallback char-level sequence vocab size that `tokenize_espf` really uses, so the inspect note is true. |
+| `sidecar-torch/training_template.py` `_restore_rng` | four `except Exception: pass` handlers — a resume whose torch/CUDA/NumPy/stdlib random streams could not be restored silently continued with a fresh-seed stream while the run claimed to continue "from the same random streams" (Phase 26). | `_restore_rng` returns `{stream: restored / absent in checkpoint / failed: <reason>}`, recorded as `rng_restore` in the `run.resumed` event (never fatal: a CUDA stream on a CPU-only resume is legitimately unrestorable, but it is now visible). Regression: `verify-checkpoint.ts [rng restore failure is recorded]`. |
+
+## Summary — Python
+
+- Sites detected by the AST scan before the fix: **69**.
+- Swallowing sites remaining after the fix (all EXPECTED, documented above): **62**.
+- AST-flagged sites that became explicit handlers: **3** (`_read_status`'s
+  non-ENOENT branch, the empty-loader `StopIteration`, the corrupt-manifest
+  resumable branch). `espf_vocab_size` changed from `return 2` to a call, so it
+  stopped being a swallow.
+- Additional non-swallowing hidden handlers reviewed (single literal
+  assignment, so the guard does not flag them): **26**; the notable ones in the
+  trainer/dataset paths are listed under NOTES of the Phase-50-Python report.
+- Regression tests: `scripts/verify-failures.ts` (status file, empty loader),
+  `scripts/verify-integrity.ts` (corrupt-manifest resumable),
+  `scripts/test-sidecar-robustness.ts` (ESPF vocab fallback).

@@ -538,5 +538,27 @@ section('12. UI: RunDetailModal banner strings + manifest.json read')
     t.includes('reason: string'))
 }
 
+// ── 13. corrupt manifest on a failed/cancelled run → resumable false (hashes unknown) ──
+// Phase 50: a corrupt/unreadable manifest left the run's OWN hashes unknown,
+// which _compute_resumable treated as a match → resumable true for a checkpoint
+// that might belong to a different model. It must now report the unknown.
+section('13. corrupt manifest -> resumable false, reason "run hashes unavailable"')
+{
+  const dir = makeRunDir('corrupt-manifest-resumable')
+  const src = runWrap(dir, 'none')
+  check('source healthy run exits 0', src.exitCode === 0, src.stderr.slice(0, 200))
+  // Corrupt manifest.json, force a cancelled re-entry, re-run the trainer.
+  writeFileSync(join(dir, 'manifest.json'), '{not-json')
+  writeFileSync(join(dir, 'status'), 'cancelled\n')
+  spawnSync(pythonCmd, ['-u', 'train.py'], { cwd: dir, encoding: 'utf8', timeout: 30_000 })
+  check('status stays cancelled', readStatus(dir) === 'cancelled', readStatus(dir))
+  const m = readMetrics(dir)
+  const r = m.resumable as Record<string, unknown> | undefined
+  check('resumable.resumable == false', r?.resumable === false, JSON.stringify(r))
+  check('reason names the unknown hashes',
+    typeof r?.reason === 'string' && (r.reason as string).includes('hashes unavailable'),
+    String(r?.reason))
+}
+
 console.log(failures === 0 ? '\n✓ all integrity checks passed' : `\n✗ ${failures} check(s) failed`)
 process.exit(failures === 0 ? 0 : 1)

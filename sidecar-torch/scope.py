@@ -66,7 +66,7 @@ def _getuid() -> int | None:
     """Current uid, or None where the platform has no ``os.getuid``."""
     try:
         return os.getuid()
-    except AttributeError:
+    except AttributeError:  # platform has no os.getuid (Windows) → uid unknown, not invented
         return None
 
 
@@ -268,7 +268,7 @@ def _is_inside(child: str, parent: str) -> bool:
     """Exact containment: ``/tmp/ws-evil`` is NOT inside ``/tmp/ws``."""
     try:
         return os.path.commonpath([child, parent]) == parent
-    except ValueError:
+    except ValueError:  # mixed absolute/relative or different drives → not inside (fail closed)
         return False
 
 

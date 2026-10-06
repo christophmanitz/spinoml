@@ -235,6 +235,40 @@ console.log('  [process termination]')
   check('no run.done event after kill', !readEvents(dir).some((e) => e.kind === 'run.done'))
 }
 
+// ── 10. unreadable status file — must fail, never run with an unknown state ──
+// Phase 50: _read_status used to return "" for ANY read error, so an unreadable
+// status file looked like "not started" and a late terminal write could
+// overwrite a real terminal state. A directory in place of the status file makes
+// every read fail; the trainer must refuse to start (stage 'config').
+console.log('  [unreadable status file]')
+{
+  const dir = makeDir('status-unreadable')
+  execSync('mkdir -p "' + join(dir, 'status') + '"')
+  const { exitCode } = tryRun(dir)
+  const events = readEvents(dir)
+  const failedEv = events.find((e) => e.kind === 'run.failed') as Record<string, unknown> | undefined
+  check('unreadable status: exit ≠ 0', exitCode !== 0, `exit=${exitCode}`)
+  check('unreadable status: run.failed emitted', !!failedEv)
+  check('unreadable status: stage = config', failedEv?.stage === 'config', String(failedEv?.stage))
+  const metrics = existsSync(join(dir, 'metrics.json'))
+    ? JSON.parse(readFileSync(join(dir, 'metrics.json'), 'utf8')) as Record<string, unknown>
+    : {}
+  check('unreadable status: metrics.status = failed', metrics.status === 'failed', String(metrics.status))
+  check('unreadable status: no run.done event', !events.some((e) => e.kind === 'run.done'))
+}
+
+// ── 11. empty training loader — must fail, never report an untrained run as done ──
+// Phase 50: drop_last=True with batch_size > training rows makes the loader
+// yield zero batches. The old `except StopIteration: pass` skipped lazy init and
+// every epoch reported train_loss=0.0, ending 'done'. Now it fails at 'split'.
+runCase('empty training loader (drop_last + batch_size > rows)',
+  makeDir('empty-loader', {
+    runJsonOverride: {
+      training: { ...makeRunJson().training, val_split: 0, drop_last: true, batch_size: 64, epochs: 2 },
+    },
+  }),
+  { expectStage: 'split' })
+
 // ── summary ──
 console.log(failures === 0 ? '\n✓ all failure tests passed' : `\n✗ ${failures} check(s) failed`)
 process.exit(failures === 0 ? 0 : 1)

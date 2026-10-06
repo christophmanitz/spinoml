@@ -92,7 +92,7 @@ def detect_kind(abspath: str) -> str:
                     first = f.readline().strip()
                 if first and _looks_like_smiles(first.split()[0]):
                     return "molecule"
-            except OSError:
+            except OSError:  # sniffing is heuristic: an unreadable .txt just stays "unknown"
                 pass
         # HuggingFace reference file: contains 'hf:<name>'
         if ext == ".hf":
@@ -132,7 +132,7 @@ def _dir_table(p: Path) -> Path | None:
         if not p.is_dir():
             return None
         files = [c for c in p.iterdir() if c.is_file() and c.suffix.lower() in TABULAR_EXTS]
-    except OSError:
+    except OSError:  # unreadable dir → no primary table here (kind stays unknown)
         return None
     if not files:
         return None
@@ -171,7 +171,7 @@ def _list_pt_files(path: Path, cap: int = 100000) -> list[Path]:
     """`.pt`/`.pth` files directly under `path` (sorted), capped for speed."""
     try:
         files = sorted(c for c in path.iterdir() if c.is_file() and c.suffix.lower() in (".pt", ".pth"))
-    except OSError:
+    except OSError:  # unreadable dir → no .pt files discovered (kind stays unknown)
         return []
     return files[:cap]
 
@@ -183,7 +183,7 @@ def _looks_like_graph_folder(path: Path) -> bool:
 def _looks_like_image_folder(path: Path) -> bool:
     try:
         subdirs = [c for c in path.iterdir() if c.is_dir()]
-    except OSError:
+    except OSError:  # unreadable dir → not recognized as an image folder
         return False
     if not subdirs:
         return False
@@ -192,7 +192,7 @@ def _looks_like_image_folder(path: Path) -> bool:
             for f in sub.iterdir():
                 if f.is_file() and f.suffix.lower() in IMAGE_EXTS:
                     return True
-        except OSError:
+        except OSError:  # unreadable subdir → skip it when probing for images
             continue
     return False
 
@@ -274,7 +274,7 @@ def _fingerprint_manifest(abspath: str) -> dict[str, Any] | None:
             h.update(f"{name}:{size}:{hx}\n".encode())
         return {"alg": "sha256", "mode": "config+content", "hash": h.hexdigest(),
                 "size_bytes": sum(p[2] for p in parts), "n_files": len(parts)}
-    except Exception:
+    except Exception:  # fingerprint is optional provenance; None = unknown, never a false id
         return None
 
 
@@ -304,7 +304,7 @@ def _fingerprint_for(abspath: str, kind: str) -> dict[str, Any] | None:
             # the hash pins the reference file, NOT the remote content.
             h, size = _sha256_file(Path(abspath))
             return {"alg": "sha256", "mode": "reference", "hash": h, "size_bytes": size}
-    except (OSError, ScopeError):
+    except (OSError, ScopeError):  # fingerprint is optional provenance; None = no id claimed
         return None
     return None
 
@@ -412,7 +412,7 @@ def _describe_dir_bundle(d: Path, table: Path) -> dict[str, Any]:
                     card = None
                 except Exception:
                     card = None
-    except OSError:
+    except OSError:  # unreadable dir → empty side-file summary; the table itself is valid
         pass
     return {"files": files, "subdirs": subdirs, "prep_card": card}
 
@@ -461,9 +461,9 @@ def _inspect_image_folder(abspath: str) -> dict[str, Any]:
                     "b64": base64.b64encode(buf.getvalue()).decode(),
                     "w": img.size[0], "h": img.size[1],
                 })
-            except Exception:
+            except Exception:  # a failed thumbnail is skipped; the others stay valid
                 continue
-    except ImportError:
+    except ImportError:  # optional dependency: Pillow absent → no thumbnails, structure still shown
         pass
     return {
         "kind": "image_folder",
@@ -642,7 +642,7 @@ def _inspect_tensor(abspath: str) -> dict[str, Any]:
             info["min"] = float(ft.min())
             info["max"] = float(ft.max())
             info["mean"] = float(ft.mean())
-        except Exception:
+        except Exception:  # tensor stats are informational; the tensor itself loaded fine
             pass
     elif isinstance(t, dict):
         info["container"] = "dict"
@@ -679,7 +679,7 @@ def _inspect_protein(abspath: str) -> dict[str, Any]:
             "chain_info": chain_info[:16],
             "size_bytes": p.stat().st_size,
         }
-    except ImportError:
+    except ImportError:  # optional dependency: Biopython absent → use the line-based fallback
         pass
     except Exception as e:
         return {"kind": "protein", "ok": False, "error": f"biopython parse failed: {e}"}
@@ -963,7 +963,7 @@ def _cached_mol_data(smi: str, cache_dir: Path):
             raise
         except UnsafePickleError:
             raise
-        except Exception:
+        except Exception:  # corrupt mol-cache entry → rebuild it from the SMILES
             pass
     d = _mol_data(smi)
     try:
@@ -1109,7 +1109,10 @@ def espf_vocab_size(spec: dict[str, Any]) -> int:
     try:
         cb = _load_espf_codebook(espf_codebook_name(spec))
     except FileNotFoundError:
-        return 2
+        # No codebook → tokenize_espf silently degrades to the char-level
+        # sequence tokenizer. Report THAT vocabulary size so the inspect note
+        # is not an invented (and unusably small) 2.
+        return seq_vocab_size({**spec, "vocab": "smiles"})
     return len(cb["subwords"]) + 2
 
 
@@ -1117,7 +1120,7 @@ def espf_substructures(spec: dict[str, Any]) -> list[str]:
     """id → substructure string (index 0/1 = PAD/UNK), for interpretable labels."""
     try:
         cb = _load_espf_codebook(espf_codebook_name(spec))
-    except FileNotFoundError:
+    except FileNotFoundError:  # no codebook → no labels; the token preview still shows
         return []
     return ["<pad>", "<unk>"] + list(cb["subwords"])
 
@@ -1147,7 +1150,7 @@ def ensure_espf_cache(base: Path, name: str = "drug") -> Path | None:
     cache instead — analogous to .graphcache. Best-effort; returns the path or None."""
     try:
         cb = _load_espf_codebook(name)
-    except FileNotFoundError:
+    except FileNotFoundError:  # no codebook → nothing to cache; explicit absent file
         return None
     import gzip
     import json
@@ -1531,7 +1534,7 @@ def _stats_tabular(abspath: str) -> dict[str, Any]:
                         "counts": [int(c) for c in hist],
                         "edges": [float(e) for e in edges],
                     }
-            except Exception:
+            except Exception:  # histogram is informational; the column summary is still emitted
                 pass
         summary.append(item)
     corr: list[list[float]] | None = None
@@ -1573,7 +1576,7 @@ def _stats_image_folder(abspath: str) -> dict[str, Any]:
                     try:
                         with Image.open(f) as im:
                             sizes.append(im.size)
-                    except Exception:
+                    except Exception:  # a failed image open is skipped; other sizes still counted
                         continue
     except OSError as e:
         return {"kind": "image_folder", "ok": False, "error": f"could not read image folder: {e}"}
@@ -1617,7 +1620,7 @@ def _stats_tensor(abspath: str) -> dict[str, Any]:
         import numpy as np
         hist, edges = np.histogram(sample.numpy(), bins=40)
         info["hist"] = {"counts": [int(c) for c in hist], "edges": [float(e) for e in edges]}
-    except Exception:
+    except Exception:  # histogram is informational; the tensor stats are still emitted
         pass
     info["std"] = float(ft.std())
     info["zeros_frac"] = float((ft == 0).float().mean())

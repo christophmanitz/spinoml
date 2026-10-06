@@ -329,6 +329,30 @@ async function main() {
   await wait(300)
   ok('health fails after shutdown', !(await isUp()))
 
+  // ── Phase 50: ESPF vocab fallback is truthful when the codebook is missing ──
+  console.log('\n— ESPF vocab fallback (missing codebook) is truthful —')
+  {
+    const { spawnSync } = await import('node:child_process')
+    const script = [
+      'import sys, tempfile',
+      'from pathlib import Path',
+      "sys.path.insert(0, 'sidecar-torch')",
+      'import dataset_handlers as dh',
+      'dh.ESPF_DIR = Path(tempfile.mkdtemp())  # no codebook files here',
+      'dh._ESPF_CACHE.clear()',
+      "spec = {'kind': 'espf', 'codebook': 'drug'}",
+      'got = dh.espf_vocab_size(spec)',
+      "want = dh.seq_vocab_size({**spec, 'vocab': 'smiles'})",
+      'assert got == want, (got, want)',
+      "t = dh.tokenize_espf('CCOCC', spec)",
+      'assert int(t.max()) < want, (int(t.max()), want)',
+      "print('OK', got)",
+    ].join('\n')
+    const r = spawnSync('python', ['-c', script], { cwd: process.cwd(), encoding: 'utf8' })
+    ok('missing ESPF codebook → vocab matches the char-level fallback',
+       r.status === 0 && r.stdout.includes('OK'), (r.stderr || r.stdout || '').slice(0, 240))
+  }
+
   console.log(`\n${failed === 0 ? '✓' : '✗'} ${passed} checks passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
 }

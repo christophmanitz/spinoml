@@ -218,6 +218,22 @@ export const SUITES: readonly Suite[] = [
     why: 'sidecarFetch/probe vs a fake sidecar speaking the auth protocol (retry-once, 401/403, health states, streaming)',
   },
   {
+    name: 'verify:silent-except-py',
+    npmScript: 'verify:silent-except-py',
+    category: 'unit',
+    timeoutSec: 60,
+    needs: ['torch-env'],
+    why: 'No undocumented swallowing except handler in sidecar-torch/*.py (AST guard + allow-list in SILENT_EXCEPTIONS.md)',
+  },
+  {
+    name: 'test:silent-except-py',
+    npmScript: 'test:silent-except-py',
+    category: 'unit',
+    timeoutSec: 60,
+    needs: ['torch-env'],
+    why: 'Self-test of the Python silent-exception guard (23 detect / not-detect cases)',
+  },
+  {
     name: 'verify:sidecar-fetch',
     npmScript: 'verify:sidecar-fetch',
     category: 'unit',

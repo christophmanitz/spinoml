@@ -2873,6 +2873,22 @@ Fix hidden failures.
 > listing exit/timeout, `slurmStatus` (a timeout, abort or ssh exit 255 is an error, never an invented
 > `UNKNOWN`), mcp-bridge rejected handler → JSON-RPC error. Before-fix guard
 > output: `docs/engineering/evidence/phase50-node-before.txt`. **Still open:** Python sidecars and 39 Rust sites.
+
+> **2026-10-06 — Python half implemented.** `scripts/verify-silent-except-py.py` (stdlib `ast`; `npm run
+> verify:silent-except-py`, self-test `test:silent-except-py` with 23 detect/not-detect cases) finds every
+> swallowing `except`/`contextlib.suppress` in `sidecar-torch/*.py` (69 sites incl. the trainer) and fails
+> an undocumented one (no ≥15-char prose reason, or no row in the Python allow-list of
+> `docs/engineering/SILENT_EXCEPTIONS.md`, or a stale row). 62 sites remain, all EXPECTED with a one-sentence
+> reason (optional imports, best-effort caches/cleanup, informational stats); **hidden failures made
+> explicit:** an unreadable `status` file looked "not started" and could let a late write overwrite a
+> CANCELLED run (now a sentinel that blocks transitions and fails the run), an empty training loader
+> (`drop_last` with batch > rows) ended `done` with `train_loss=0.0` (now `fail("split")`), a corrupt
+> manifest made `_compute_resumable` treat unknown run hashes as a match (now `resumable:false`), a
+> missing ESPF codebook made `espf_vocab_size` return an invented `2`. **Found in review (the worker had
+> allow-listed it):** four `except Exception: pass` around the RNG restore on resume — a resume whose
+> random streams could not be restored continued with a fresh seed while claiming "same random streams";
+> `_restore_rng` now returns a per-stream status recorded as `rng_restore` in `run.resumed`
+> (`verify-checkpoint.ts [rng restore failure is recorded]`). Still open: the 39 Rust sites (Phase 48).
 ---
 
 # 52. PHASE 51 – RESOURCE LEAK TESTING

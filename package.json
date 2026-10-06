@@ -60,6 +60,8 @@
     "test:datasets": "python scripts/test-datasets.py",
     "test:scope": "python scripts/test-scope.py",
     "test:safe-load": "python scripts/test-safe-load.py",
+    "verify:silent-except-py": "python scripts/verify-silent-except-py.py",
+    "test:silent-except-py": "python scripts/verify-silent-except-py.py --self-test",
     "test:llm-safety": "tsx scripts/test-llm-safety.ts",
     "test:llm-validation-parity": "tsx scripts/test-llm-validation-parity.ts",
     "test:sidecar-auth-torch": "tsx scripts/test-sidecar-auth-torch.ts",

@@ -62,12 +62,12 @@ def register_safe_globals() -> list[str]:
         _add("torch_geometric.data.Data", getattr(_pg_data, "Data", None))
         _add("torch_geometric.data.data.DataEdgeAttr", getattr(_pg_data, "DataEdgeAttr", None))
         _add("torch_geometric.data.data.DataTensorAttr", getattr(_pg_data, "DataTensorAttr", None))
-    except ImportError:
+    except ImportError:  # optional dependency: PyG absent → these globals are not registered
         pass
     try:
         import torch_geometric.data as _pg
         _add("torch_geometric.data.HeteroData", getattr(_pg, "HeteroData", None))
-    except ImportError:
+    except ImportError:  # optional dependency: PyG absent → HeteroData global not registered
         pass
     try:
         import torch_geometric.data.storage as _pg_store
@@ -75,7 +75,7 @@ def register_safe_globals() -> list[str]:
         _add("torch_geometric.data.storage.NodeStorage", getattr(_pg_store, "NodeStorage", None))
         _add("torch_geometric.data.storage.EdgeStorage", getattr(_pg_store, "EdgeStorage", None))
         _add("torch_geometric.data.storage.BaseStorage", getattr(_pg_store, "BaseStorage", None))
-    except ImportError:
+    except ImportError:  # optional dependency: PyG absent → storage globals not registered
         pass
     try:
         import numpy as _np
@@ -101,7 +101,7 @@ def register_safe_globals() -> list[str]:
                     _cls = getattr(_np_dtypes, _name, None)
                     if isinstance(_cls, type):
                         _add("numpy.dtypes." + _name, _cls)
-        except ImportError:
+        except ImportError:  # optional: numpy.dtypes unavailable on this build → skip
             pass
     try:
         torch.serialization.add_safe_globals(allow)
