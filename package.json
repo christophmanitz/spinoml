@@ -27,6 +27,8 @@
     "verify:credentials": "tsx scripts/verify-credentials.ts",
     "verify:slurm": "tsx scripts/verify-slurm.ts",
     "verify:recovery": "tsx scripts/verify-recovery.ts",
+    "verify:reference": "tsx scripts/verify-reference.ts",
+    "verify:reference-train": "tsx scripts/verify-reference-train.ts",
     "verify:ui-state": "tsx scripts/verify-ui-state.ts",
     "verify:frontend-errors": "tsx scripts/verify-frontend-errors.ts",
     "verify:graph-revision": "tsx scripts/verify-graph-revision.ts",

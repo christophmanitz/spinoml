@@ -1,0 +1,164 @@
+{
+  "format": "spinoml",
+  "version": 1,
+  "savedAt": "1970-01-01T00:00:00.000Z",
+  "graph": {
+    "nodes": [
+      {
+        "id": "a",
+        "layerType": "Input",
+        "params": {
+          "name": "a",
+          "shape": [
+            1,
+            6
+          ],
+          "dtype": "float32",
+          "dataset": "",
+          "features": [],
+          "target": ""
+        },
+        "position": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": "b",
+        "layerType": "Input",
+        "params": {
+          "name": "b",
+          "shape": [
+            1,
+            4
+          ],
+          "dtype": "float32",
+          "dataset": "",
+          "features": [],
+          "target": ""
+        },
+        "position": {
+          "x": 360,
+          "y": 0
+        }
+      },
+      {
+        "id": "fc_a",
+        "layerType": "Linear",
+        "params": {
+          "in_features": 6,
+          "out_features": 8,
+          "bias": true
+        },
+        "position": {
+          "x": 0,
+          "y": 160
+        }
+      },
+      {
+        "id": "relu_a",
+        "layerType": "ReLU",
+        "params": {
+          "inplace": false
+        },
+        "position": {
+          "x": 0,
+          "y": 300
+        }
+      },
+      {
+        "id": "fc_b",
+        "layerType": "Linear",
+        "params": {
+          "in_features": 4,
+          "out_features": 8,
+          "bias": true
+        },
+        "position": {
+          "x": 360,
+          "y": 160
+        }
+      },
+      {
+        "id": "relu_b",
+        "layerType": "ReLU",
+        "params": {
+          "inplace": false
+        },
+        "position": {
+          "x": 360,
+          "y": 300
+        }
+      },
+      {
+        "id": "cat",
+        "layerType": "Concat",
+        "params": {
+          "dim": 1
+        },
+        "position": {
+          "x": 180,
+          "y": 440
+        }
+      },
+      {
+        "id": "fc",
+        "layerType": "Linear",
+        "params": {
+          "in_features": 16,
+          "out_features": 2,
+          "bias": true
+        },
+        "position": {
+          "x": 180,
+          "y": 580
+        }
+      },
+      {
+        "id": "out",
+        "layerType": "Output",
+        "params": {
+          "name": "out"
+        },
+        "position": {
+          "x": 180,
+          "y": 720
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "a",
+        "target": "fc_a"
+      },
+      {
+        "source": "fc_a",
+        "target": "relu_a"
+      },
+      {
+        "source": "b",
+        "target": "fc_b"
+      },
+      {
+        "source": "fc_b",
+        "target": "relu_b"
+      },
+      {
+        "source": "relu_a",
+        "target": "cat"
+      },
+      {
+        "source": "relu_b",
+        "target": "cat"
+      },
+      {
+        "source": "cat",
+        "target": "fc"
+      },
+      {
+        "source": "fc",
+        "target": "out"
+      }
+    ]
+  }
+}

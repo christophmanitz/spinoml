@@ -26,6 +26,8 @@ sidecar-torch/.venv
 
 # Project files
 *.spinoml
+# committed reference-experiment graph fixtures (compared byte-for-byte by verify:reference)
+!examples/reference-experiments/**/*.spinoml
 
 # Secrets
 .env

@@ -2877,6 +2877,22 @@ Conv
 Activation
  ↓
 Pooling
+> **2026-10-06 — implemented.** Three reference experiments with committed graph fixtures
+> (`examples/reference-experiments/{mlp,cnn,multi-input}/model.spinoml`; the harness asserts the
+> committed bytes equal a fresh serialization): A MLP (Linear-ReLU-Linear), B CNN (Reshape-Conv2d-
+> ReLU-MaxPool-Flatten-Linear on 8×8 images stored as 64 tabular columns), C multi-input (two
+> Linear branches → Concat → Linear; trained through a `.manifest` with two per-row `.pt` branches,
+> an existing trainer feature). `npm run verify:reference-train` runs each through the REAL
+> `train.py` (55 s) and asserts the full artifact set (graph, `model.py` byte-equal to fresh
+> codegen, `run.json` with dataset fingerprint/seed/independently recomputed snapshot hashes,
+> `best.pt`/`last.pt` loadable with all state keys, `metrics.json` `n_params`, `events.jsonl` with
+> `config.env`/`run.provenance`/`run.determinism`/`run.snapshot`/N×`epoch.end`, stdout/stderr logs),
+> loss decrease, val accuracy ≥ 0.75 (measured 0.95 / 1.0), checkpoint↔model consistency
+> (`strict=True` load, re-evaluated val loss equal to the trainer's best), a second run with the
+> same seed reproduces every per-epoch loss to 1e-6 (measured 0.0 on CPU) and a different seed
+> differs. A first delegated attempt returned stub files that printed SKIPPED and exited 0; it was
+> rejected and the work redone in two smaller blocks.
+
  ↓
 Linear
 ```
@@ -2938,6 +2954,15 @@ Trainable parameters
 must be calculable.
 
 Compare against known/reference implementations for test models.
+> **2026-10-06 — implemented, no generator defect found.** `scripts/lib/reference_models.py` holds
+> hand-written `RefMLP`/`RefCNN`/`RefMultiInput` (written as a person would, not derived from the
+> generated code). `npm run verify:reference` copies the generated parameters pairwise (count and
+> shapes asserted first) and compares, in `eval()` mode: parameter counts, forward outputs
+> (float64 rtol 1e-10 / float32 rtol 1e-5), CrossEntropy loss (1e-12) and EVERY parameter gradient
+> (float64) — all equal for the three graphs. A negative control perturbs one reference weight and
+> must be detected; a mutation test (ReLU→Tanh in the reference) made MLP and CNN fail in forward,
+> loss and gradients with exit 1, so the harness can see a real difference.
+
 
 ---
 
@@ -2952,6 +2977,11 @@ If unavailable:
 ```text
 SKIPPED – CUDA unavailable
 ```
+
+> **2026-10-06 — implemented.** Total and trainable counts are asserted for generated AND
+> hand-written models against analytic formulas (MLP 210 = 176+34, CNN 170 = 40+130,
+> multi-input 130 = 56+40+34), and the trainer's `metrics.json` `n_params` must equal them
+> (`verify:reference`, `verify:reference-train`).
 
 Do not claim CUDA compatibility merely because the code contains a CUDA option.
 
@@ -2969,6 +2999,12 @@ float64
 Add other dtypes only where the existing project intends to support them.
 
 Do not promise unsupported dtype combinations.
+> **2026-10-06 — CPU PASS, CUDA SKIPPED.** CPU: every comparison and training run above;
+> `config.env.device == "cpu"` is asserted. CUDA: `SKIPPED  CUDA — torch.cuda.is_available() is
+> False` is printed explicitly by both harnesses (this machine has the CPU build `torch 2.12.0+cpu`);
+> the CUDA branches (forward comparison, a CPU-vs-CUDA best-val-loss check within 1e-3) are
+> implemented and run automatically where a GPU exists. No CUDA claim is made.
+
 
 ---
 

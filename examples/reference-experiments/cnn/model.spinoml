@@ -1,0 +1,167 @@
+{
+  "format": "spinoml",
+  "version": 1,
+  "savedAt": "1970-01-01T00:00:00.000Z",
+  "graph": {
+    "nodes": [
+      {
+        "id": "x",
+        "layerType": "Input",
+        "params": {
+          "name": "x",
+          "shape": [
+            1,
+            64
+          ],
+          "dtype": "float32",
+          "dataset": "",
+          "features": [],
+          "target": ""
+        },
+        "position": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": "reshape",
+        "layerType": "Reshape",
+        "params": {
+          "shape": [
+            1,
+            8,
+            8
+          ]
+        },
+        "position": {
+          "x": 0,
+          "y": 140
+        }
+      },
+      {
+        "id": "conv",
+        "layerType": "Conv2d",
+        "params": {
+          "in_channels": 1,
+          "out_channels": 4,
+          "kernel_size": [
+            3,
+            3
+          ],
+          "stride": [
+            1,
+            1
+          ],
+          "padding": [
+            1,
+            1
+          ],
+          "bias": true
+        },
+        "position": {
+          "x": 0,
+          "y": 280
+        }
+      },
+      {
+        "id": "act",
+        "layerType": "ReLU",
+        "params": {
+          "inplace": false
+        },
+        "position": {
+          "x": 0,
+          "y": 420
+        }
+      },
+      {
+        "id": "pool",
+        "layerType": "MaxPool2d",
+        "params": {
+          "kernel_size": [
+            2,
+            2
+          ],
+          "stride": [
+            2,
+            2
+          ],
+          "padding": [
+            0,
+            0
+          ]
+        },
+        "position": {
+          "x": 0,
+          "y": 560
+        }
+      },
+      {
+        "id": "flat",
+        "layerType": "Flatten",
+        "params": {
+          "start_dim": 1,
+          "end_dim": -1
+        },
+        "position": {
+          "x": 0,
+          "y": 700
+        }
+      },
+      {
+        "id": "fc",
+        "layerType": "Linear",
+        "params": {
+          "in_features": 64,
+          "out_features": 2,
+          "bias": true
+        },
+        "position": {
+          "x": 0,
+          "y": 840
+        }
+      },
+      {
+        "id": "out",
+        "layerType": "Output",
+        "params": {
+          "name": "out"
+        },
+        "position": {
+          "x": 0,
+          "y": 980
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "x",
+        "target": "reshape"
+      },
+      {
+        "source": "reshape",
+        "target": "conv"
+      },
+      {
+        "source": "conv",
+        "target": "act"
+      },
+      {
+        "source": "act",
+        "target": "pool"
+      },
+      {
+        "source": "pool",
+        "target": "flat"
+      },
+      {
+        "source": "flat",
+        "target": "fc"
+      },
+      {
+        "source": "fc",
+        "target": "out"
+      }
+    ]
+  }
+}

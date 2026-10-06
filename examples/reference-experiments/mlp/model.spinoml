@@ -1,0 +1,94 @@
+{
+  "format": "spinoml",
+  "version": 1,
+  "savedAt": "1970-01-01T00:00:00.000Z",
+  "graph": {
+    "nodes": [
+      {
+        "id": "x",
+        "layerType": "Input",
+        "params": {
+          "name": "x",
+          "shape": [
+            1,
+            10
+          ],
+          "dtype": "float32",
+          "dataset": "",
+          "features": [],
+          "target": ""
+        },
+        "position": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": "fc1",
+        "layerType": "Linear",
+        "params": {
+          "in_features": 10,
+          "out_features": 16,
+          "bias": true
+        },
+        "position": {
+          "x": 0,
+          "y": 140
+        }
+      },
+      {
+        "id": "act",
+        "layerType": "ReLU",
+        "params": {
+          "inplace": false
+        },
+        "position": {
+          "x": 0,
+          "y": 280
+        }
+      },
+      {
+        "id": "fc2",
+        "layerType": "Linear",
+        "params": {
+          "in_features": 16,
+          "out_features": 2,
+          "bias": true
+        },
+        "position": {
+          "x": 0,
+          "y": 420
+        }
+      },
+      {
+        "id": "out",
+        "layerType": "Output",
+        "params": {
+          "name": "out"
+        },
+        "position": {
+          "x": 0,
+          "y": 560
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "x",
+        "target": "fc1"
+      },
+      {
+        "source": "fc1",
+        "target": "act"
+      },
+      {
+        "source": "act",
+        "target": "fc2"
+      },
+      {
+        "source": "fc2",
+        "target": "out"
+      }
+    ]
+  }
+}
