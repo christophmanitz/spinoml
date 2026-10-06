@@ -5,6 +5,7 @@
 import { inferShapes, type InferResult } from './client'
 import { generateFromSnapshot } from '../codegen/generator'
 import { parseFile } from '../persistence/file'
+import { assertTrusted, UntrustedCodeError } from '../trust/guard'
 
 export type ModelVerification =
   | { status: 'valid' }
@@ -27,6 +28,14 @@ export function verificationFromInferResult(r: InferResult | { ok: false; error:
  *  parse → codegen → run the generated forward pass on the torch sidecar.       */
 export async function verifyModelForTraining(modelSpinoml: string): Promise<ModelVerification> {
   const snap = parseFile(modelSpinoml)
+  // Phase 43 — fail closed before any sidecar call: unapproved Custom/DataOp
+  // code is UNVERIFIABLE (→ 'unknown', which NewRunModal already blocks).
+  try {
+    await assertTrusted(snap.nodes)
+  } catch (e) {
+    if (e instanceof UntrustedCodeError) return { status: 'unknown', reason: e.message }
+    throw e
+  }
   const { code, inputs } = generateFromSnapshot(snap)
   const inputShapes = inputs.map((i) => i.shape)
   const inputDtypes = inputs.map((i) => i.dtype)

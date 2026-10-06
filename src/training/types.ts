@@ -1,4 +1,5 @@
 import type { DatasetFingerprint } from '../datasets/types'
+import type { CodeTrustEntry } from '../trust/gate'
 
 // Shared types for the Phase 13 training-run system. These mirror the
 // run.json schema written into experiments/runs/<run_id>/ and the events.jsonl
@@ -144,6 +145,12 @@ export type RunSnapshot = {
   model_py_sha256: string
   /** DataOp preprocessing scripts extracted from the graph at launch. */
   preprocessing: PreprocessingStep[]
+  /** Phase 43 — provenance of every intentional-arbitrary-code blob (Custom
+   *  layer / DataOp script) that ran in this experiment, with the human approval
+   *  origin + timestamp (or 'unrecorded'/null). Additive to the frozen bytes:
+   *  train.py's `_verify_snapshot` reads only the two hashes, so this cannot
+   *  break snapshot verification. */
+  code_trust: CodeTrustEntry[]
 }
 
 /** A DataOp step baked into the graph (Phase 20): the script that produced

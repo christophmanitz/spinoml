@@ -4,6 +4,8 @@ import { useGraphStore } from './canvas/GraphStore'
 import { useScopeStore } from './canvas/scopeStore'
 import { downloadCurrent, pickAndLoad, clearAutosave } from './persistence/file'
 import { TEMPLATES } from './templates/templates'
+import { collectCodeBlobs, hashBlob } from './trust/codeBlobs'
+import { trust } from './trust/trustStore'
 import { useWorkspaceStore, ROOT_ID } from './workspace/store'
 import { isTauri } from './workspace/tauri-fs'
 import { confirmDialog } from './ui/confirm'
@@ -103,8 +105,14 @@ export default function Toolbar() {
             onSelect={async () => {
               if (useGraphStore.getState().nodes.length > 1 &&
                   !(await confirmDialog(`Replace current graph with "${t.name}"? (Cmd+Z to undo)`))) return
+              const snap = t.build()
+              // Phase 43 — templates ship WITH the app, so inserting one is a
+              // legitimate origin: approve each Custom/DataOp blob as 'template'.
+              for (const blob of collectCodeBlobs(snap.nodes)) {
+                trust.approve(await hashBlob(blob.kind, blob.source), 'template')
+              }
               useScopeStore.getState().reset()
-              useGraphStore.getState().loadSnapshot(t.build())
+              useGraphStore.getState().loadSnapshot(snap)
               useGraphStore.getState().autoLayout()
               useWorkspaceStore.getState().closeActive()
             }}

@@ -50,6 +50,9 @@ src/
                   pure passthrough (aliases its predecessor's var, emits nothing
                   into forward) so it never perturbs model codegen. Inspector's
                   DataOpPanel "Vorverarbeitung ausführen" kicks off that run.
+  codegen/        pyLiteral.ts — the ONLY way to put a string/number/identifier/comment
+                  text into generated Python (pyStr/pyComment/pyIdent/pyFloat/pyInt).
+                  verify:codegen-security fuzzes every sink with hostile payloads.
   codegen/        generator.ts — graph → PyTorch nn.Module source. A Graph
                   input becomes a Data forward-arg; where a built-in GNN/pool
                   consumes it the generator emits `x, edge_index, batch =
@@ -95,6 +98,16 @@ src/
                   den Inspector wenn explainMode an); MiniViz.tsx = Node-Vorschau;
                   primitives.tsx = SVG-Heatmap/Bars. Run ist on-demand (▶ im
                   Header), NICHT bei jedem Tastendruck.
+  trust/          Code-trust gate (Phase 43). trustStore.ts = content-addressed set of
+                  sha256(kind\0source) that the HUMAN approved (localStorage, OUTSIDE
+                  params/.spinoml: coerceParams passes unknown keys, so a flag in params
+                  would be forgeable). codeBlobs.ts collects every code-bearing node
+                  (Custom.source + Custom.init_args, DataOp.script, data CustomScript.code,
+                  recursing into Subgraphs). guard.ts assertTrusted/listUntrusted is called
+                  by EVERY executor (inference, activations, dataset smoke, training
+                  verifier, startRun/startEvalRun) — a new executor MUST call it too.
+                  ApproveCodeDialog.tsx = the explicit approval UI. scripts/verify-code-trust.ts
+                  enforces ALLOWED_APPROVERS (who may call trust.approve).
   history/        Undo/redo subscribing to GraphStore structural changes.
   persistence/    .spinoml file format, autosave to localStorage.
   sidecars/       managed.ts — query whether Rust spawned the sidecars.
@@ -185,6 +198,10 @@ scripts/verify-codegen.ts    runs generator over ~13 graphs and execs the
                              DataOp-passthrough case asserting it emits nothing).
 scripts/verify-sidecar.ts    autostarts the torch sidecar and asserts
                              happy-path + intentional-error responses.
+sidecar-llm/shell-safety.mjs   pure helpers: splitArgs/quoteArgv (run_script args), checkDownloadUrl +
+                               isBlockedAddress + safeFetch (SSRF), checkSshTarget. Tested against a
+                               real shell by scripts/verify-command-injection.ts.
+sidecar-torch/deps_policy.py   validate_specs: /deps/* accept only plain PyPI requirements.
 ```
 
 ## Two execution modes + two FS backends — keep them straight
@@ -236,6 +253,12 @@ conda activate spinoml-dev          # always start here
 npm run build                       # tsc + vite, must be green
 npm run verify:codegen              # 4 codegen cases, runs python on each
 npm run verify:sidecar              # autostarts torch sidecar + asserts
+npm run verify:codegen-security     # 5362 hostile-payload cases through Python ast/tokenize
+npm run verify:command-injection    # args quoting vs a real sh, SSRF policy, ssh target policy
+npm run verify:code-trust           # trust store + collector + ALLOWED_APPROVERS invariants
+npm run verify:code-trust-wiring    # untrusted code never reaches /infer, smoke, startRun
+npm run test:deps-policy            # pip spec policy   (run inside the conda env)
+npm run test:run-script             # torch /run_script relpath policy (inside the conda env)
 npm run verify:opencode             # LLM sidecar must be up; asserts /opencode/models
                                     # + a real opencode chat + clean bogus-model error
 ```
@@ -438,6 +461,21 @@ not catch it cleanly. Fix path:
    stem, sanitised. Save in Tauri mode writes both atomically (well,
    sequentially with no rollback — best-effort). Don't introduce a
    second naming scheme.
+
+8. **Generated Python is built only from `pyLiteral.ts` values.** Never write
+   `'${userString}'` or a user string inside a `# comment` in a generator. The four
+   code-by-design sinks (Custom.source, Custom.init_args, DataOp.script,
+   CustomScript.code) are the only exceptions and are listed in the harness.
+9. **Code-bearing nodes only execute if approved by a human.** `trust.approve` may be
+   called only from the files in `ALLOWED_APPROVERS` (scripts/verify-code-trust.ts), only
+   from a user-initiated DOM/UI handler and only with `userEdited === true` — never from
+   `src/chat/`, persistence, workspace or `GraphStore` (LLM path and file load must not
+   approve). Any new place that sends generated code to a sidecar or executor must call
+   `assertTrusted`/`listUntrusted` first.
+10. **No shell command is built by concatenating LLM/user values.** Use
+    `splitArgs`+`quoteArgv`/`shellQuote`, a `./` prefix for script paths, `validate_alias`
+    plus `--` for ssh targets, `deps_policy.validate_specs` for pip. Rust changes can't be
+    compiled on every machine — say so explicitly instead of claiming `cargo check` passed.
 
 ## Patterns that work
 

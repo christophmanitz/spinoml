@@ -1,6 +1,7 @@
 import type { Edge } from '@xyflow/react'
 import type { LayerNode, GraphSnapshot } from '../canvas/GraphStore'
 import { LAYERS, defaultParamsFor, coerceParams, classNameFromSource, type FieldSpec } from '../layers/registry'
+import { pyStr, pyComment, pyIdent, pyInt, pyFloat, pyIntList } from './pyLiteral'
 
 export type CodegenResult = {
   code: string
@@ -75,7 +76,7 @@ function subgraphInputNames(params: Record<string, unknown>): string[] {
   const inputNodes = sub.nodes.filter((n) => LAYERS[n.layerType]?.kind === 'input')
   const used = new Set<string>()
   return inputNodes.map((n, i) => {
-    let name = String(n.params.name ?? `x${i + 1}`)
+    let name = pyIdent(String(n.params.name ?? `x${i + 1}`), `x${i + 1}`)
     if (used.has(name)) {
       let k = 2
       while (used.has(`${name}_${k}`)) k++
@@ -106,10 +107,34 @@ function nameAlignedArgs(innerNames: string[], preds: string[]): string[] | null
 }
 
 function groupClassName(params: Record<string, unknown>): string {
-  const raw = String(params.class_name ?? 'SubModule').trim() || 'SubModule'
-  // Sanitise to a valid Python identifier.
-  const id = raw.replace(/[^A-Za-z0-9_]/g, '_')
-  return /^[A-Za-z_]/.test(id) ? id : `M_${id}`
+  return pyIdent(String(params.class_name ?? 'SubModule').trim(), 'SubModule')
+}
+
+/** `init_args` is arbitrary Python by design (gated by the trust store, kind
+ *  'custom-init-args'), so a value whitelist is the wrong tool. We only enforce
+ *  STRUCTURAL safety: single-line (no control chars / U+2028 / U+2029) and at
+ *  most 500 chars, so it can never break out of this statement or smuggle a
+ *  line terminator. Quotes are allowed (legitimate `activation='relu'`). */
+const INIT_ARGS_MAX = 500
+function isValidInitArgs(s: string): boolean {
+  if (s.length > INIT_ARGS_MAX) return false
+  for (const ch of s) {
+    const cp = ch.codePointAt(0)!
+    if (cp <= 0x1f || (cp >= 0x7f && cp <= 0x9f) || cp === 0x2028 || cp === 0x2029) return false
+  }
+  return true
+}
+
+function finiteIntArray(v: unknown, fallback: number[]): number[] {
+  if (Array.isArray(v) && v.every((x) => typeof x === 'number' && Number.isFinite(x))) {
+    return (v as number[]).map((x) => Math.trunc(x))
+  }
+  return fallback.map((x) => Math.trunc(x))
+}
+
+function finiteInt(v: unknown, fallback: number): number {
+  const n = typeof v === 'number' ? v : Number(v)
+  return Number.isFinite(n) ? Math.trunc(n) : Math.trunc(fallback)
 }
 
 type BuildCtx = {
@@ -200,7 +225,9 @@ function buildClass(
   }
   const usedArgs = new Set<string>()
   const inputs: InputDesc[] = inputNodes.map((n, i) => {
-    let name = String(n.params.name ?? `x${i + 1}`)
+    const rawName = String(n.params.name ?? `x${i + 1}`)
+    let name = pyIdent(rawName, `x${i + 1}`)
+    if (name !== rawName) issues.push(`Node ${n.id}: name contained invalid characters and was sanitized.`)
     if (usedArgs.has(name)) {
       let k = 2
       while (usedArgs.has(`${name}_${k}`)) k++
@@ -211,9 +238,9 @@ function buildClass(
     return {
       id: n.id,
       name,
-      shape: (n.params.shape as number[] | undefined) ?? (isGraph ? [32, 9] : [1, 3, 224, 224]),
+      shape: finiteIntArray(n.params.shape, isGraph ? [32, 9] : [1, 3, 224, 224]),
       dtype: isGraph ? 'graph' : String(n.params.dtype ?? 'float32'),
-      ...(isGraph ? { isGraph: true, nEdges: Number(n.params.n_edges ?? 64), edgeDim: Number(n.params.edge_dim ?? 0) } : {}),
+      ...(isGraph ? { isGraph: true, nEdges: finiteInt(n.params.n_edges, 64), edgeDim: finiteInt(n.params.edge_dim, 0) } : {}),
     }
   })
 
@@ -305,8 +332,10 @@ function buildClass(
     if (!spec) continue
     const k = kindOf(id)
     if (k === 'module' && spec.pytorchModule) {
+      // `initExpr` lives in the registry and builds its RHS from raw params —
+      // coerce first so hostile select/number values can't reach the template.
       const rhs = spec.initExpr
-        ? spec.initExpr(n.params)
+        ? spec.initExpr(coerceParams(n.layerType, n.params))
         : `${spec.pytorchModule}(${spec.fields
             .map((field) => `${field.name}=${serializeParam(field, n.params[field.name] ?? field.default)}`)
             .join(', ')})`
@@ -320,7 +349,14 @@ function buildClass(
         issues.push(`Custom node ${id}: source must define a class (e.g. "class MyModule(nn.Module):").`)
       } else {
         const args = String(n.params.init_args ?? '').trim()
-        initLines.push(`        self.${attrName.get(id)} = ${cls}(${args})`)
+        if (isValidInitArgs(args)) {
+          initLines.push(`        self.${attrName.get(id)} = ${cls}(${args})`)
+        } else {
+          issues.push(`Custom node ${id}: init_args must be a single line without control characters (max 500 chars) and was ignored.`)
+          // Hard block: emit `raise` instead of the constructor call so the
+          // model can never be silently built with different arguments.
+          initLines.push(`        raise ValueError('invalid init_args')`)
+        }
         if (!ctx.defs.has(cls)) ctx.defs.set(cls, src)
         ctx.hasCustom.v = true
       }
@@ -426,7 +462,7 @@ function buildClass(
       forwardLines.push(`        ${varName.get(id)} = self.${attrName.get(id)}(${callArgs})`)
     } else if (k === 'merge') {
       if (preds.length < 2) issues.push(`Node ${id} (${n.layerType}): merge layer needs ≥2 inputs (has ${preds.length}).`)
-      const expr = spec.forwardExpr ? spec.forwardExpr(preds, n.params, aux) : preds[0] ?? ''
+      const expr = spec.forwardExpr ? spec.forwardExpr(preds, coerceParams(n.layerType, n.params), aux) : preds[0] ?? ''
       forwardLines.push(`        ${varName.get(id)} = ${expr}`)
     } else if (k === 'function') {
       if (preds.length === 0) { issues.push(`Node ${id} (${n.layerType}) has no upstream value.`); continue }
@@ -436,7 +472,7 @@ function buildClass(
         // order, since they sit after this node) pick the edge_index up via
         // aux — no separate edge_index Input needed.
         const edgeVar = `${varName.get(id)}_ei`
-        const gexpr = spec.forwardExpr ? spec.forwardExpr([preds[0]], n.params, aux) : preds[0]
+        const gexpr = spec.forwardExpr ? spec.forwardExpr([preds[0]], coerceParams(n.layerType, n.params), aux) : preds[0]
         forwardLines.push(`        ${edgeVar} = ${gexpr}`)
         forwardLines.push(`        ${varName.get(id)} = ${preds[0]}`)
         aux.edgeIndex = edgeVar
@@ -445,7 +481,7 @@ function buildClass(
         if (spec.pyImports?.some((s) => s.startsWith('global_')) && !aux.batch) {
           issues.push(`Node ${id} (${n.layerType}) needs an Input named 'batch' (dtype int64, shape [N_nodes]).`)
         }
-        const expr = spec.forwardExpr ? spec.forwardExpr([preds[0]], n.params, aux) : preds[0]
+        const expr = spec.forwardExpr ? spec.forwardExpr([preds[0]], coerceParams(n.layerType, n.params), aux) : preds[0]
         forwardLines.push(`        ${varName.get(id)} = ${expr}`)
       }
     } else if (k === 'output') {
@@ -464,7 +500,7 @@ function buildClass(
   } else if (outputCollect.length === 1) {
     returnLine = `        return ${outputCollect[0].varName}`
   } else {
-    returnLine = `        return { ${outputCollect.map((o) => `"${o.name}": ${o.varName}`).join(', ')} }`
+    returnLine = `        return { ${outputCollect.map((o) => `${pyStr(o.name)}: ${o.varName}`).join(', ')} }`
   }
 
   // Collect torch_geometric symbols from this level's used nodes.
@@ -566,50 +602,37 @@ if __name__ == "__main__":
 
 function issuesBlock(issues: string[]): string {
   if (issues.length === 0) return ''
-  return `# Graph issues:\n${issues.map((i) => `#   - ${i}`).join('\n')}\n\n`
+  return `# Graph issues:\n${issues.map((i) => `#   - ${pyComment(i)}`).join('\n')}\n\n`
 }
 
 function serializeParam(field: FieldSpec, value: unknown): string {
   switch (field.type) {
     case 'int':
-      return String(Math.trunc(value as number))
+      return pyInt(value, field.default)
     case 'float':
-      return formatFloat(value as number)
+      return pyFloat(value, field.default)
     case 'bool':
       return (value as boolean) ? 'True' : 'False'
     case 'select':
-      return `'${value as string}'`
-    case 'tuple-int': {
-      const arr = (Array.isArray(value) ? value : field.default) as number[]
-      return pyTuple(arr.slice(0, field.arity))
-    }
-    case 'int-list': {
-      const arr = (Array.isArray(value) ? value : field.default) as number[]
-      return `[${arr.join(', ')}]`
-    }
-    case 'shape': {
-      const arr = (Array.isArray(value) ? value : field.default) as number[]
-      return pyTuple(arr)
-    }
+      return pyStr(value)
+    case 'tuple-int':
+      return pyTuple(finiteIntArray(value, field.default).slice(0, field.arity))
+    case 'int-list':
+      return pyIntList(value, field.default)
+    case 'shape':
+      return pyTuple(finiteIntArray(value, field.default))
     case 'dataset-ref':
-      return `'${value as string}'`
+      return pyStr(value)
     case 'columns-multi':
-      return `[${(value as string[]).map((s) => `'${s}'`).join(', ')}]`
+      return `[${(Array.isArray(value) ? value : []).map((s) => pyStr(s)).join(', ')}]`
     case 'column-single':
-      return `'${value as string}'`
+      return pyStr(value)
     case 'text':
     case 'code':
       // Only used by Custom nodes, which emit init/source directly (never via
       // serializeParam). Present for switch exhaustiveness.
-      return JSON.stringify(String(value))
+      return pyStr(value)
   }
-}
-
-function formatFloat(v: number): string {
-  if (v === 0) return '0.0'
-  const abs = Math.abs(v)
-  if (abs < 1e-3 || abs >= 1e6) return v.toExponential()
-  return Number.isInteger(v) ? `${v}.0` : String(v)
 }
 
 function pyTuple(arr: number[]): string {

@@ -42,3 +42,4 @@ sidecar-torch/.venv
 *.njsproj
 *.sln
 *.sw?
+.council/

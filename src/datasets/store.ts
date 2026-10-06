@@ -8,6 +8,7 @@ import { generate } from '../codegen/generator'
 import { useProjectStore } from '../project/store'
 import { useWorkspaceStore } from '../workspace/store'
 import { datasets as datasetsBackend, experiments as experimentsBackend } from '../connections/backend'
+import { assertTrusted, UntrustedCodeError } from '../trust/guard'
 
 type Cached<T> = {
   loading: boolean
@@ -185,6 +186,18 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
     const allBound = inputs.length > 1 && perInputDatasets.every((d) => d.length > 0)
     const shapes = inputShape ? [inputShape] : inputs.map((i) => i.shape)
     set({ smoke: { ...get().smoke, [relpath]: { loading: true, data: null, error: null } } })
+
+    // Phase 43 — never ship unapproved generated code to /dataset/smoke.
+    try {
+      await assertTrusted(nodes)
+    } catch (e) {
+      if (e instanceof UntrustedCodeError) {
+        if (seq !== smokeSeq.get(relpath)) return
+        set({ smoke: { ...get().smoke, [relpath]: { loading: false, data: null, error: e.message } } })
+        return
+      }
+      throw e
+    }
 
     let result
     if (allBound) {

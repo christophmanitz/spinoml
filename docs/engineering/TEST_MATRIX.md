@@ -9,7 +9,7 @@ Component              | Automated tests today                            | Gap 
 Frontend shell         | `npm run build` (tsc+vite) + `verify:ui-state` ✓ + `verify:frontend-errors` ✓ (loading/success/error/offline distinct; timeout/cancelled string-typed, not Success) | no e2e/render tests          | §38/39 UI state + error states
 GraphStore             | `npm run test:graphstore` ✓ + `verify:graph-revision` ✓ + `verify:concurrent` ✓ (saveSeq+revAtStart dirty correction; last-wins, no silent loss) | history/dirty-snapshot UT   | §4.2/40/41
 Layer registry         | `verify-codegen` (13 graphs via generator) + G001 param validation | coerceParams per-kind UT  | §4.3 validate-before-commit
-Code generation        | `verify-codegen` 13/13 ✓ + `test:determinism` ✓ (repeatability, shuffled arrays) | golden outputs, multi-input  | §6 golden tests
+Code generation        | `verify-codegen` 13/13 ✓ + `test:determinism` ✓ (repeatability, shuffled arrays) + `verify:codegen-security` ✓ (5362 adversarial cases: 10 hostile payloads × every string sink of model/data/training codegen + numeric NaN/Infinity/string/null, checked with Python `ast`+`tokenize`; `pyStr` round-trip via `ast.literal_eval`; by-design code sinks asserted exactly) | golden outputs, multi-input  | §6 golden tests
 Training codegen       | `verify-traingen` ✓ (compile, multitask, eval-only) | immersive failure tests | §24 training failure tests
 Shape inference        | `verify-sidecar` ✓ + `test:verifier` ✓ (fail-closed gate) + `test:races` ✓ (stale-response replay) + `verify:graph-revision` ✓ (graph revision + runCounter guard, stale shape drop) | live multi-request on real sidecar | §8/9/10/40
 Dataset handling       | `verify-sidecar` ✓ + `test:datasets` ✓ + `verify:graph-revision` ✓ + `verify:concurrent` ✓ (per-dataset seq + refreshSeq + smoke graphRev, no stale overwrite) | leak tests, parquet (pyarrow absent), remote pre-12b | §19/40/41
@@ -17,16 +17,16 @@ Training runs (local)  | `verify-traingen` e2e ✓ + `verify:states` ✓ + `veri
 Training runs (remote) | `verify:submission` ✓ + `verify:slurm` ✓ + `verify:recovery` ✓ (close→restart→reconnect re-queries live pid/status/squeue/sacct, not cache; detached survival; atomic claim) | — | §33/36/37
 Persistence            | `npm run test:persistence` ✓ (P001/P011: round-trip, malformed-file matrix, schema versions, fail-closed) | autosave (localStorage) browser smoke | §4.3, §5
 Torch sidecar          | `verify-sidecar` 6/6+activations ✓ + `test:robustness` ✓ (11-case matrix: startup, structured errors with `error_code` on every path, slow-client stall cap, abort resistance, kill→restart recovery) | auth/path-scope tests        | §77/78 security
-LLM sidecar            | `verify-opencode` ✓ (+manual ask/confirm)      | `/respond`/auto-approve auth | §14/15, §77
+LLM sidecar            | `verify-opencode` ✓ (+manual ask/confirm) + `verify:command-injection` ✓ (args split/quote round-tripped through a real `sh`, SSRF blocklist + DNS-resolving `safeFetch` with fake lookup/fetch, ssh target policy, runScript `./` prefix)      | `/respond`/auto-approve auth | §14/15, §77
 MCP                    | `verify-opencode` (via opencode bridge) ✓      | spec-parity across providers | §16 MCP validation
-Tauri/Rust             | `cargo check` ✓ + `cargo test` (ssh failures + slurm 13 tests) ✓ | command integration tests    | §1.6 (env), §48 Rust errors
+Tauri/Rust             | `cargo check` ✓ + `cargo test` (ssh failures + slurm 13 tests) ✓ + `alias_validation_tests` (Phase 44, **written but UNCOMPILED here — no toolchain, see LIMITATIONS §1**) | command integration tests    | §1.6 (env), §48 Rust errors
 Filesystem (local)     | none                                          | path-sanity tests            | §45/46
 Filesystem (remote)    | `verify:ssh` ✓                                | ssh mirror parity tests      | §34/35
 SSH                    | `verify:ssh` ✓ + `verify:credentials` ✓       | live cluster integration     | §34/35 (+ R003 alias)
 PTY/Terminal           | none                                          | interactive smoke            | manual
 SLURM                  | `verify:slurm` ✓ + `verify:recovery` ✓ (live squeue/sacct/kill-0 + reconcile, detached setsid/sbatch, app blanks+refresh chain) | live sbatch/squeue smoke       | §36/37
 Workspace (browser)    | none                                          | virtual-FS UT                | §38/39
-Security (sidecars)    | none (known open: CORS `*`, no auth)           | auth + injection tests       | §14/44/47, §77/78
+Security (sidecars)   | `verify:command-injection` ✓ + `test:deps-policy` ✓ (34) + `test:run-script` ✓ (125; mocked `subprocess.run`, no file written on rejection) + `verify:code-trust` ✓ + `verify:code-trust-wiring` ✓ (LLM-path can't approve; untrusted code never reaches `/infer`, activations, smoke, `startRun`) | CORS `*`/no token (R013/R014), `torch.load` pickle (R015), path scoping (R016) still untested/open | §14/45/46/47, §77/78
 
 ## Harnesses available today
 
@@ -83,7 +83,7 @@ Planned mutation/unit tests referenced by RISK_REGISTER.md:
 - P001 — persistence round-trip + corruption (§5)
 - A001 — async race tests (§10)
 - R001–R007 — SSH/SLURM reliability (§34–37), remote smoke (§12b), env paths
-- SEC001–SEC006 — injection/path/auth (§14/44/45/46/47, §77/78)
+- SEC001–SEC008 — injection/path/auth/code-trust/SSRF (§14/43/44/45/46/47, §77/78); SEC006 = code-trust gate, SEC007 = option/argument injection, SEC008 = SSRF
 - Q001/Q002 — lint gate + store unit tests (§3, §4)
 
 ## Verification workflow

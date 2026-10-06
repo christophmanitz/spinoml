@@ -7,6 +7,10 @@ import { useChatStore } from '../../chat/store'
 import { runWorkspaceScript, type RunScriptResult } from '../../datasets/client'
 import { getCurrentConnection } from '../../connections/store'
 import { useWorkspaceStore } from '../../workspace/store'
+import { collectDataCodeBlobs } from '../../trust/codeBlobs'
+import { findUntrusted } from '../../trust/gate'
+import { trust } from '../../trust/trustStore'
+import { useApproveDialog } from '../../trust/useApproveDialog'
 
 const BTN = 'rounded border border-[#1f2429] bg-[#13171b] px-2 py-1 text-[11px] text-[#9aa1a8] hover:border-[#3a4148] hover:bg-[#1a1f24] hover:text-[#e6e8eb] disabled:opacity-40'
 
@@ -37,9 +41,25 @@ export default function DataGraphBar() {
     [nodes, edges],
   )
 
+  // Phase 43 — a CustomScript in the pipeline is executable Python. Refuse to
+  // run (chat or direct) while any blob lacks local approval; show the dialog.
+  async function gateDataCode(): Promise<boolean> {
+    const blobs = collectDataCodeBlobs(
+      nodes.map((n) => ({ id: n.id, data: { dataType: n.data.dataType, params: n.data.params } })),
+    )
+    const untrusted = await findUntrusted(blobs, trust.isTrusted)
+    if (untrusted.length > 0) {
+      useApproveDialog.getState().openFor(untrusted)
+      setMsg('Code nicht freigegeben — bitte im Dialog prüfen.')
+      return false
+    }
+    return true
+  }
+
   // Direct run — NO chatbot. The torch sidecar writes the compiled pipeline to
   // agent/data_pipeline.py and runs it where the workspace lives.
   async function runDirect(mode: 'shell' | 'slurm') {
+    if (!(await gateDataCode())) return
     const root = rootForSidecar()
     if (!root) { setOutput({ ok: false, error: 'Kein Workspace geöffnet — Verzeichnis öffnen.' }); return }
     setRunning(true); setOutput(null); setMsg(null)
@@ -50,7 +70,8 @@ export default function DataGraphBar() {
   }
 
   // Optional: let the chatbot write + run it (so it can adapt the script).
-  function runViaChat() {
+  async function runViaChat() {
+    if (!(await gateDataCode())) return
     const message = [
       'Führe diese Daten-Pipeline aus dem Data-Canvas aus.',
       'Schreibe das folgende Skript mit write_file nach agent/data_pipeline.py und führe es dann mit',
@@ -81,7 +102,7 @@ export default function DataGraphBar() {
       </div>
       <div className="flex items-center gap-1">
         <button
-          onClick={runViaChat}
+          onClick={() => void runViaChat()}
           className={BTN}
           disabled={!compile.plan || chatOnline === false}
           title="Vom Chatbot schreiben + ausführen lassen (kann das Skript anpassen / SLURM wählen)"

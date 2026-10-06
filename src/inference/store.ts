@@ -3,8 +3,11 @@ import { inferShapes, type InferResult } from './client'
 import { useGraphStore } from '../canvas/GraphStore'
 import { generate } from '../codegen/generator'
 import { LAYERS } from '../layers/registry'
+import { listUntrusted } from '../trust/guard'
+import { UNTRUSTED_MESSAGE, type UntrustedBlob } from '../trust/gate'
+import { trust } from '../trust/trustStore'
 
-type Status = 'idle' | 'inferring' | 'ok' | 'error' | 'offline'
+type Status = 'idle' | 'inferring' | 'ok' | 'error' | 'offline' | 'untrusted'
 
 type InferenceState = {
   status: Status
@@ -16,6 +19,9 @@ type InferenceState = {
   nParams: number | null
   attrShapes: Record<string, number[]>
   lastRunAt: number | null
+  /** Phase 43 — blobs whose code is not approved by the user. Non-empty only
+   *  while status === 'untrusted'; nothing from the graph is executed then. */
+  untrusted: UntrustedBlob[]
 
   kick: () => void
 }
@@ -35,6 +41,7 @@ export const useInferenceStore = create<InferenceState>((set) => ({
   nParams: null,
   attrShapes: {},
   lastRunAt: null,
+  untrusted: [],
 
   kick: () => {
     if (timer) clearTimeout(timer)
@@ -61,12 +68,34 @@ export const useInferenceStore = create<InferenceState>((set) => ({
           failingNodeId: null,
           failingNodeLayerType: null,
           attrShapes: {},
+          untrusted: [],
         })
         clearShapesOnNodes()
         return
       }
 
-      set({ status: 'inferring' })
+      // Phase 43 — code-trust gate: never send unapproved Custom/DataOp code to
+      // the sidecar. Hashing is async, so re-check the stale guards afterwards
+      // (runCounter + graphRev) before committing the untrusted status.
+      const untrusted = await listUntrusted(nodes)
+      if (runId !== runCounter || graphRev !== useGraphStore.getState().revision) return
+      if (untrusted.length > 0) {
+        inFlight = null
+        set({
+          status: 'untrusted',
+          error: UNTRUSTED_MESSAGE(untrusted.length),
+          errorStage: null,
+          errorTrace: null,
+          failingNodeId: null,
+          failingNodeLayerType: null,
+          attrShapes: {},
+          untrusted,
+        })
+        clearShapesOnNodes()
+        return
+      }
+
+      set({ status: 'inferring', untrusted: [] })
 
       let result: InferResult | { ok: false; error: string; offline: true; shapes: Record<string, number[]> }
       try {
@@ -91,6 +120,7 @@ export const useInferenceStore = create<InferenceState>((set) => ({
               failingNodeId: null,
               failingNodeLayerType: null,
               attrShapes: {},
+              untrusted: [],
             })
             clearShapesOnNodes()
           }
@@ -111,6 +141,7 @@ export const useInferenceStore = create<InferenceState>((set) => ({
           failingNodeId: null,
           failingNodeLayerType: null,
           attrShapes: {},
+          untrusted: [],
         })
         clearShapesOnNodes()
         return
@@ -128,6 +159,7 @@ export const useInferenceStore = create<InferenceState>((set) => ({
           failingNodeId: null,
           failingNodeLayerType: null,
           attrShapes: {},
+          untrusted: [],
         })
         clearShapesOnNodes()
         return
@@ -145,6 +177,7 @@ export const useInferenceStore = create<InferenceState>((set) => ({
           nParams: r.n_params,
           attrShapes: r.shapes,
           lastRunAt: Date.now(),
+          untrusted: [],
         })
         applyShapesToNodes(attrMap, r.shapes, edges, null)
       } else {
@@ -160,6 +193,7 @@ export const useInferenceStore = create<InferenceState>((set) => ({
           nParams: typeof r.n_params === 'number' ? r.n_params : null,
           attrShapes: r.shapes,
           lastRunAt: Date.now(),
+          untrusted: [],
         })
         applyShapesToNodes(attrMap, r.shapes, edges, failingId)
       }
@@ -284,6 +318,13 @@ useGraphStore.subscribe((state, prev) => {
   if (state.nodes !== prev.nodes || state.edges !== prev.edges) {
     useInferenceStore.getState().kick()
   }
+})
+
+// Phase 43 — an approval/revocation changes which blobs are runnable, so
+// re-run inference. Debounced like a graph change (kick already debounces);
+// no feedback loop because shape writebacks are guarded by `applyingShapes`.
+trust.subscribe(() => {
+  useInferenceStore.getState().kick()
 })
 
 useInferenceStore.getState().kick()

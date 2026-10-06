@@ -6,6 +6,7 @@ import { LAYERS } from '../layers/registry'
 import { useDatasetsStore } from '../datasets/store'
 import { useProjectStore } from '../project/store'
 import { getCurrentConnection } from '../connections/store'
+import { assertTrusted, UntrustedCodeError } from '../trust/guard'
 
 // Ephemeral "Explain" state — what flows through the model when one example is
 // pushed through. Kept OUT of GraphStore (heavy + non-structural; would pollute
@@ -140,6 +141,17 @@ export const useVizStore = create<VizState>((set, get) => ({
     if (!inputs.length || issues.some((i) => i.startsWith('Cycle'))) {
       set({ error: 'Graph braucht einen Input und darf keinen Zyklus haben.', running: false })
       return
+    }
+
+    // Phase 43 — never ship unapproved generated code to /activations.
+    try {
+      await assertTrusted(nodes)
+    } catch (e) {
+      if (e instanceof UntrustedCodeError) {
+        set({ running: false, error: e.message, byNode: {}, weightsByNode: {} })
+        return
+      }
+      throw e
     }
 
     const inputShapes = inputs.map((i) => i.shape)

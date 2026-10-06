@@ -1,0 +1,77 @@
+phase 43: codegen security
+  ✓ INTENTIONAL_CODE_SINKS = Custom.source, CustomScript.code, DataOp.script
+
+4739/5359 cases pass, 620 failing
+
+  sinks × payloads  (pass/total per cell):
+  sink              P1       P2       P3       P4       P5       P6       P7       P8       P9       P10      tot   fails
+  model             370/383  369/383  369/383  373/383  370/383  372/383  373/383  369/383  373/383  373/383  3830  119  
+  data              63/63    38/63    38/63    63/63    63/63    63/63    63/63    38/63    63/63    63/63    630   78   
+  training          7/9      2/9      4/9      7/9      7/9      7/9      7/9      2/9      7/9      7/9      91    33   
+  literals          0/1      0/1      0/1      0/1      0/1      0/1      0/1      0/1      0/1      0/1      10    10   
+  numbers-model     -        -        -        -        -        -        -        -        -        -        700   318  
+  numbers-data      -        -        -        -        -        -        -        -        -        -        7     0    
+  numbers-training  -        -        -        -        -        -        -        -        -        -        91    62   
+
+  failing case ids:
+    M/Input/name/coerced/P1  [model]  — python: SyntaxError: invalid syntax
+    M/Input/name/raw/P1  [model]  — python: SyntaxError: invalid syntax
+    M/Input/name/coerced/P2  [model]  — python: SyntaxError: invalid syntax
+    M/Input/name/raw/P2  [model]  — python: SyntaxError: invalid syntax
+    M/Input/name/coerced/P3  [model]  — python: SyntaxError: invalid syntax
+    M/Input/name/raw/P3  [model]  — python: SyntaxError: invalid syntax
+    M/Input/name/coerced/P4  [model]  — python: SyntaxError: invalid non-printable character U+2028
+    M/Input/name/raw/P4  [model]  — python: SyntaxError: invalid non-printable character U+2028
+    M/Input/name/coerced/P5  [model]  — python: SyntaxError: unexpected character after line continuation character
+    M/Input/name/raw/P5  [model]  — python: SyntaxError: unexpected character after line continuation character
+    M/Input/name/coerced/P6  [model]  — python: SyntaxError: invalid syntax
+    M/Input/name/raw/P6  [model]  — python: SyntaxError: invalid syntax
+    M/Input/name/coerced/P7  [model]  — python: SyntaxError: invalid non-printable character U+0085
+    M/Input/name/raw/P7  [model]  — python: SyntaxError: invalid non-printable character U+0085
+    M/Input/name/coerced/P8  [model]  — python: SyntaxError: source code string cannot contain null bytes
+    M/Input/name/raw/P8  [model]  — python: SyntaxError: source code string cannot contain null bytes
+    M/Input/name/coerced/P9  [model]  — python: SyntaxError: invalid syntax
+    M/Input/name/raw/P9  [model]  — python: SyntaxError: invalid syntax
+    M/Input/name/coerced/P10  [model]  — python: SyntaxError: invalid non-printable character U+000B
+    M/Input/name/raw/P10  [model]  — python: SyntaxError: invalid non-printable character U+000B
+    M/Graph/name/coerced/P1  [model]  — python: SyntaxError: invalid syntax
+    M/Graph/name/raw/P1  [model]  — python: SyntaxError: invalid syntax
+    M/Graph/name/coerced/P2  [model]  — python: SyntaxError: invalid syntax
+    M/Graph/name/raw/P2  [model]  — python: SyntaxError: invalid syntax
+    M/Graph/name/coerced/P3  [model]  — python: SyntaxError: invalid syntax
+    M/Graph/name/raw/P3  [model]  — python: SyntaxError: invalid syntax
+    M/Graph/name/coerced/P4  [model]  — python: SyntaxError: invalid non-printable character U+2028
+    M/Graph/name/raw/P4  [model]  — python: SyntaxError: invalid non-printable character U+2028
+    M/Graph/name/coerced/P5  [model]  — python: SyntaxError: unexpected character after line continuation character
+    M/Graph/name/raw/P5  [model]  — python: SyntaxError: unexpected character after line continuation character
+    M/Graph/name/coerced/P6  [model]  — python: SyntaxError: invalid syntax
+    M/Graph/name/raw/P6  [model]  — python: SyntaxError: invalid syntax
+    M/Graph/name/coerced/P7  [model]  — python: SyntaxError: invalid non-printable character U+0085
+    M/Graph/name/raw/P7  [model]  — python: SyntaxError: invalid non-printable character U+0085
+    M/Graph/name/coerced/P8  [model]  — python: SyntaxError: source code string cannot contain null bytes
+    M/Graph/name/raw/P8  [model]  — python: SyntaxError: source code string cannot contain null bytes
+    M/Graph/name/coerced/P9  [model]  — python: SyntaxError: invalid syntax
+    M/Graph/name/raw/P9  [model]  — python: SyntaxError: invalid syntax
+    M/Graph/name/coerced/P10  [model]  — python: SyntaxError: invalid non-printable character U+000B
+    M/Graph/name/raw/P10  [model]  — python: SyntaxError: invalid non-printable character U+000B
+    M/Sequence/name/coerced/P1  [model]  — python: SyntaxError: invalid syntax
+    M/Sequence/name/raw/P1  [model]  — python: SyntaxError: invalid syntax
+    M/Sequence/name/coerced/P2  [model]  — python: SyntaxError: invalid syntax
+    M/Sequence/name/raw/P2  [model]  — python: SyntaxError: invalid syntax
+    M/Sequence/name/coerced/P3  [model]  — python: SyntaxError: invalid syntax
+    M/Sequence/name/raw/P3  [model]  — python: SyntaxError: invalid syntax
+    M/Sequence/name/coerced/P4  [model]  — python: SyntaxError: invalid non-printable character U+2028
+    M/Sequence/name/raw/P4  [model]  — python: SyntaxError: invalid non-printable character U+2028
+    M/Sequence/name/coerced/P5  [model]  — python: SyntaxError: unexpected character after line continuation character
+    M/Sequence/name/raw/P5  [model]  — python: SyntaxError: unexpected character after line continuation character
+    M/Sequence/name/coerced/P6  [model]  — python: SyntaxError: invalid syntax
+    M/Sequence/name/raw/P6  [model]  — python: SyntaxError: invalid syntax
+    M/Sequence/name/coerced/P7  [model]  — python: SyntaxError: invalid non-printable character U+0085
+    M/Sequence/name/raw/P7  [model]  — python: SyntaxError: invalid non-printable character U+0085
+    M/Sequence/name/coerced/P8  [model]  — python: SyntaxError: source code string cannot contain null bytes
+    M/Sequence/name/raw/P8  [model]  — python: SyntaxError: source code string cannot contain null bytes
+    M/Sequence/name/coerced/P9  [model]  — python: SyntaxError: invalid syntax
+    M/Sequence/name/raw/P9  [model]  — python: SyntaxError: invalid syntax
+    M/Sequence/name/coerced/P10  [model]  — python: SyntaxError: invalid non-printable character U+000B
+    M/Sequence/name/raw/P10  [model]  — python: SyntaxError: invalid non-printable character U+000B
+    … and 560 more

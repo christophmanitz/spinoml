@@ -6,6 +6,10 @@ import { useConnectionsStore, remotePython, sshTarget, type RemoteSshConnection 
 import { useTrainingStore } from './store'
 import { training } from './backend'
 import { verifyModelForTraining } from '../inference/verifier'
+import { parseFile } from '../persistence/file'
+import { listUntrusted, UntrustedCodeError } from '../trust/guard'
+import { UNTRUSTED_MESSAGE, type UntrustedBlob } from '../trust/gate'
+import { useApproveDialog } from '../trust/useApproveDialog'
 import {
   type LossKind,
   type OptimizerKind,
@@ -100,6 +104,9 @@ export default function NewRunModal() {
   const [cfg, setCfg] = useState<TrainingConfig>(prefill?.training ?? defaultTrainingConfig())
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** Phase 43 — blobs that blocked the launch; the button opens the approval
+   *  dialog instead. Non-empty keeps the run blocked until all are approved. */
+  const [untrusted, setUntrusted] = useState<UntrustedBlob[]>([])
   // Phase 17 — resume: prior runs that have a checkpoints/best.pt to continue from.
   const [resumable, setResumable] = useState<{ run_id: string; run_label: string; model_path: string; best_val_loss: number | null }[]>([])
   const [resumeId, setResumeId] = useState('')
@@ -189,6 +196,7 @@ export default function NewRunModal() {
 
   async function submit() {
     setError(null)
+    setUntrusted([])
     setSubmitting(true)
     try {
       // Phase 9 — fail closed: refuse to launch a model that is KNOWN invalid
@@ -196,11 +204,19 @@ export default function NewRunModal() {
       // UNKNOWN (sidecar offline) blocks too — training must not start when the
       // model was never verified; the message names the reason so the user can
       // start the torch sidecar and retry.
-      const verify = await verifyModelForTraining(await fs.read(modelRelpath))
+      const modelContent = await fs.read(modelRelpath)
+      const verify = await verifyModelForTraining(modelContent)
       if (verify.status === 'invalid') {
         throw new Error(`Model is not valid for training (${verify.stage}): ${verify.error}`)
       }
       if (verify.status === 'unknown') {
+        // Phase 43 — an untrusted model is one 'unknown' cause; surface the
+        // exact blobs so the approval dialog can show them, and stay blocked.
+        const blobs = await listUntrusted(parseFile(modelContent).nodes)
+        if (blobs.length > 0) {
+          setUntrusted(blobs)
+          throw new Error(`Cannot start training: ${UNTRUSTED_MESSAGE(blobs.length)}`)
+        }
         throw new Error(`Cannot start training: model was not verified (${verify.reason})`)
       }
       const abspath = await datasetsBackend.abspath(datasetRelpath)
@@ -230,6 +246,9 @@ export default function NewRunModal() {
         }
       }
     } catch (e) {
+      // Phase 43 — startRun() re-checks the frozen snapshot and throws this; the
+      // dialog must be reachable no matter which stage refused.
+      if (e instanceof UntrustedCodeError) setUntrusted(e.blobs)
       setError(e instanceof Error ? e.message : String(e))
       setSubmitting(false)
     }
@@ -460,6 +479,17 @@ export default function NewRunModal() {
           )}
 
           {error && <div className="text-[#ff7a85]">{error}</div>}
+          {untrusted.length > 0 && (
+            <div className="space-y-1.5 rounded border border-amber-900/60 bg-amber-950/30 px-3 py-2">
+              <div className="text-[11px] text-amber-200">
+                Code nicht freigegeben — Training bleibt blockiert, bis du ihn geprüft hast.
+              </div>
+              <button
+                onClick={() => useApproveDialog.getState().openFor(untrusted)}
+                className="rounded bg-amber-900/40 px-2.5 py-1 text-[11px] text-amber-200 hover:bg-amber-900/60"
+              >Code prüfen &amp; freigeben ({untrusted.length})</button>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-[#1f2429] px-4 py-3">

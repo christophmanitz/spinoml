@@ -2518,7 +2518,37 @@ Avoid unsafe string interpolation.
 
 Never allow user-controlled input to become arbitrary executable Python unintentionally.
 
----
+> **2026-10-06 — implemented.** Audit first, with a tokenizer-based oracle: a hostile
+> sentinel identifier must never become a Python NAME token and every output must
+> `ast.parse`. Honest findings: the model generator's `dataset-ref`/`column-single`/
+> `columns-multi` params only occur on Input nodes that never reach `serializeParam`
+> (no injection reproduced there), but newline/NUL/line-separator characters in
+> `name` params, the data/training generators' own `pyStr` (escaped only `\` and `'`,
+> no `\n`/`\r`/NUL), comment sinks (`# ── … label ──`, `# Quelle: …`), numeric
+> NaN/Infinity/string values and `Custom.init_args` produced uncompilable or
+> injectable Python (620 failing cases before the fix). Fix: one shared, pure
+> `src/codegen/pyLiteral.ts` (`pyStr` round-trips through `ast.literal_eval`,
+> `pyComment`, `pyIdent`, `pyFloat`/`pyInt`/`pyIntList`) used by all three generators.
+> `npm run verify:codegen-security` = 5362 cases, 0 failing; benign output is
+> byte-identical (one deliberate change: `weight_decay=0` → `0.0`); `verify:codegen`,
+> `test:determinism`, `verify:traingen`, `verify:smoke` unchanged.
+> **Intentional code sinks** (`Custom.source`, `Custom.init_args`, `DataOp.script`,
+> `CustomScript.code`) cannot be escaped — they ARE code. They are listed and asserted
+> exactly by the harness and are covered by the **code-trust gate** instead: content-addressed
+> store (`src/trust/`, sha256 of `kind\0source`), kept outside params/`.spinoml` because
+> `coerceParams` lets unknown keys through. Unapproved code is never sent to `/infer`,
+> activations, dataset smoke, the training verifier, `startRun` or `startEvalRun`
+> (inference reports `status:'untrusted'`); only human UI events approve (code-field edit,
+> eject, built-in template, dialog click). Review found what the council design and the
+> first workers missed: `init_args` was executable but ungated (quote-free
+> `exec(bytes([...]).decode())` passed a "safe characters" whitelist, which also dropped
+> legitimate `activation='relu'` and so silently built a different model) → own
+> `custom-init-args` blob; three self-approval paths (blur on a store-mirrored value,
+> stale-buffer flush on unmount, modal close without typing) → explicit `userEdited` rule.
+> Verified by `verify:code-trust` (110), `verify:code-trust-wiring` (78). **Caveat:** this is a
+> frontend gate — the sidecars still accept direct HTTP calls (CORS `*`, no token: R013/R014,
+> Phase 77/78); editing counts as review; `train.py` does not re-check `code_trust`
+> (docs/engineering/LIMITATIONS.md §2/§3).
 
 # 45. PHASE 44 – COMMAND INJECTION REVIEW
 
@@ -2545,7 +2575,31 @@ filesystem commands
 
 Use argument arrays / safe APIs where possible.
 
----
+> **2026-10-06 — implemented (Rust part UNCOMPILED).** Search result: no `shell=True`/`os.system`
+> anywhere; `exec(compile(...))` of model code in the torch sidecar is by design (now gated, see
+> Phase 43). Real defects found and fixed: (1) LLM `run_script` `args` were concatenated unquoted
+> into the shell command → `splitArgs`/`quoteArgv` (`sidecar-llm/shell-safety.mjs`), proven by
+> round-tripping hostile strings through a real `sh`, and the confirmation text now shows the
+> quoted argv that really runs; script targets get a `./` prefix so `--wrap=…` can't become an
+> sbatch option. (2) torch `/run_script`: the fallback `["bash","-lc", relpath]` executed the
+> FILE NAME as a shell command string (write `x; touch /tmp/pwn`, then run it) and `sbatch rel`
+> accepted option-like names → relpath whitelist (`[\w.+@%,=/ -]`, no leading `-`, extension
+> `.py/.sh/.sbatch/.slurm`), `./`-prefixed argv, nothing written when rejected. (3) `/deps/check`
+> and `/deps/install` passed arbitrary pip arguments (`--index-url`, VCS URLs, local paths) →
+> `sidecar-torch/deps_policy.py` (plain PEP 508 name+version only; `torch`/`pip`/`setuptools`
+> refused; `--` before specs). (4) `download_to_datasets` SSRF + an exfiltration chain (internal
+> URL → file → `read_file` → LLM) → `checkDownloadUrl`, fail-closed `isBlockedAddress` (IPv4/IPv6
+> incl. mapped/NAT64/6to4/Teredo), local `safeFetch` resolving DNS and checking every redirect hop,
+> curl `--proto/--max-redirs` on the remote branch. (5) ssh: `remote_sidecar.rs`
+> `ensure_remote_sidecar` passed the webview-supplied alias to `ssh` UNVALIDATED (a single argv
+> element like `-oProxyCommand=…` is local command execution) and every spawn lacked `--` →
+> `validate_alias` (now rejects a leading `-`, shared by `ssh.rs`/`pty.rs`/`remote_sidecar.rs`),
+> `--` before every target, `shell_quote` on `SPINOML_PYTHON` in the `sh -c` launcher.
+> Verified by `verify:command-injection` (162), `test:deps-policy` (34), `test:run-script` (125,
+> mocked `subprocess.run`), `verify:sidecar` (new rejects). **The Rust edits cannot be compiled on
+> this machine (no toolchain) — R042/LIMITATIONS §1.** Still open: path scoping (Phase 45/46),
+> pickle (47), sidecar auth/CORS (77/78); the torch `/run_script` endpoint still takes `root` from
+> the payload.
 
 # 46. PHASE 45 – PATH SECURITY
 
@@ -2580,31 +2634,7 @@ symlinks
 
 where the application expects paths to remain inside a workspace/dataset directory.
 
-> **2026-10-06 — implemented (Rust part UNCOMPILED).** Search result: no `shell=True`/`os.system`
-> anywhere; `exec(compile(...))` of model code in the torch sidecar is by design (now gated, see
-> Phase 43). Real defects found and fixed: (1) LLM `run_script` `args` were concatenated unquoted
-> into the shell command → `splitArgs`/`quoteArgv` (`sidecar-llm/shell-safety.mjs`), proven by
-> round-tripping hostile strings through a real `sh`, and the confirmation text now shows the
-> quoted argv that really runs; script targets get a `./` prefix so `--wrap=…` can't become an
-> sbatch option. (2) torch `/run_script`: the fallback `["bash","-lc", relpath]` executed the
-> FILE NAME as a shell command string (write `x; touch /tmp/pwn`, then run it) and `sbatch rel`
-> accepted option-like names → relpath whitelist (`[\w.+@%,=/ -]`, no leading `-`, extension
-> `.py/.sh/.sbatch/.slurm`), `./`-prefixed argv, nothing written when rejected. (3) `/deps/check`
-> and `/deps/install` passed arbitrary pip arguments (`--index-url`, VCS URLs, local paths) →
-> `sidecar-torch/deps_policy.py` (plain PEP 508 name+version only; `torch`/`pip`/`setuptools`
-> refused; `--` before specs). (4) `download_to_datasets` SSRF + an exfiltration chain (internal
-> URL → file → `read_file` → LLM) → `checkDownloadUrl`, fail-closed `isBlockedAddress` (IPv4/IPv6
-> incl. mapped/NAT64/6to4/Teredo), local `safeFetch` resolving DNS and checking every redirect hop,
-> curl `--proto/--max-redirs` on the remote branch. (5) ssh: `remote_sidecar.rs`
-> `ensure_remote_sidecar` passed the webview-supplied alias to `ssh` UNVALIDATED (a single argv
-> element like `-oProxyCommand=…` is local command execution) and every spawn lacked `--` →
-> `validate_alias` (now rejects a leading `-`, shared by `ssh.rs`/`pty.rs`/`remote_sidecar.rs`),
-> `--` before every target, `shell_quote` on `SPINOML_PYTHON` in the `sh -c` launcher.
-> Verified by `verify:command-injection` (162), `test:deps-policy` (34), `test:run-script` (125,
-> mocked `subprocess.run`), `verify:sidecar` (new rejects). **The Rust edits cannot be compiled on
-> this machine (no toolchain) — R042/LIMITATIONS §1.** Still open: path scoping (Phase 45/46),
-> pickle (47), sidecar auth/CORS (77/78); the torch `/run_script` endpoint still takes `root` from
-> the payload.
+---
 
 # 48. PHASE 47 – UNSAFE DESERIALIZATION
 

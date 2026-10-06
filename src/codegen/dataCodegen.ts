@@ -7,14 +7,7 @@
 // ausführen" button hands to the chatbot to write to agent/ and run.
 
 import type { DataPlan, DataPlanNode } from './dataGenerator'
-
-function pyStr(s: string): string {
-  return `'${String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
-}
-
-function pyList(items: string[]): string {
-  return `[${items.map(pyStr).join(', ')}]`
-}
+import { pyStr, pyComment, pyList } from './pyLiteral'
 
 function splitCsv(s: unknown): string[] {
   return String(s ?? '').split(',').map((x) => x.trim()).filter(Boolean)
@@ -35,11 +28,11 @@ function readerFor(relpath: string): string {
 
 function emitNode(n: DataPlanNode): string[] {
   const p = n.params
-  const head = `# ── ${n.dataType} (${n.id}) ──`
+  const head = `# ${pyComment(`── ${n.dataType} (${n.id}) ──`)}`
   switch (n.dataType) {
     case 'TableSource': {
       const ds = S(p, 'dataset')
-      if (!ds) return [head, '# (kein Datensatz gewählt)']
+      if (!ds) return [head, `# ${pyComment('(kein Datensatz gewählt)')}`]
       return [head, `df = ${readerFor(ds)}`, `print('loaded', df.shape, 'from', ${pyStr(ds)})`]
     }
     case 'DownloadColumn': {
@@ -71,18 +64,18 @@ function emitNode(n: DataPlanNode): string[] {
         const i = kv.indexOf(':')
         return i > 0 ? [kv.slice(0, i).trim(), kv.slice(i + 1).trim()] : null
       }).filter(Boolean) as string[][]
-      if (!pairs.length) return [head, '# (kein Mapping)']
+      if (!pairs.length) return [head, `# ${pyComment('(kein Mapping)')}`]
       const dict = pairs.map(([a, b]) => `${pyStr(a)}: ${pyStr(b)}`).join(', ')
       return [head, `df = df.rename(columns={${dict}})`]
     }
     case 'SelectColumns': {
       const cols = splitCsv(p.columns)
-      if (!cols.length) return [head, '# (alle Spalten behalten)']
+      if (!cols.length) return [head, `# ${pyComment('(alle Spalten behalten)')}`]
       return [head, `df = df[${pyList(cols)}]`]
     }
     case 'FilterRows': {
       const q = S(p, 'query')
-      if (!q) return [head, '# (kein Filter)']
+      if (!q) return [head, `# ${pyComment('(kein Filter)')}`]
       return [head, `df = df.query(${pyStr(q)})`, `print('after filter', df.shape)`]
     }
     case 'Normalize': {
@@ -207,7 +200,7 @@ function emitNode(n: DataPlanNode): string[] {
     case 'CustomScript': {
       const label = S(p, 'label', 'custom step')
       const code = S(p, 'code')
-      return [`# ── CustomScript (${n.id}): ${label} ──`, ...code.split('\n')]
+      return [`# ${pyComment(`── CustomScript (${n.id}): ${label} ──`)}`, ...code.split('\n')]
     }
     case 'WriteDataset': {
       const out = S(p, 'out_path', 'datasets/processed.csv')
@@ -220,7 +213,7 @@ function emitNode(n: DataPlanNode): string[] {
       return lines
     }
     default:
-      return [head, `# (unbekannter Knotentyp ${n.dataType})`]
+      return [head, `# ${pyComment(`(unbekannter Knotentyp ${n.dataType})`)}`]
   }
 }
 

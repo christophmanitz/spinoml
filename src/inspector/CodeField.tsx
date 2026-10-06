@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import Editor, { type OnMount } from '@monaco-editor/react'
+import { shouldFlushCode, modalEditedByUser, type EditMeta } from './editMeta'
 
 type MonacoEditor = Parameters<OnMount>[0]
 
@@ -37,23 +38,33 @@ export default function CodeField({
 }: {
   value: string
   placeholder?: string
-  onChange: (v: string) => void
+  onChange: (v: string, meta?: EditMeta) => void
 }) {
   const inlineRef = useRef<MonacoEditor | null>(null)
   const latest = useRef(value ?? '')          // live editor text (from onChange)
   const valueRef = useRef(value ?? '')        // last value we know the store holds
   valueRef.current = value ?? ''
+  // Whether the CURRENT inline buffer came from a real user edit. A programmatic
+  // setValue (isFlush === true) must never flip this — that is how an LLM/store
+  // write under an uncontrolled editor could otherwise get auto-approved.
+  const edited = useRef(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [modalSeed, setModalSeed] = useState<string | null>(null)
 
   const flush = () => {
     if (timer.current) { clearTimeout(timer.current); timer.current = null }
-    if (latest.current !== valueRef.current) onChange(latest.current)
+    if (shouldFlushCode(edited.current, latest.current, valueRef.current)) {
+      onChange(latest.current, { userEdited: true })
+    }
+    edited.current = false
   }
-  // Flush any pending edit when the field unmounts (e.g. selecting another node).
+  // Flush any pending USER edit when the field unmounts (e.g. selecting another
+  // node). An unedited stale buffer is never written back (see editMeta).
   useEffect(() => () => flush(), []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleChange = (v: string | undefined) => {
+  const handleChange = (v: string | undefined, ev?: { isFlush?: boolean }) => {
+    // Only a real content change (isFlush === false) counts as a user edit.
+    if (ev && ev.isFlush === false) edited.current = true
     latest.current = v ?? ''
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(flush, 500)
@@ -92,9 +103,14 @@ export default function CodeField({
           onClose={(next) => {
             setModalSeed(null)
             if (next === undefined) return
+            const userEdited = modalEditedByUser(modalSeed, next)
             latest.current = next
-            inlineRef.current?.setValue(next) // keep the inline editor in sync
-            if (next !== valueRef.current) onChange(next)
+            // Sync the inline editor; this setValue is a flush (isFlush === true)
+            // and therefore must NOT mark the buffer as user-edited.
+            inlineRef.current?.setValue(next)
+            // Only a real user change in the modal is committed — closing without
+            // typing must not write anything back (H3).
+            if (userEdited && next !== valueRef.current) onChange(next, { userEdited: true })
           }}
         />
       )}

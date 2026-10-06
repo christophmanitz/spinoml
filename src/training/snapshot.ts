@@ -9,6 +9,9 @@
 import type { GraphSnapshot } from '../canvas/GraphStore'
 import { parseFile } from '../persistence/file'
 import type { PreprocessingStep, RunSnapshot } from './types'
+import { collectCodeBlobs } from '../trust/codeBlobs'
+import { buildCodeTrustManifest } from '../trust/gate'
+import { trust } from '../trust/trustStore'
 
 /** Plain SHA-256 of the UTF-8 bytes — must match train.py's hashlib.sha256
  *  over the RUN-DIR file bytes. */
@@ -50,10 +53,13 @@ export async function buildRunSnapshot(
     sha256Hex(modelSpinoml),
     sha256Hex(modelPy),
   ])
+  const blobs = graph ? collectCodeBlobs(graph.nodes) : []
+  const code_trust = await buildCodeTrustManifest(blobs, (sha) => trust.get(sha))
   return {
     version: 1,
     graph_sha256,
     model_py_sha256,
     preprocessing: graph ? extractPreprocessing(graph) : [],
+    code_trust,
   }
 }

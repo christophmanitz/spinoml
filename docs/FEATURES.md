@@ -306,6 +306,52 @@ chatbot knows about it — recipe in CLAUDE.md "Add a new LLM tool".
   `/activations` → per-node activations + weights (downsampled). The `tokens`
   preview shows ESPF substructure **labels** when the input is an ESPF node.
 
+## 8b. Code trust (execution gate)
+
+Arbitrary Python in a graph (Custom `source`/`init_args`, DataOp `script`, data
+`CustomScript` `code`) may only run if its content hash is in a local trust
+store (`src/trust/trustStore.ts`, sha256 over `kind\0source`). Every executor
+asks the gate first: `src/trust/guard.ts` (`listUntrusted`/`assertTrusted`) is
+called by inference, visualization, dataset smoke, the training verifier and
+`training/store.ts` before launch; fail-closed leaves
+`useInferenceStore.status === 'untrusted'` with the offending blobs.
+The ONLY approval paths are human-initiated: editing a code field / `init_args`
+in the Inspector (`human-edit`), "Zu Custom-Code umwandeln" (`eject`), inserting
+a built-in template (`template`), and the explicit click in the approval dialog
+(`user-approval`, `src/trust/ApproveCodeDialog.tsx`). The chat/LLM path and file
+load/restore never approve. The amber `InferenceBadge`, the blocked
+"Vorverarbeitung ausführen" (DataOp), "Pipeline ausführen"/"via Chat" (data
+canvas) and the blocked training launch open the dialog via
+`src/trust/useApproveDialog.ts`. `scripts/verify-code-trust.ts` enforces
+`ALLOWED_APPROVERS` + origin/HTML static invariants.
+
+## 8c. Command, argument and generated-code safety (Phase 43/44)
+
+- **Generated Python is inert for hostile values**: every string/number the three
+  generators interpolate goes through `src/codegen/pyLiteral.ts` (`pyStr`,
+  `pyComment`, `pyIdent`, `pyFloat/pyInt/pyIntList`). Only four sinks are code by
+  design (`Custom.source`, `Custom.init_args`, `DataOp.script`, `CustomScript.code`);
+  they are gated by §8b. Proof: `npm run verify:codegen-security`.
+- **Chatbot `run_script`**: `args` are split by a POSIX-like tokenizer with no
+  expansion (`sidecar-llm/shell-safety.mjs` `splitArgs`/`quoteArgv`), the confirm
+  dialog shows the quoted argv that really runs, and the script path is passed as
+  `./<path>` so it can never be read as an option. Hostile args are rejected
+  pre-confirm. Proof: `npm run verify:command-injection`.
+- **`download_to_datasets`**: URL policy (`checkDownloadUrl`: http/https only, no
+  credentials, ports 80/443/8080/8443, no internal names/private/loopback/
+  link-local addresses incl. IPv6 mapped/NAT64/6to4/Teredo, fail-closed on invalid
+  input) + local `safeFetch` (DNS resolution check and a re-check of every redirect
+  hop). Remote downloads use curl with `--proto`/`--max-redirs`; DNS-name SSRF on
+  the remote network is not detected (docs/engineering/LIMITATIONS.md §2).
+- **Torch sidecar**: `/deps/check`/`/deps/install` accept only plain PyPI
+  requirements (`sidecar-torch/deps_policy.py`; `torch`/`pip`/`setuptools` refused;
+  `error_code:"INVALID_SPEC"`); `/run_script` accepts only whitelisted relative
+  script names (`error_code:"INVALID_RELPATH"`). `root` is still taken from the
+  request (path scoping = Phase 45/46).
+- **ssh targets** (Rust): `validate_alias` rejects a leading `-` and is shared by
+  `ssh.rs`, `pty.rs`, `remote_sidecar.rs`; every spawn passes `--` before the
+  target. (Not compiled on the current dev machine — LIMITATIONS §1.)
+
 ## 9. Common tasks (how to do X)
 
 - **Build a dual-encoder (ligand + protein → affinity)**: `Manifest` → `Graph`
@@ -318,6 +364,11 @@ chatbot knows about it — recipe in CLAUDE.md "Add a new LLM tool".
   `agent/`, run via `run_script`; write outputs under `datasets/`.
 
 ## Changelog (append one dated line per feature; newest first)
+
+- 2026-10-06 — **Command/argument injection hardening (Phase 44)**: `run_script` args quoted via a real tokenizer + `./`-prefixed targets (`sidecar-llm/shell-safety.mjs`); torch `/run_script` relpath whitelist (removes the `bash -lc <filename>` branch); `/deps/*` pip-spec policy (`sidecar-torch/deps_policy.py`); `download_to_datasets` SSRF policy + DNS-checking `safeFetch`; ssh `validate_alias` rejects leading `-`, `--` before every ssh target, `remote_sidecar` alias now validated (Rust edits uncompiled — no toolchain). New checks: `npm run verify:command-injection` (162), `npm run test:deps-policy` (34), `npm run test:run-script` (125), extra rejects in `verify:sidecar`. See §8c.
+- 2026-10-06 — **Generated-Python safety + code-trust gate (Phase 43)**: shared `src/codegen/pyLiteral.ts` makes every interpolated value inert (`npm run verify:codegen-security`, 5362 adversarial cases checked with Python `ast`/`tokenize`; 620 failed before); LLM-written or imported `Custom`/`init_args`/`DataOp`/`CustomScript` code no longer runs without an explicit user decision — content-addressed trust store, approval dialog, `status:'untrusted'`, run.json `snapshot.code_trust`. `npm run verify:code-trust` (110), `npm run verify:code-trust-wiring` (78). See §8b/§8c.
+
+- 2026-10-06 — **Code trust UI (Phase 43, user-facing half)**: the execution gate gets its human surface — `src/trust/ApproveCodeDialog.tsx` (per-blob label/path/line-count + first 40 lines as plain text, per-blob "Freigeben" and "Alle freigeben" → `trust.approve(hash, 'user-approval')`, Esc/"Abbrechen" default focus) mounted once in `App.tsx` and opened via `src/trust/useApproveDialog.ts` from the amber `InferenceBadge`, the blocked `NewRunModal` launch (`UntrustedCodeError` or `listUntrusted` pre-check), DataOp "Vorverarbeitung ausführen" and the data-canvas "Pipeline ausführen"/"via Chat". The only other approvers are the Inspector's human-edit (`human-edit`, incl. `init_args`) + eject (`eject`) and built-in template insertion (`template`); chat/load/restore still never approve. `scripts/verify-code-trust.ts` gains `ALLOWED_APPROVERS` + explicit-origin-literal, no-`dangerouslySetInnerHTML`, and `'user-approval'`-origin-only-in-dialog static checks.
 
 - 2026-09-22 — **Training immutability (Phase 42)**: once `startRun` is called, the run is fully frozen by `snapshot` sha256 (`modelContent`+`modelPy` via `generateFromSnapshot`+`buildRunSnapshot`) and `training.rs`/`ssh.rs` write `run.json`/`model.spinoml`/`model.py`/`train.py` atomically into `experiments/runs/<id>/` and launch detached (`setsid`/`sbatch`, survives app close); the run never reads live `GraphStore`. `train.py` `_verify_snapshot` re-hashes and `fail`s loudly on drift; later UI edits bump `GraphStore.revision` but cannot mutate the running experiment. New `npm run verify:immutability` (27 checks) + prior `verify:traingen` snapshot section lock immutability.
 

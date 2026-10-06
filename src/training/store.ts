@@ -9,6 +9,7 @@ import { useDatasetsStore } from '../datasets/store'
 import type { DatasetFingerprint } from '../datasets/types'
 import { training } from './backend'
 import { buildRunSnapshot } from './snapshot'
+import { assertTrusted } from '../trust/guard'
 import {
   type RunSummary,
   type RunConfig,
@@ -215,7 +216,12 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   startRun: async (input) => {
     // Generate model.py from the frozen .spinoml snapshot (pure codegen).
     const modelContent = await fs.read(input.modelRelpath)
-    const modelPy = generateFromSnapshot(parseFile(modelContent)).code
+    // Phase 43 — refuse unapproved Custom/DataOp code BEFORE anything is
+    // generated, written to disk or launched. Uses the frozen snapshot bytes
+    // (the exact graph that would run), never the live canvas.
+    const frozen = parseFile(modelContent)
+    await assertTrusted(frozen.nodes)
+    const modelPy = generateFromSnapshot(frozen).code
 
     const runId = makeRunId(input.label)
     // A .manifest is a paired graph dataset; everything else is tabular here.
@@ -263,6 +269,10 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
     } catch (e) {
       throw new Error(`could not read source run '${input.sourceRunId}': ${e instanceof Error ? e.message : String(e)}`, { cause: e })
     }
+
+    // Phase 43 — the reused source run's frozen graph may itself carry code that
+    // was never approved on this machine. Refuse before writing/launching.
+    await assertTrusted(parseFile(modelSpinoml).nodes)
 
     const runId = makeRunId(`val ${input.label || 'run'}`)
     const isManifest = input.datasetRelpath.toLowerCase().endsWith('.manifest')

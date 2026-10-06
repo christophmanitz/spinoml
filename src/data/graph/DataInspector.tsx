@@ -1,9 +1,12 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 
 import { isTauri } from '../../workspace/tauri-fs'
 import { useDatasetsStore } from '../../datasets/store'
 import { compileDataGraph } from '../../codegen/dataGenerator'
 import { generateNodeCode } from '../../codegen/dataCodegen'
+import { shouldCommitText } from '../../inspector/editMeta'
+import { hashBlob } from '../../trust/codeBlobs'
+import { trust } from '../../trust/trustStore'
 import { useDataGraphStore } from './store'
 import { DATA_NODES, type DataFieldSpec } from './registry'
 
@@ -63,6 +66,11 @@ export default function DataInspector() {
               field={field}
               value={node.data.params[field.name]}
               onChange={(v) => updateNodeParams(node.id, { [field.name]: v })}
+              onApproveCode={
+                node.data.dataType === 'CustomScript' && field.type === 'code'
+                  ? (text: string) => { void hashBlob('data-custom-script', text).then((h) => trust.approve(h, 'human-edit')) }
+                  : undefined
+              }
             />
           </label>
         ))}
@@ -98,11 +106,12 @@ function CompilePanel({ compile }: { compile: ReturnType<typeof compileDataGraph
 }
 
 function FieldInput({
-  field, value, onChange,
+  field, value, onChange, onApproveCode,
 }: {
   field: DataFieldSpec
   value: unknown
   onChange: (v: unknown) => void
+  onApproveCode?: (text: string) => void
 }) {
   switch (field.type) {
     case 'int':
@@ -143,17 +152,55 @@ function FieldInput({
       )
     case 'code':
       return (
-        <textarea
+        <CodeTextarea
           value={String(value ?? '')}
-          onChange={(e) => onChange(e.target.value)}
-          spellCheck={false}
-          rows={10}
-          className={`${INPUT} resize-y font-mono text-[11px] leading-snug`}
+          onChange={onChange}
+          onApproveCode={onApproveCode}
         />
       )
     case 'dataset-ref':
       return <DatasetRef value={String(value ?? '')} onChange={onChange} />
   }
+}
+
+/** Phase 43 (fix round 1) — the data-graph CustomScript body is a CONTROLLED
+ *  textarea, so React fires its DOM `onChange` only for real user typing (a
+ *  programmatic store write just re-renders the value). That makes it a safe
+ *  `human-edit` approval origin: no draft/blur mirror exists to re-commit an
+ *  LLM-written value. The settled text is approved ~500 ms after typing stops,
+ *  and only when it actually differs from the value the edit started from. */
+function CodeTextarea({
+  value, onChange, onApproveCode,
+}: {
+  value: string
+  onChange: (v: unknown) => void
+  onApproveCode?: (text: string) => void
+}) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const base = useRef<string | null>(null)
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
+  return (
+    <textarea
+      value={value}
+      onChange={(e) => {
+        const next = e.target.value
+        if (!shouldCommitText(next, value)) return
+        if (base.current === null) base.current = value
+        onChange(next)
+        if (!onApproveCode) return
+        if (timer.current) clearTimeout(timer.current)
+        timer.current = setTimeout(() => {
+          const from = base.current
+          base.current = null
+          timer.current = null
+          if (from !== null && shouldCommitText(next, from)) onApproveCode(next)
+        }, 500)
+      }}
+      spellCheck={false}
+      rows={10}
+      className={`${INPUT} resize-y font-mono text-[11px] leading-snug`}
+    />
+  )
 }
 
 function DatasetRef({ value, onChange }: { value: string; onChange: (v: unknown) => void }) {

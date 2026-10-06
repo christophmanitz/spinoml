@@ -9,6 +9,31 @@ import { useScopeStore } from '../canvas/scopeStore'
 import { layerInitExpr } from '../codegen/generator'
 import { useChatStore } from '../chat/store'
 import CodeField from './CodeField'
+import { shouldCommitText, type EditMeta } from './editMeta'
+import { useApproveDialog } from '../trust/useApproveDialog'
+import { trust } from '../trust/trustStore'
+import { collectCodeBlobs, hashBlob, type CodeKind } from '../trust/codeBlobs'
+import { listUntrusted } from '../trust/guard'
+
+// Phase 43 — a user edit inside the Inspector is one of the few legitimate
+// approval origins. This runs ONLY from the field inputs' own React handlers
+// (Monaco onChange / text onBlur), never from a programmatic store write — the
+// LLM path mutates GraphStore directly and does not fire these. `code` fields
+// commit debounced (CodeField ~500 ms), so only the settled text is approved.
+function approveHumanEdit(layerType: string, field: FieldSpec, value: unknown): void {
+  const text = typeof value === 'string' ? value : String(value ?? '')
+  if (text.trim() === '') return
+  let kind: CodeKind | null = null
+  if (field.type === 'code') {
+    if (layerType === 'Custom') kind = 'custom-layer'
+    else if (layerType === 'DataOp') kind = 'dataop-script'
+  } else if (field.type === 'text' && field.name === 'init_args' && layerType === 'Custom') {
+    kind = 'custom-init-args'
+  }
+  if (!kind) return
+  const k = kind
+  void hashBlob(k, text).then((h) => trust.approve(h, 'human-edit'))
+}
 
 export default function Inspector() {
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId)
@@ -120,7 +145,10 @@ export default function Inspector() {
                   field={field}
                   value={params[field.name] ?? field.default}
                   inShape={inShape}
-                  onChange={(v) => updateNodeParams(node.id, { [field.name]: v })}
+                  onChange={(v, meta) => {
+                    if (meta?.userEdited === true) approveHumanEdit(node.data.layerType, field, v)
+                    updateNodeParams(node.id, { [field.name]: v })
+                  }}
                 />
               ))}
             {node.data.layerType === 'Input' && <GraphBindingPanel node={node} />}
@@ -147,7 +175,13 @@ function DataOpPanel({ node }: { node: { id: string; data: { params: Record<stri
   const status = useChatStore((s) => s.status)
   const busy = status === 'streaming'
 
-  const run = () => {
+  const run = async () => {
+    // Phase 43 — an unapproved script must not reach the chat/run_script path.
+    const untrusted = await listUntrusted([{ id: node.id, data: { layerType: 'DataOp', params: p } }])
+    if (untrusted.length > 0) {
+      useApproveDialog.getState().openFor(untrusted)
+      return
+    }
     const scriptPath = `agent/${node.id}.py`
     const args = input ? `--input ${input} --output ${output}` : `--output ${output}`
     const msg = [
@@ -169,7 +203,7 @@ function DataOpPanel({ node }: { node: { id: string; data: { params: Record<stri
       </div>
       <button
         className="w-full rounded border border-emerald-800/60 bg-emerald-950/30 px-2 py-1.5 text-xs text-emerald-200 hover:bg-emerald-900/40 disabled:opacity-50"
-        onClick={run}
+        onClick={() => void run()}
         disabled={online === false || busy}
         title={online === false ? 'Chatbot-Sidecar offline' : 'Skript schreiben + ausführen (mit Bestätigung)'}
       >
@@ -560,7 +594,13 @@ function ejectToCustom(
 
     def forward(self, ${sig}):
 ${body}`
-  replaceNodeLayer(node.id, 'Custom', { class_name: cls, init_args: '', source })
+  const params = { class_name: cls, init_args: '', source }
+  replaceNodeLayer(node.id, 'Custom', params)
+  // Phase 43 — eject is a legitimate origin: SpinoML itself generated this code
+  // from the built-in layer, so approve every blob of the new node verbatim.
+  for (const blob of collectCodeBlobs([{ id: node.id, data: { layerType: 'Custom', params } }])) {
+    void hashBlob(blob.kind, blob.source).then((h) => trust.approve(h, 'eject'))
+  }
 }
 
 function FixHints({
@@ -725,7 +765,7 @@ function ParamField({
   field: FieldSpec
   value: unknown
   inShape: number[] | undefined
-  onChange: (v: unknown) => void
+  onChange: (v: unknown, meta?: EditMeta) => void
 }) {
   return (
     <label className="mb-2 flex flex-col gap-1">
@@ -768,7 +808,7 @@ function FieldInput({
 }: {
   field: FieldSpec
   value: unknown
-  onChange: (v: unknown) => void
+  onChange: (v: unknown, meta?: EditMeta) => void
 }) {
   const baseClass =
     'rounded border border-[#1f2429] bg-[#0e1216] px-2 py-1 text-xs outline-none focus:border-[#3a4148]'
@@ -825,7 +865,7 @@ function TextInput({
 }: {
   field: Extract<FieldSpec, { type: 'text' }>
   value: string
-  onChange: (v: unknown) => void
+  onChange: (v: unknown, meta?: EditMeta) => void
   baseClass: string
 }) {
   const [draft, setDraft] = useState(value ?? '')
@@ -841,7 +881,11 @@ function TextInput({
         spellCheck={false}
         list={listId}
         onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => onChange(draft)}
+        onBlur={() => {
+          // H1 — the draft mirrors the STORE value, so a focus/blur without
+          // typing must not commit (and must never be approved).
+          if (shouldCommitText(draft, value ?? '')) onChange(draft, { userEdited: true })
+        }}
         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
       />
       {listId && (
@@ -858,9 +902,9 @@ function CodeInput({
 }: {
   field: Extract<FieldSpec, { type: 'code' }>
   value: string
-  onChange: (v: unknown) => void
+  onChange: (v: unknown, meta?: EditMeta) => void
 }) {
-  return <CodeField value={value ?? ''} placeholder={field.placeholder} onChange={(v) => onChange(v)} />
+  return <CodeField value={value ?? ''} placeholder={field.placeholder} onChange={(v, meta) => onChange(v, meta)} />
 }
 
 function columnsFor(datasetRel: string | undefined): string[] | null {

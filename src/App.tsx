@@ -13,6 +13,8 @@ import { providerById, useProviderStore } from './chat/providerStore'
 import { useVizStore } from './visualization/store'
 import LayerExplain from './visualization/LayerExplain'
 import { useManagedSidecars } from './sidecars/managed'
+import { useApproveDialog } from './trust/useApproveDialog'
+import ApproveCodeDialog from './trust/ApproveCodeDialog'
 import { useProjectStore } from './project/store'
 import Welcome from './project/Welcome'
 import Toolbar from './Toolbar'
@@ -42,7 +44,22 @@ function InferenceBadge() {
   const status = useInferenceStore((s) => s.status)
   const nParams = useInferenceStore((s) => s.nParams)
   const error = useInferenceStore((s) => s.error)
+  const untrusted = useInferenceStore((s) => s.untrusted)
   const managed = useManagedSidecars((s) => s.torch)
+
+  // Phase 43 — unapproved Custom/DataOp code blocks all execution. The badge is
+  // the entry point to the approval dialog; it never approves by itself.
+  if (status === 'untrusted') {
+    return (
+      <button
+        onClick={() => useApproveDialog.getState().openFor(useInferenceStore.getState().untrusted)}
+        className="rounded bg-amber-900/40 px-2 py-0.5 text-amber-300 hover:bg-amber-900/60"
+        title={error ?? 'Code nicht freigegeben — klicken zum Prüfen'}
+      >
+        Code nicht freigegeben ({untrusted.length})
+      </button>
+    )
+  }
 
   const prefix = managed ? 'shapes (auto)' : 'shapes'
   const label =
@@ -369,6 +386,7 @@ export default function App() {
       {evalSourceId && <EvalRunModal />}
       {selectedRun && <RunDetailModal runId={selectedRun} />}
       {compareOpen && <CompareModal />}
+      <ApproveCodeDialog />
     </div>
   )
 }

@@ -1,0 +1,12 @@
+
+> spinoml@0.0.0 verify:code-trust-wiring
+> tsx scripts/verify-code-trust-wiring.ts
+
+phase 43: code-trust wiring
+
+1. inference: trusted Custom
+  ✓ trusted Custom: /infer called once
+  ✓ trusted Custom: status ok
+  ✓ trusted Custom: node has inferred output shape
+TypeError: Cannot read properties of undefined (reading 'length')
+    at main (/home/christoph/projects/mlforge/scripts/verify-code-trust-wiring.ts:98:76)
