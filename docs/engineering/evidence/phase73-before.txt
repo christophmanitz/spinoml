@@ -1,0 +1,12 @@
+phase 73 BEFORE — sabotage against the UNFIXED trainer
+(each sabotage is what the integrity gate that this phase adds will catch)
+
+[1] best.pt never written    : status=done  terminal_event=run.done  best.pt exists=false
+[2] best.pt truncated to 0 B : status=done  terminal_event=run.done  best.pt size=0
+[3] best.pt overwritten garb : status=done  terminal_event=run.done
+[4] last.pt missing          : status=done  terminal_event=run.done
+[5] metrics best_val_loss=NaN: status=done  terminal_event=run.done
+[6] manifest.json corrupted  : status=done  terminal_event=run.done
+
+Expected (after the fix lands): every scenario ends status=failed stage=integrity with NO run.done.
+Observed (BEFORE the fix): every scenario still ends status=done with run.done emitted.

@@ -42,6 +42,7 @@
     "verify:paths": "tsx scripts/verify-paths.ts",
     "verify:silent-catch": "tsx scripts/verify-silent-catch.ts",
     "verify:silent-fixes": "tsx scripts/verify-silent-fixes.ts",
+    "verify:integrity": "tsx scripts/verify-integrity.ts",
     "test:graphstore": "tsx scripts/test-graphstore.ts",
     "test:persistence": "tsx scripts/test-persistence.ts",
     "test:determinism": "tsx scripts/test-determinism.ts",

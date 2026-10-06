@@ -174,6 +174,28 @@ console.log('phase 50: silent-exception fixes')
   check('node pre-fix evidence exists', existsSync(join(process.cwd(), 'docs/engineering/evidence/phase50-node-before.txt')))
 }
 
+// 13. Phase 74 — RunDetailModal resumable banner is explicit (no silent swallow
+//     on a manifest read/parse failure). The banner is ONLY a presentation of
+//     data the trainer already wrote into metrics.json + manifest.json; it
+//     must NEVER claim "not resumable" when the data is actually unknown.
+{
+  const m = src('training/RunDetailModal.tsx')
+  check('RunDetailModal: resumable banner reads manifest.json via readRunFile',
+    /readRunFile\([^)]*manifest\.json[^)]*\)/.test(m))
+  check('RunDetailModal: parses manifest.json into a ResumableRecord with explicit fallback',
+    m.includes('ResumableRecord') &&
+    m.includes("typeof r.resume_from === 'string'"))
+  check('RunDetailModal: explicit "Manifest nicht lesbar" copy on read failure',
+    m.includes('Manifest nicht lesbar'))
+  check('RunDetailModal: distinguishes read failure from a missing file',
+    m.includes('manifestReadProblem'))
+  check('RunDetailModal: banner gated to status === failed || cancelled',
+    /status\s*===\s*['"]failed['"]\s*\|\|\s*status\s*===\s*['"]cancelled['"]/.test(m))
+  check('RunDetailModal: banner never auto-resumes (no resume trigger in banner)',
+    !/Fortsetzbar[\s\S]{0,500}(openEvalRun|stopRun)\(runId\)/.test(m) &&
+    !/checkpointLoadProgress|automatically|auto-resume/i.test(m))
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`)
   process.exit(1)

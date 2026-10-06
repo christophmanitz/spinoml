@@ -3435,6 +3435,21 @@ not:
 SUCCESS
 ```
 
+> **2026-10-06 — implemented; a real false-success bug found first.** Sabotage against the UNFIXED trainer
+> (`docs/engineering/evidence/phase73-before.txt`): a run whose `best.pt` was never written, truncated to 0 bytes
+> or overwritten with garbage, whose `last.pt` was missing, whose metrics held `best_val_loss: NaN` or whose
+> `manifest.json` was corrupt STILL ended `status=done` with `run.done`. Now `_verify_run_integrity` runs after
+> `metrics.json` and the final checkpoints are written and BEFORE `done`: (a) metrics.json readable with finite
+> `best_val_loss`, `epochs ≥ 1`, `n_params ≥ 1` (eval form for eval-only runs); (b) `best.pt` and `last.pt` exist,
+> non-empty, zip-valid and — up to 256 MB — load through `safe_torch_load` with `model_state, optim_state, epoch,
+> global_step, config`; (c) `events.jsonl` holds `run.provenance`, `config.env`, `run.snapshot` and ≥ 1
+> `epoch.end`; (d) `manifest.json` parses with the pinned schema; (e) `stdout.log`/`stderr.log` exist when the
+> executor launched the run (detected by the `pid` file; otherwise a note). Any problem → `run.integrity ok:false`,
+> `run.failed` stage `integrity`, status FAILED, never `run.done`. The gate fails closed: an exception inside it is a
+> failure. Side effect, deliberate: a manifest that cannot be written now fails the run (missing required
+> metadata); `verify:manifest` case 10 was updated to assert exactly that. `npm run verify:integrity` (real runs +
+> python-wrapper sabotage, ~110 s).
+
 ---
 
 # 75. PHASE 74 – FAILED RUNS AND RESUME
@@ -3454,6 +3469,18 @@ RESUMABLE
 where appropriate.
 
 Do not automatically resume without explicit user intent.
+
+> **2026-10-06 — implemented.** At every terminal write `_compute_resumable` records
+> `resumable: {resumable, resume_from, epoch, reason}` in `metrics.json` and `manifest.json` (+ `run.resumable`
+> event): true only for a failed/cancelled run whose `last.pt` exists, loads, and carries this run's graph/model
+> hashes; reasons otherwise: "run completed", "no checkpoint", "checkpoint corrupt", "checkpoint belongs to a
+> different model", "checkpoint load verification skipped (size)". The STATUS stays `failed`/`cancelled` — no new
+> status value — and `RunDetailModal` shows an amber "Fortsetzbar: Checkpoint nach Epoche N vorhanden (Status bleibt
+> FEHLGESCHLAGEN)" banner (or the reason; an unreadable manifest is shown explicitly). Nothing resumes by itself:
+> a second launch without `resume_from` starts at epoch 0 with no `run.resumed`; with `resume_from` it emits
+> `run.resumed` and the epoch continues (`verify:integrity` §10/§11). Verified: crash at epoch k+1 → resumable at k;
+> SIGTERM → cancelled + resumable; crash before any checkpoint, corrupt `last.pt`, another model's `last.pt` → not
+> resumable with the right reason.
 
 ---
 

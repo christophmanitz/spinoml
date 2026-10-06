@@ -254,6 +254,23 @@ export type TrainingEvent = {
   kind: string
 } & Record<string, unknown>
 
+/** Phase 74 — terminal-time resumable flag persisted by the trainer into
+ *  metrics.json + manifest.json (and emitted as `run.resumable`). The status
+ *  stays failed/cancelled — this is an additional flag the UI banner reads,
+ *  not a new status value. Nothing auto-resumes; the user opens "Neuer Run"
+ *  and picks "Fortsetzen ab Checkpoint" themselves. */
+export type ResumableRecord = {
+  resumable: boolean
+  /** Workspace-relative path (experiments/runs/<id>/checkpoints/last.pt) or null. */
+  resume_from: string | null
+  /** Last completed epoch in last.pt, or null. */
+  epoch: number | null
+  /** Human-readable explanation: "run completed", "no checkpoint",
+   *  "checkpoint corrupt", "checkpoint belongs to a different model",
+   *  "checkpoint load verification skipped (size)". */
+  reason: string
+}
+
 export const RUNNING_STATES = new Set(['queued', 'running'])
 
 export function isTerminal(status: string): boolean {

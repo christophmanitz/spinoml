@@ -37,6 +37,7 @@ import subprocess
 import sys
 import time
 import traceback
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -278,6 +279,9 @@ def _finish_cancel(epoch: int, note: str = "") -> None:
         emit("run.cancelled", epoch=epoch, applied=True, note=note)
     METRICS.write_text(json.dumps({"status": "cancelled", "epoch": epoch}, indent=2))
     _manifest_write("cancelled", status="cancelled", finished_at=_now())
+    # Phase 74 — a cancelled run can be resumed if its last.pt is valid and
+    # belongs to this model; the flag is recorded so the UI banner can show it.
+    _record_terminal_resumable("cancelled")
 
 
 def cancel_run(epoch: int, note: str = "") -> None:
@@ -296,6 +300,9 @@ def fail(stage: str, msg: str, tb: str | None = None) -> None:
     METRICS.write_text(json.dumps({"status": "failed", "stage": stage, "error": msg}, indent=2))
     _manifest_write("failed", status="failed", finished_at=_now(),
                     failure={"stage": stage, "message": _strip_abs_paths(str(msg))[:500]})
+    # Phase 74 — a failed run can be resumed if its last.pt is valid and
+    # belongs to this model; the flag is recorded so the UI banner can show it.
+    _record_terminal_resumable("failed")
     sys.stderr.write(f"[spinoml-train] FAILED in {stage}: {msg}\n")
     if tb:
         sys.stderr.write(tb)
@@ -886,6 +893,318 @@ def _manifest_init(cfg: dict) -> None:
         "notes": [],
     }
     _manifest_write("running")
+
+
+# ─── Integrity gate (Phase 73) + Resumable (Phase 74) ───────────────────────
+# A run may only be declared `done` when its required artifacts really exist
+# and are valid; otherwise it ends `failed` with stage `integrity`, never `done`.
+# Independently, every terminal write (done/failed/cancelled) computes whether
+# the run is resumable from `checkpoints/last.pt` and persists the flag plus a
+# `run.resumable` event so the UI can show a banner — without ever auto-resuming.
+
+# Checkpoints larger than this skip the deep load+keys check in both the gate
+# and _compute_resumable (zip+size header check is still performed). The size
+# is recorded as a note in the gate output and as the resumable reason.
+_CKPT_LOAD_SKIP_BYTES = 256 * 1024 * 1024  # 256 MB
+
+# Events that MUST appear in events.jsonl for a run to be considered honest.
+_REQUIRED_EVENT_KINDS = ("run.provenance", "config.env", "run.snapshot")
+
+
+def _is_finite_loss(v) -> bool:
+    """Same finiteness contract as _is_finite, but tolerant of strings/None —
+    Phase 25/73: a non-finite best_val_loss is unusable and must fail integrity."""
+    if v is None:
+        return False
+    try:
+        import math
+        return math.isfinite(float(v))
+    except (TypeError, ValueError):
+        return False
+
+
+def _checkpoint_ok(path: Path) -> tuple[bool, str]:
+    """Verify a single .pt: exists, non-empty, valid zip, and (when ≤ 256 MB)
+    loadable via safe_torch_load with the required keys. Returns (ok, reason).
+    `reason` is "" on success, otherwise a one-line explanation of the failure."""
+    if not path.exists():
+        return False, "missing"
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        return False, f"stat failed: {type(exc).__name__}"
+    if size == 0:
+        return False, "empty (0 bytes)"
+    try:
+        if not zipfile.is_zipfile(str(path)):
+            return False, "not a valid zip"
+    except (OSError, zipfile.BadZipFile) as exc:
+        return False, f"zip check failed: {type(exc).__name__}"
+    if size > _CKPT_LOAD_SKIP_BYTES:
+        # Header+size check only — refuse to load multi-hundred-MB checkpoints
+        # in the gate; record the skip reason for the caller.
+        return True, "checkpoint load verification skipped (size)"
+    try:
+        ckpt = safe_torch_load(path)
+    except UnsafePickleError as exc:
+        return False, f"unsafe pickle: {exc}"[:200]
+    except Exception as exc:
+        return False, f"load failed: {type(exc).__name__}"
+    if not isinstance(ckpt, dict):
+        return False, "not a dict"
+    needed = {"model_state", "optim_state", "epoch", "global_step", "config"}
+    missing_keys = sorted(needed - set(ckpt.keys()))
+    if missing_keys:
+        return False, f"missing keys: {missing_keys}"
+    return True, ""
+
+
+def _verify_run_integrity(eval_only: bool) -> dict:
+    """Phase 73 — verify every required artifact is present and valid BEFORE
+    declaring the run done. Runs AFTER metrics.json + the final checkpoints are
+    written and BEFORE the terminal `done` status / `run.done` event.
+
+    Returns {"ok", "missing", "invalid", "notes"}. The caller decides whether
+    to proceed (emit run.integrity with ok=true and continue) or call
+    fail("integrity", msg) when ok is False. Never raises — any exception
+    inside the gate is reported as an `invalid` entry and counts as failure
+    (fail closed)."""
+    try:
+        missing: list[str] = []
+        invalid: list[str] = []
+        notes: list[str] = []
+
+        # (a) metrics.json — required in normal form (full payload) or eval form.
+        if not METRICS.exists():
+            missing.append("metrics.json (not written)")
+        else:
+            try:
+                m = json.loads(METRICS.read_text(encoding="utf-8"))
+            except Exception as exc:
+                invalid.append(f"metrics.json: JSON parse failed ({type(exc).__name__})")
+                m = None
+            if isinstance(m, dict):
+                if "status" not in m:
+                    invalid.append("metrics.json: missing 'status' field")
+                if eval_only:
+                    if m.get("eval_only") is not True:
+                        invalid.append("metrics.json: eval_only form expected (eval_only != true)")
+                    if not _is_finite_loss(m.get("best_val_loss")):
+                        invalid.append("metrics.json: best_val_loss is not finite")
+                else:
+                    if not _is_finite_loss(m.get("best_val_loss")):
+                        invalid.append("metrics.json: best_val_loss is not finite")
+                    ep = m.get("epochs")
+                    if not isinstance(ep, int) or ep < 1:
+                        invalid.append("metrics.json: epochs < 1 or not an int")
+                    np_ = m.get("n_params")
+                    if not isinstance(np_, int) or np_ < 1:
+                        invalid.append("metrics.json: n_params < 1 or not an int")
+            else:
+                invalid.append("metrics.json: not a JSON object")
+
+        # (b) checkpoints — required only for non-eval runs.
+        if not eval_only:
+            for name in ("best.pt", "last.pt"):
+                ok, reason = _checkpoint_ok(CKPT_DIR / name)
+                if not ok:
+                    (missing if reason == "missing" else invalid).append(
+                        f"checkpoints/{name}: {reason}"
+                    )
+                elif reason == "checkpoint load verification skipped (size)":
+                    notes.append(reason)
+
+        # (c) events.jsonl — required events + at least one epoch.end.
+        if not EVENTS.exists():
+            missing.append("events.jsonl (missing)")
+        else:
+            try:
+                seen_kinds: set[str] = set()
+                saw_epoch_end = False
+                for ln in EVENTS.read_text(encoding="utf-8").splitlines():
+                    if not ln.strip():
+                        continue
+                    try:
+                        ev = json.loads(ln)
+                    except Exception:
+                        continue
+                    if isinstance(ev, dict):
+                        k = ev.get("kind")
+                        if isinstance(k, str):
+                            seen_kinds.add(k)
+                            if k == "epoch.end":
+                                saw_epoch_end = True
+                for needed in _REQUIRED_EVENT_KINDS:
+                    if needed not in seen_kinds:
+                        invalid.append(f"events.jsonl: missing required event '{needed}'")
+                if not saw_epoch_end:
+                    invalid.append("events.jsonl: no epoch.end event")
+            except Exception as exc:
+                invalid.append(f"events.jsonl: read/parse failed ({type(exc).__name__})")
+
+        # (d) manifest.json — schema version pinned.
+        if not MANIFEST.exists():
+            missing.append("manifest.json (missing)")
+        else:
+            try:
+                mf = json.loads(MANIFEST.read_text(encoding="utf-8"))
+            except Exception as exc:
+                invalid.append(f"manifest.json: JSON parse failed ({type(exc).__name__})")
+                mf = None
+            if isinstance(mf, dict):
+                if mf.get("schema") != MANIFEST_SCHEMA:
+                    invalid.append(f"manifest.json: schema != {MANIFEST_SCHEMA!r}")
+            else:
+                invalid.append("manifest.json: not a JSON object")
+
+        # (e) stdout.log / stderr.log — required ONLY when the executor launched
+        # the run (the run dir carries a `pid` file). Direct `python train.py`
+        # launches (e.g. the verify-* harnesses) have none — record a note.
+        pid_file = RUN_DIR / "pid"
+        if pid_file.exists():
+            for name in ("stdout.log", "stderr.log"):
+                p = RUN_DIR / name
+                if not p.exists():
+                    missing.append(f"{name} (missing; required by executor launch)")
+                else:
+                    try:
+                        if p.stat().st_size == 0:
+                            invalid.append(f"{name}: empty (0 bytes)")
+                    except OSError:
+                        invalid.append(f"{name}: stat failed")
+        else:
+            notes.append("no pid file present; stdout.log/stderr.log not required")
+
+        return {
+            "ok": not missing and not invalid,
+            "missing": missing,
+            "invalid": invalid,
+            "notes": notes,
+        }
+    except Exception as exc:
+        # Fail closed: the gate itself MUST NEVER crash a run. An unexpected
+        # exception becomes an explicit invalid entry → caller calls fail().
+        return {
+            "ok": False,
+            "missing": [],
+            "invalid": [f"integrity check error: {type(exc).__name__}"],
+            "notes": [],
+        }
+
+
+def _compute_resumable(final_status: str) -> dict:
+    """Phase 74 — terminal-time resumable flag. The status stays failed/cancelled;
+    this is an additional flag the UI banner reads, NOT a new status value.
+    True only for failed/cancelled AND last.pt exists, is valid, and belongs to
+    this run (config.snapshot hashes match the manifest)."""
+    rel_path = f"experiments/runs/{RUN_DIR.name}/checkpoints/last.pt"
+    if final_status == "done":
+        return {"resumable": False, "resume_from": None, "epoch": None,
+                "reason": "run completed"}
+    last = CKPT_DIR / "last.pt"
+    if not last.exists():
+        return {"resumable": False, "resume_from": None, "epoch": None,
+                "reason": "no checkpoint"}
+    try:
+        size = last.stat().st_size
+    except OSError:
+        return {"resumable": False, "resume_from": None, "epoch": None,
+                "reason": "checkpoint corrupt"}
+    if size == 0:
+        return {"resumable": False, "resume_from": None, "epoch": None,
+                "reason": "no checkpoint"}
+    if not zipfile.is_zipfile(str(last)):
+        return {"resumable": False, "resume_from": None, "epoch": None,
+                "reason": "checkpoint corrupt"}
+    if size > _CKPT_LOAD_SKIP_BYTES:
+        return {"resumable": False, "resume_from": None, "epoch": None,
+                "reason": "checkpoint load verification skipped (size)"}
+    try:
+        ckpt = safe_torch_load(last)
+    except (UnsafePickleError, Exception):
+        return {"resumable": False, "resume_from": None, "epoch": None,
+                "reason": "checkpoint corrupt"}
+    if not isinstance(ckpt, dict):
+        return {"resumable": False, "resume_from": None, "epoch": None,
+                "reason": "checkpoint corrupt"}
+    needed = {"model_state", "optim_state", "epoch", "global_step", "config"}
+    if not needed.issubset(set(ckpt.keys())):
+        return {"resumable": False, "resume_from": None, "epoch": None,
+                "reason": "checkpoint corrupt"}
+    # config.snapshot hash match — must belong to THIS run. We read the live
+    # manifest.json first (it's the persistent truth) and fall back to the
+    # in-memory _MANIFEST_STATE which is only populated during a fresh training
+    # invocation. This matters for the "restart on a pre-cancelled run dir"
+    # path: the trainer doesn't re-init the manifest, so _MANIFEST_STATE is
+    # empty — but the snapshot is still on disk in manifest.json.
+    cfg = ckpt.get("config") if isinstance(ckpt.get("config"), dict) else {}
+    snap = cfg.get("snapshot") if isinstance(cfg.get("snapshot"), dict) else {}
+    ckpt_graph = snap.get("graph_sha256")
+    ckpt_model = snap.get("model_py_sha256")
+    run_graph = None
+    run_model = None
+    try:
+        if MANIFEST.exists():
+            mf = json.loads(MANIFEST.read_text(encoding="utf-8"))
+            if isinstance(mf, dict) and isinstance(mf.get("hashes"), dict):
+                run_graph = mf["hashes"].get("graph_sha256")
+                run_model = mf["hashes"].get("model_py_sha256")
+    except Exception:  # noqa: BLE001  # corrupt manifest is not a fatal here
+        pass
+    if (run_graph is None or run_model is None) \
+            and _MANIFEST_STATE and isinstance(_MANIFEST_STATE.get("hashes"), dict):
+        run_graph = run_graph or _MANIFEST_STATE["hashes"].get("graph_sha256")
+        run_model = run_model or _MANIFEST_STATE["hashes"].get("model_py_sha256")
+    same_graph = (not run_graph) or (not ckpt_graph) or ckpt_graph == run_graph
+    same_model = (not run_model) or (not ckpt_model) or ckpt_model == run_model
+    if not (same_graph and same_model):
+        return {"resumable": False, "resume_from": None, "epoch": None,
+                "reason": "checkpoint belongs to a different model"}
+    return {
+        "resumable": True,
+        "resume_from": rel_path,
+        "epoch": int(ckpt.get("epoch", 0)),
+        "reason": "last.pt valid and matches this model",
+    }
+
+
+def _record_terminal_resumable(final_status: str, base_metrics: dict | None = None) -> dict:
+    """Phase 74 — write the resumable state into metrics.json + manifest.json
+    and emit the `run.resumable` event. Called from every terminal write
+    (done, failed, cancelled) so the UI banner has the data without needing
+    a second read. Never raises: a manifest/metrics write failure is recorded
+    via `manifest.error` so the run's outcome is NEVER changed here."""
+    try:
+        r = _compute_resumable(final_status)
+    except Exception as exc:
+        r = {"resumable": False, "resume_from": None, "epoch": None,
+             "reason": f"resumable computation failed: {type(exc).__name__}"}
+    # metrics.json: preserve existing fields, add `resumable`.
+    try:
+        cur: dict
+        if METRICS.exists():
+            try:
+                loaded = json.loads(METRICS.read_text(encoding="utf-8"))
+                cur = loaded if isinstance(loaded, dict) else {}
+            except Exception:
+                cur = {}
+        else:
+            cur = {}
+        if base_metrics:
+            for k, v in base_metrics.items():
+                cur.setdefault(k, v)
+        cur["resumable"] = r
+        METRICS.write_text(json.dumps(cur, indent=2))
+    except Exception as exc:
+        emit("manifest.error", stage="resumable.metrics", error=str(exc))
+    # manifest.json: add `resumable`.
+    try:
+        if MANIFEST.exists():
+            _manifest_write("resumable", resumable=r)
+    except Exception as exc:
+        emit("manifest.error", stage="resumable.manifest", error=str(exc))
+    emit("run.resumable", **r)
+    return r
 
 
 # ─── Multitask plumbing ─────────────────────────────────────────────────────
@@ -2124,7 +2443,7 @@ def main() -> None:
             if n_missing:
                 emit("validation.warning",
                      message=f"{n_missing} model tensors had no matching checkpoint weight "
-                             f"(architecture mismatch) — they stayed at their init values.")
+                             "(architecture mismatch) — they stayed at their init values.")
             eval_loader = DataLoader(full, batch_size=batch_size, num_workers=num_workers, collate_fn=collate,
                                    generator=_dl_generator,
                                    worker_init_fn=_seed_worker if num_workers > 0 else None)
@@ -2145,15 +2464,31 @@ def main() -> None:
             emit_eval(0, heads, head_names, multitask, head_classes, val_cat)
             emit("validation.summary", n_rows=len(full), val_loss=round(val_loss, 6), metrics=extra or None)
             total = time.time() - t0
-            emit("run.done", total_seconds=round(total, 2), best_val_loss=round(val_loss, 6))
+            # Write metrics.json BEFORE the integrity gate — the gate reads it.
             METRICS.write_text(json.dumps({
                 "status": "done", "eval_only": True, "total_seconds": round(total, 2),
                 "best_val_loss": round(val_loss, 6), "n_rows": len(full),
                 "n_params": int(n_params), "metrics": extra or None,
             }, indent=2))
+            # Phase 73 — integrity gate (eval-only form: no checkpoint required).
+            integ = _verify_run_integrity(eval_only=True)
+            emit("run.integrity", ok=integ["ok"], missing=integ["missing"],
+                 invalid=integ["invalid"], notes=integ["notes"])
+            if not integ["ok"]:
+                problems = []
+                if integ["missing"]:
+                    problems.append("missing: " + "; ".join(integ["missing"]))
+                if integ["invalid"]:
+                    problems.append("invalid: " + "; ".join(integ["invalid"]))
+                fail("integrity", " | ".join(problems) or "integrity check failed")
+                return
+            emit("run.done", total_seconds=round(total, 2), best_val_loss=round(val_loss, 6))
             set_status("done")
             _manifest_write("done", status="done", finished_at=_now(),
                             summary=_manifest_summary(val_loss, 0, int(n_params)))
+            # Phase 74 — eval-only runs are never resumable (they read a foreign
+            # checkpoint, they don't produce one); record it so the UI is honest.
+            _record_terminal_resumable("done")
             return
         except Exception as e:  # noqa: BLE001
             fail("validate", str(e), traceback.format_exc())
@@ -2344,6 +2679,18 @@ def main() -> None:
         _finish_cancel(canc_epoch or 0, f"cancelled (signal {c})")
         return
     except Exception as e:  # noqa: BLE001
+        # Phase 74 — save last.pt at the last COMPLETED epoch (if any) so the
+        # failed run is resumable. Refuse to save when no epoch finished
+        # (last_done < start_epoch): a negative-epoch checkpoint would mislead
+        # _compute_resumable into a false "checkpoint load verification skipped
+        # (size)" or similar reason.
+        canc_epoch = current_epoch[0]
+        last_done = (canc_epoch if canc_epoch is not None else start_epoch) - 1
+        if last_done >= start_epoch and last_done >= 0:
+            try:
+                _atomic_save(build_ckpt(last_done), CKPT_DIR / "last.pt")
+            except Exception:  # noqa: BLE001
+                pass
         fail("train", str(e), traceback.format_exc())
 
     total = time.time() - t0
@@ -2356,6 +2703,32 @@ def main() -> None:
     # the terminal 'cancelled' win: run.done is NOT emitted, a run.cancelled
     # event is, and the run is never reported as succeeded after a cancel.
     # CANCELLED → SUCCEEDED is impossible.
+    # Phase 73 — write metrics.json BEFORE the integrity gate so the gate has
+    # the (status=done, full payload) to read. The gate decides whether the
+    # terminal 'done' transition + run.done event are actually emitted; on
+    # failure it calls fail("integrity", ...) which overwrites metrics.json
+    # with status=failed and emits run.failed.
+    METRICS.write_text(json.dumps({
+        "status": "done",
+        "total_seconds": round(total, 2),
+        "best_val_loss": round(best_val, 6),
+        "epochs": epochs,
+        "n_params": int(n_params),
+        "device": device.type,
+        "gpu": gpu_name,
+        "env": env_summary,
+    }, indent=2))
+    integ = _verify_run_integrity(eval_only=False)
+    emit("run.integrity", ok=integ["ok"], missing=integ["missing"],
+         invalid=integ["invalid"], notes=integ["notes"])
+    if not integ["ok"]:
+        problems = []
+        if integ["missing"]:
+            problems.append("missing: " + "; ".join(integ["missing"]))
+        if integ["invalid"]:
+            problems.append("invalid: " + "; ".join(integ["invalid"]))
+        fail("integrity", " | ".join(problems) or "integrity check failed")
+        return
     final_status = "done"
     if transition_status("done"):
         emit("run.done", total_seconds=round(total, 2), best_val_loss=round(best_val, 6))
@@ -2366,19 +2739,21 @@ def main() -> None:
             # so no run.cancelled exists yet — emit one and let the cancelled
             # metrics below be the final word.
             _finish_cancel(max(start_epoch, end_epoch - 1), "cancelled during finalisation")
-    METRICS.write_text(json.dumps({
-        "status": final_status,
-        "total_seconds": round(total, 2),
-        "best_val_loss": round(best_val, 6),
-        "epochs": epochs,
-        "n_params": int(n_params),
-        "device": device.type,
-        "gpu": gpu_name,
-        "env": env_summary,
-    }, indent=2))
+            return
+        # Race: status changed to failed between integrity check and transition
+        # (e.g. an outside observer wrote 'failed'). Don't emit run.done; the
+        # existing terminal state wins.
+        if final_status == "failed":
+            return
     if final_status == "done":
         _manifest_write("done", status="done", finished_at=_now(),
                         summary=_manifest_summary(best_val, epochs, int(n_params)))
+    # Phase 74 — terminal-time resumable flag (false for done runs; the gate
+    # already proved the artifacts are present, so this is a noop in the happy
+    # path but the data + event are emitted so the UI is uniform).
+    _record_terminal_resumable(final_status, base_metrics={
+        "epochs": epochs, "n_params": int(n_params), "device": device.type,
+    })
 
 
 if __name__ == "__main__":

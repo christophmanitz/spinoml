@@ -124,7 +124,7 @@ Phases of `TODO.md` that have no "implemented" note are not done. In particular:
 Rust `unwrap`/`panic` audit (48), the Python and Rust halves of the silent-exception
 audit (50; TypeScript and Node are done), resource leak and long-run tests (51/52),
 CI (69),
-retries/timeouts (71/72), result integrity and resumable state (73/74), the
+retries/timeouts (71/72), the
 sidecar token + localhost review (77/78), dependency audit (79) and the final
 reliability report (90).
 
@@ -141,3 +141,7 @@ SpinoML app version are not recorded in the manifest. See `REPRODUCIBILITY.md` Â
 branch+Concat, multi-input and sequence-embedding families only. Not generated yet: attention, recurrent, GNN/PyG, Conv1d/3d,
 other pooling and normalisation layers, Subgraph/Custom nodes. Shape agreement for those rests on the hand-written reference tests
 (`verify:reference`) and the existing sidecar tests, not on property tests.
+
+**Run integrity (Phase 73/74).** Checkpoints larger than 256 MB are not load-verified by the gate (header + size check, a note)
+and are therefore reported as not resumable. A manifest that cannot be written fails the run (it is required metadata).
+`stdout.log`/`stderr.log` are only required when the executor launched the run (`pid` file present).

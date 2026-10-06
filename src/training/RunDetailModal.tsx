@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 
 import { training } from './backend'
 import { useTrainingStore } from './store'
-import { type RunConfig, type TrainingEvent, type GpuStat, RUNNING_STATES } from './types'
+import {
+  type ResumableRecord,
+  type RunConfig,
+  type TrainingEvent,
+  type GpuStat,
+  RUNNING_STATES,
+} from './types'
 import StatusPill from './StatusPill'
 import LineChart from './charts/LineChart'
 import { lossSeries, lrSeries, metricSeries } from './charts/series'
@@ -48,6 +54,12 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   const [readError, setReadError] = useState<string | null>(null)
   const [eventsError, setEventsError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  // Phase 74 — manifest.json content + parse state for the resumable banner.
+  // `manifestError` records a real read/parse failure; an empty `manifestJson`
+  // (file truly missing) renders as "Manifest nicht lesbar: <reason>", not as
+  // a silent "no resumable flag" claim.
+  const [manifestJson, setManifestJson] = useState('')
+  const [manifestError, setManifestError] = useState<string | null>(null)
 
   const status = summary?.status ?? 'unknown'
   const active = RUNNING_STATES.has(status) || (summary?.alive ?? false)
@@ -128,6 +140,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
       readRunFile(runId, 'train.sbatch'),
       readRunFile(runId, outName),
       readRunFile(runId, errName),
+      readRunFile(runId, 'manifest.json'),
     ])
     for (const r of results) if (r.error) errs.push(r.error)
     setRunJson(results[0].text)
@@ -135,6 +148,11 @@ export default function RunDetailModal({ runId }: { runId: string }) {
     setTrainSbatch(results[2].text)
     setStdout(results[3].text)
     setStderr(results[4].text)
+    // Phase 74 — manifest.json: a real read failure is shown as the banner;
+    // a missing file is the same state (the backend returns "" for missing).
+    // Either way we never silently claim "not resumable".
+    setManifestJson(results[5].text)
+    setManifestError(results[5].error)
     setReadError(errs.length ? errs.join(' · ') : null)
   }, [runId, eventsApply])
 
@@ -252,6 +270,36 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   const lastMetrics = (last?.metrics as Record<string, unknown> | null | undefined) ?? null
   const canPromote = !active && (summary?.has_checkpoint ?? false)
 
+  // Phase 74 — resumable banner for failed/cancelled runs. The flag is in
+  // manifest.json (and mirrored in metrics.json); we read manifest.json because
+  // it is the artifact the trainer writes atomically at every terminal state.
+  // Never silently swallow a read/parse failure — `manifestReadProblem` is
+  // rendered so a missing manifest renders as "Manifest nicht lesbar: …"
+  // rather than a false "not resumable".
+  const resumable = useMemo<ResumableRecord | null>(() => {
+    if (!manifestJson) return null
+    try {
+      const m = JSON.parse(manifestJson) as Record<string, unknown>
+      const r = m.resumable as Record<string, unknown> | undefined
+      if (!r || typeof r !== 'object') return null
+      return {
+        resumable: r.resumable === true,
+        resume_from: typeof r.resume_from === 'string' ? r.resume_from : null,
+        epoch: typeof r.epoch === 'number' ? r.epoch : null,
+        reason: typeof r.reason === 'string' ? r.reason : '',
+      }
+    } catch {
+      // Corrupt manifest.json: the banner above falls back to "Manifest nicht
+      // lesbar: <parse error>" via manifestReadProblem, which is rendered
+      // separately. Returning null here is the documented "unknown" state,
+      // not a claim of "not resumable".
+      return null
+    }
+  }, [manifestJson])
+  const manifestReadProblem = (status === 'failed' || status === 'cancelled')
+    ? (manifestError ?? (manifestJson ? null : 'manifest.json nicht gefunden'))
+    : null
+
   const totalEpochs = summary?.epochs ?? 0
   // Fix the chart x-axis to the planned epoch count so the curve fills
   // left→right; fall back to observed range if we don't know the total.
@@ -351,6 +399,39 @@ export default function RunDetailModal({ runId }: { runId: string }) {
             {validate.adapter && Object.keys(validate.adapter.column_map).length > 0 && (
               <span className="text-[#5a6068]">· {Object.entries(validate.adapter.column_map).map(([role, col]) => `${role}→${col}`).join(', ')}</span>
             )}
+          </div>
+        )}
+
+        {/* Phase 74 — resumable banner for failed/cancelled runs. Three states:
+            (a) manifest.json present + resumable=true → amber banner
+            (b) manifest.json present + resumable=false + reason → muted reason
+            (c) manifest.json missing/corrupt → explicit "Manifest nicht lesbar"
+            (d) status is not failed/cancelled → no banner. The status itself
+            stays unchanged; the banner is purely informational and the user
+            still opens "Neuer Run → Fortsetzen ab Checkpoint" themselves. */}
+        {(status === 'failed' || status === 'cancelled') && resumable?.resumable && (
+          <div className="border-b border-amber-900/40 bg-amber-950/30 px-4 py-2 text-[11px] text-amber-200">
+            <div className="flex items-center gap-2">
+              <span className="rounded bg-amber-900/50 px-1.5 py-0.5 font-semibold uppercase text-amber-100">Fortsetzbar</span>
+              <span>
+                Checkpoint nach Epoche {resumable.epoch ?? '?'} vorhanden
+                (Status bleibt {status === 'failed' ? 'FEHLGESCHLAGEN' : 'ABGEBROCHEN'}).
+                Zum Fortsetzen: Neuer Run → „Fortsetzen ab Checkpoint".
+              </span>
+            </div>
+            {resumable.resume_from && (
+              <div className="mt-1 font-mono text-[10px] text-amber-300/80">{resumable.resume_from}</div>
+            )}
+          </div>
+        )}
+        {(status === 'failed' || status === 'cancelled') && resumable && !resumable.resumable && resumable.reason && (
+          <div className="border-b border-[#1f2429] bg-[#0a0d10] px-4 py-1.5 text-[10px] text-[#6f767e]">
+            Nicht fortsetzbar: {resumable.reason}
+          </div>
+        )}
+        {(status === 'failed' || status === 'cancelled') && manifestReadProblem && (
+          <div className="border-b border-rose-900/40 bg-rose-950/30 px-4 py-1.5 text-[10px] text-rose-300">
+            Manifest nicht lesbar: {manifestReadProblem}
           </div>
         )}
 

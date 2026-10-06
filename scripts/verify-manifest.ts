@@ -473,15 +473,25 @@ console.log('\n[8d] eval-only run produces a manifest')
   check('eval-only manifest has a summary', obj(m.summary).n_params !== undefined)
 }
 
-// ── 10. manifest write failure is recorded, never fatal ───────────────────────
-console.log('\n[10] manifest.json replaced by a directory -> manifest.error, run still done')
+// ── 10. manifest write failure is recorded; the integrity gate (Phase 73) ───
+//        refuses to declare the run done when manifest.json is unreadable.
+console.log('\n[10] manifest.json replaced by a directory -> manifest.error AND integrity failure')
 {
   const bad = makeWorkspace({ id: 'badmanifest', git: false, manifestDir: true })
   allDirs.push(bad.dir)
   const rb = runTrain(bad.dir)
-  check('training still finishes done', rb.ok, rb.stderr.slice(0, 300))
-  check('status == done', readStatus(bad.dir) === 'done', readStatus(bad.dir))
-  check('manifest.error event present', readEvents(bad.dir).some((e) => e.kind === 'manifest.error'))
+  check('training still emits manifest.error (write failure recorded, not silently dropped)',
+    readEvents(bad.dir).some((e) => e.kind === 'manifest.error'))
+  // Phase 73 — the integrity gate refuses to declare a run done when the
+  // manifest is unreadable; the run ends failed with stage=integrity instead.
+  // (Phase 73 §1(d) requires manifest.json to exist + parse; the gate fails
+  // closed on a missing/unparseable manifest.)
+  check('trainer exits non-zero (integrity gate refused)',
+    !rb.ok, rb.ok ? 'no integrity gate failure!' : '')
+  check('status == failed (NOT done)', readStatus(bad.dir) === 'failed', readStatus(bad.dir))
+  check('run.failed emitted with stage=integrity', readEvents(bad.dir).some((e) => e.kind === 'run.failed' && (e as Record<string, unknown>).stage === 'integrity'))
+  check('run.integrity emitted with ok=false', readEvents(bad.dir).some((e) => e.kind === 'run.integrity' && (e as Record<string, unknown>).ok === false))
+  check('NO run.done emitted (the gate blocks it)', !readEvents(bad.dir).some((e) => e.kind === 'run.done'))
 }
 
 // ── 11. atomicity: no temp leftovers ──────────────────────────────────────────

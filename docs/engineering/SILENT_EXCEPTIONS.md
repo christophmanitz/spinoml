@@ -62,6 +62,7 @@ pattern that occurs more than once in a file must appear that many times.
 | `src/terminal/Terminal.tsx:148` | `.catch(() => {})` | EXPECTED | Best-effort PTY resize from the visibility path. | keep |
 | `src/terminal/Terminal.tsx:167` | `.catch(() => {})` | EXPECTED | Best-effort PTY kill on unmount; component is going away. | keep |
 | `src/training/charts/series.ts:15` | `catch {}` | EXPECTED | A partial trailing line in the append-only events log is expected (SIGKILL). | keep |
+| `src/training/RunDetailModal.tsx:291` | `catch { return null }` | EXPECTED | Phase 74 manifest.json parse failure: null is the documented "unknown" state; the banner falls back to "Manifest nicht lesbar" via the separate `manifestReadProblem` channel so a corrupt manifest never claims "not resumable". | keep |
 | `src/training/graph/autosave.ts:16` | `catch {}` | EXPECTED | localStorage quota/private mode: training-graph autosave is best-effort. | keep |
 | `src/training/graph/autosave.ts:36` | `catch { return null }` | EXPECTED | Autosave recovery: missing and corrupt both mean nothing to restore. | keep |
 | `src/workspace/FileViewerModal.tsx:67` | `catch {}` | EXPECTED | Clipboard API unavailable: only the "copied" feedback is skipped. | keep |

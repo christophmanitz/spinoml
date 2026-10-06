@@ -74,6 +74,17 @@ runs with identical inputs get the same hash from different directories or machi
 and changing the learning rate, seed, dataset content or graph changes it
 (`verify:manifest`, case 7).
 
+
+## 3a. When is a run `done`? (Phase 73/74)
+
+A run is `done` only after an integrity gate passed: readable `metrics.json` with finite `best_val_loss`,
+`epochs ≥ 1`, `n_params ≥ 1`; `best.pt` and `last.pt` present, non-empty and loadable with all state keys (up to
+256 MB, larger files get a header check and a note); `events.jsonl` with `run.provenance`, `config.env`,
+`run.snapshot` and an `epoch.end`; a valid `manifest.json`; executor logs when the executor launched it. Otherwise
+the run ends `failed` with stage `integrity` and an exact list of what is missing. A failed or cancelled run with a
+valid `last.pt` of the same model is marked `resumable` (data + banner); its status does not change and it never
+resumes without an explicit `resume_from` (`verify:integrity`).
+
 ## 4. What is deterministic
 
 Backed by measurement, not by intent:
