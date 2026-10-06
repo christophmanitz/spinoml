@@ -242,6 +242,22 @@ export const SUITES: readonly Suite[] = [
     why: 'Self-test of the Python silent-exception guard (23 detect / not-detect cases)',
   },
   {
+    name: 'verify:rust-panics',
+    npmScript: 'verify:rust-panics',
+    category: 'unit',
+    timeoutSec: 60,
+    needs: [],
+    why: 'No undocumented unwrap/expect/panic or swallowed Result in non-test Rust (reason comment + allow-list row)',
+  },
+  {
+    name: 'test:rust-panics-selftest',
+    npmScript: 'test:rust-panics-selftest',
+    category: 'unit',
+    timeoutSec: 60,
+    needs: [],
+    why: 'Self-test of the Rust panic/swallow guard (20 cases)',
+  },
+  {
     name: 'verify:sidecar-fetch',
     npmScript: 'verify:sidecar-fetch',
     category: 'unit',

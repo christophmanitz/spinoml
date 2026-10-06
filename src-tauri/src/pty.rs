@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -28,11 +29,16 @@ pub struct PtySession {
 }
 
 fn random_id() -> String {
+    // A per-process counter makes ids unique even when the clock reads before the
+    // epoch (the 0 fallback below) or two sessions start in the same nanosecond —
+    // a colliding id would silently replace the first session in the sessions map.
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("pty-{:x}", now)
+        .unwrap_or(0); // clock-before-epoch fallback; the process-wide counter keeps ids unique
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("pty-{:x}-{:x}", now, seq)
 }
 
 #[derive(Deserialize)]
@@ -59,8 +65,8 @@ pub fn pty_spawn(
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
-            rows: args.rows.unwrap_or(30),
-            cols: args.cols.unwrap_or(100),
+            rows: args.rows.unwrap_or(30), // UI socket-size fallback; the terminal resizes again on first layout
+            cols: args.cols.unwrap_or(100), // UI socket-size fallback; the terminal resizes again on first layout
             pixel_width: 0,
             pixel_height: 0,
         })
@@ -106,12 +112,12 @@ pub fn pty_spawn(
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => {
-                    let _ = app_handle.emit(&exit_event, ());
+                    let _ = app_handle.emit(&exit_event, ()); // best-effort UI/channel send; a dropped receiver has nothing left to mislead
                     // Best-effort: drop the session from state so the next
                     // spawn doesn't think it's still alive.
                     if let Some(s) = app_handle
                         .try_state::<PtyState>()
-                        .and_then(|s| s.sessions.lock().ok().and_then(|mut m| m.remove(&id_for_thread)))
+                        .and_then(|s| s.sessions.lock().ok().and_then(|mut m| m.remove(&id_for_thread))) // a poisoned lock reads as the explicit unknown state, never a false value
                     {
                         // child already exited; nothing else to do.
                         drop(s);
@@ -120,10 +126,10 @@ pub fn pty_spawn(
                 }
                 Ok(n) => {
                     let s = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = app_handle.emit(&data_event, s);
+                    let _ = app_handle.emit(&data_event, s); // best-effort UI/channel send; a dropped receiver has nothing left to mislead
                 }
                 Err(e) => {
-                    let _ = app_handle.emit(&exit_event, format!("read error: {e}"));
+                    let _ = app_handle.emit(&exit_event, format!("read error: {e}")); // best-effort UI/channel send; a dropped receiver has nothing left to mislead
                     break;
                 }
             }
@@ -137,7 +143,7 @@ fn build_command(args: &PtySpawnArgs) -> Result<CommandBuilder, String> {
     use std::env;
     match args.kind.as_str() {
         "local" => {
-            let shell = env::var("SHELL").unwrap_or_else(|_| "bash".into());
+            let shell = env::var("SHELL").unwrap_or_else(|_| "bash".into()); // documented executable fallback; a missing binary surfaces as a spawn error
             let mut cmd = CommandBuilder::new(&shell);
             cmd.arg("-l");
             if let Some(cwd) = args.local_cwd.as_ref() {
@@ -241,7 +247,7 @@ pub fn pty_kill(state: State<PtyState>, id: String) -> Result<(), String> {
         .remove(&id);
     if let Some(session) = session {
         if let Ok(mut child) = session.child.lock() {
-            let _ = child.kill();
+            let _ = child.kill(); // best-effort cleanup: the child may already have exited
         }
     }
     Ok(())
@@ -251,8 +257,23 @@ pub fn kill_all(state: &PtyState) {
     if let Ok(mut sessions) = state.sessions.lock() {
         for (_, session) in sessions.drain() {
             if let Ok(mut child) = session.child.lock() {
-                let _ = child.kill();
+                let _ = child.kill(); // best-effort cleanup: the child may already have exited
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn random_id_is_unique_even_when_called_in_a_tight_loop() {
+        // Old behaviour: nanosecond timestamp only — the clock-before-epoch fallback
+        // made EVERY id "pty-0" (a second session replaced the first in the map).
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..5000 {
+            assert!(seen.insert(random_id()), "duplicate pty id");
         }
     }
 }

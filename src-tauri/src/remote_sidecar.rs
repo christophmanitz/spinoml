@@ -110,7 +110,7 @@ pub enum RemoteSidecarStatus {
 }
 
 fn emit(app: &AppHandle, status: &RemoteSidecarStatus) {
-    let _ = app.emit("remote-sidecar:status", status);
+    let _ = app.emit("remote-sidecar:status", status); // best-effort UI/channel send; a dropped receiver has nothing left to mislead
 }
 
 // ─── ssh helper (mirror of ssh::ssh_exec, with a configurable timeout
@@ -127,12 +127,12 @@ fn run_remote(alias: &str, remote_cmd: &str, stdin: Option<&[u8]>) -> Result<Str
     if let Some(data) = stdin {
         let mut s = child.stdin.take().ok_or_else(|| "no stdin".to_string())?;
         let owned = data.to_vec();
-        std::thread::spawn(move || { let _ = s.write_all(&owned); });
+        std::thread::spawn(move || { let _ = s.write_all(&owned); }); // best-effort side effect; the primary outcome is reported separately
     }
     let out = child.wait_with_output().map_err(|e| format!("wait ssh: {e}"))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).to_string();
-        let code = out.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
+        let code = out.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into()); // documented fallback; the primary outcome is reported separately
         return Err(format!("ssh exit {code}: {}", err.trim()));
     }
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
@@ -398,7 +398,7 @@ pub fn remote_sidecar_status(app: AppHandle) -> RemoteSidecarStatus {
                 // The remote token was per-session — it's now invalid. Clear it
                 // here so `sidecar_token("torch-remote")` returns None.
                 let tokens: State<SidecarTokens> = app.state();
-                let _ = tokens.clear_remote();
+                let _ = tokens.clear_remote(); // best-effort token clear; the tunnel is already gone regardless
                 reaped = true;
             }
         }
@@ -425,7 +425,7 @@ pub async fn ensure_remote_sidecar(
     root: String,
     force: Option<bool>,
 ) -> Result<RemoteSidecarStatus, String> {
-    let force = force.unwrap_or(false);
+    let force = force.unwrap_or(false); // the absence reads as not-true (the conservative direction)
     // The alias comes from the webview and goes straight to `ssh`: validate it
     // exactly like every ssh_* command in ssh.rs does (no leading '-', no
     // shell metacharacters), BEFORE any process is spawned.
@@ -447,7 +447,7 @@ pub async fn ensure_remote_sidecar(
             if dead {
                 *g = None; // reap; fall through to a fresh bootstrap
                 let tokens: State<SidecarTokens> = app.state();
-                let _ = tokens.clear_remote();
+                let _ = tokens.clear_remote(); // best-effort token clear; the tunnel is already gone regardless
             } else if !force && rs.alias == alias && rs.root == root {
                 return Ok(RemoteSidecarStatus::Running {
                     local_port: REMOTE_LOCAL_PORT,
@@ -550,13 +550,13 @@ fn run_bootstrap(app: &AppHandle, alias: &str, root: &str) -> Result<RemoteSidec
         .take()
         .ok_or_else(|| "no stdin on ssh tunnel child".to_string())?;
     if let Err(e) = stdin_handle.write_all(token.as_bytes()) {
-        let _ = child.kill();
-        let _ = child.wait();
+        let _ = child.kill(); // best-effort cleanup: the child may already have exited
+        let _ = child.wait(); // best-effort cleanup: the child may already have exited
         return Err(format!("failed to deliver remote token over ssh stdin: {e}"));
     }
     if let Err(e) = stdin_handle.write_all(b"\n") {
-        let _ = child.kill();
-        let _ = child.wait();
+        let _ = child.kill(); // best-effort cleanup: the child may already have exited
+        let _ = child.wait(); // best-effort cleanup: the child may already have exited
         return Err(format!("failed to deliver remote token newline: {e}"));
     }
     // NOTE: we DO NOT drop `token` here — we still need it to register the
@@ -581,14 +581,13 @@ fn run_bootstrap(app: &AppHandle, alias: &str, root: &str) -> Result<RemoteSidec
             eprintln!("[spinoml-torch-remote] {line}");
             if !announced && line.contains("listening on") {
                 announced = true;
-                let _ = tx.send(Ok(()));
+                let _ = tx.send(Ok(())); // best-effort UI/channel send; a dropped receiver has nothing left to mislead
             }
             // Continue draining so the pipe doesn't fill.
-            let _ = &line;
         }
         // EOF → child died
         if !announced {
-            let _ = tx.send(Err("remote sidecar exited before announcing readiness".to_string()));
+            let _ = tx.send(Err("remote sidecar exited before announcing readiness".to_string())); // best-effort UI/channel send; a dropped receiver has nothing left to mislead
         }
         // Once announced, surface unexpected exits.
         let _ = app_for_thread.emit("remote-sidecar:status", RemoteSidecarStatus::Stopped);
@@ -604,7 +603,7 @@ fn run_bootstrap(app: &AppHandle, alias: &str, root: &str) -> Result<RemoteSidec
                 || line.contains("cannot listen to port")
                 || (line.contains("bind") && line.contains("Address already in use"))
             {
-                let _ = tx_err.send(Err(format!(
+                let _ = tx_err.send(Err(format!( // best-effort UI/channel send; a dropped receiver has nothing left to mislead
                     "local port {} busy — the tunnel could not be opened",
                     REMOTE_LOCAL_PORT
                 )));
@@ -618,8 +617,8 @@ fn run_bootstrap(app: &AppHandle, alias: &str, root: &str) -> Result<RemoteSidec
         .recv_timeout(std::time::Duration::from_secs(60))
         .map_err(|_| "timeout waiting for remote sidecar to come up".to_string())?;
     if let Err(e) = ready {
-        let _ = child.kill();
-        let _ = child.wait();
+        let _ = child.kill(); // best-effort cleanup: the child may already have exited
+        let _ = child.wait(); // best-effort cleanup: the child may already have exited
         emit(app, &RemoteSidecarStatus::Error { message: e.clone() });
         return Err(e);
     }
@@ -638,8 +637,8 @@ fn run_bootstrap(app: &AppHandle, alias: &str, root: &str) -> Result<RemoteSidec
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
         if !reachable {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.kill(); // best-effort cleanup: the child may already have exited
+            let _ = child.wait(); // best-effort cleanup: the child may already have exited
             let m = format!(
                 "tunnel announced remotely but local port {} is unreachable (forward failed)",
                 REMOTE_LOCAL_PORT
@@ -665,7 +664,7 @@ fn run_bootstrap(app: &AppHandle, alias: &str, root: &str) -> Result<RemoteSidec
             // correctness bug: webview would keep "seeing" a token for a
             // dead tunnel.)
             let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.wait(); // best-effort cleanup: the child may already have exited
             return Err(e);
         }
         // `token` (the clone we made) drops here — the secret is now only in
@@ -717,7 +716,7 @@ fn free_local_tunnel_port() {
         "127.0.0.1:{}:127.0.0.1:{}",
         REMOTE_LOCAL_PORT, REMOTE_REMOTE_PORT
     );
-    let _ = Command::new("pkill")
+    let _ = Command::new("pkill") // documented fallback; the primary outcome is reported separately
         .arg("-f")
         .arg(&pat)
         .stdout(Stdio::null())
@@ -729,13 +728,13 @@ fn stop_remote_sidecar_internal(app: &AppHandle) -> Result<(), String> {
     let state: State<RemoteSidecarState> = app.state();
     let mut g = state.current.lock().map_err(|e| e.to_string())?;
     if let Some(mut rs) = g.take() {
-        let _ = rs.child.kill();
-        let _ = rs.child.wait();
+        let _ = rs.child.kill(); // best-effort cleanup: the child may already have exited
+        let _ = rs.child.wait(); // best-effort cleanup: the child may already have exited
     }
     // `current` is now None — the remote token is dead. Clear it so the
     // webview can no longer authenticate to a non-existent sidecar.
     let tokens: State<SidecarTokens> = app.state();
-    let _ = tokens.clear_remote();
+    let _ = tokens.clear_remote(); // best-effort token clear; the tunnel is already gone regardless
     Ok(())
 }
 

@@ -2830,6 +2830,25 @@ Do not blindly remove them.
 
 A crash caused by an unexpected external condition should generally become a controlled error.
 
+> **Implemented 2026-10-06 (together with the Rust half of Phase 50).** Non-test code in
+> `src-tauri/src` has **0** `unwrap()`, **0** `panic!`/`unreachable!`/`todo!`/`unimplemented!` and
+> exactly **one** `expect()` — the Tauri builder in `run()` (a startup failure of the whole app
+> has no caller to return to; documented in code). The audit therefore went through the real
+> risk classes instead: 112 panic-prone/swallowing sites (`let _ =`, `.ok()`, `unwrap_or*`) are each
+> classified SAFE with a reason in the Rust allow-list of `docs/engineering/SILENT_EXCEPTIONS.md`;
+> `scripts/verify-rust-panics.ts` (`npm run verify:rust-panics`, self-test
+> `test:rust-panics-selftest`, 20 cases) fails any new site without a ≥15-char reason comment AND an
+> allow-list row (stale rows fail too). **Fixed:** an external `events.jsonl` epoch of `u32::MAX`
+> overflow-panicked in debug and wrapped to epoch 0 in release (`saturating_add`, tested); a
+> `canonicalize` failure of an existing `experiments/runs/` returned an empty "no runs" list (now an
+> explicit error); a dead `let _ =` in the remote-sidecar watcher removed; found in review (the
+> worker's boilerplate reason was false): `pty::random_id` fell back to the constant `pty-0` when the
+> clock read before the epoch, so a second terminal session would have replaced the first in the
+> session map (now a process-wide counter, tested). Not blindly removed: best-effort
+> `kill()`/`wait()`/UI-event sends stay with a reason. Limits: the scanner is a careful line
+> scanner (no `syn`), it does not catch slice indexing or arithmetic overflow — only the patterns
+> above; reasons for repeated sites are class-based.
+
 ---
 
 # 50. PHASE 49 – TYPESCRIPT ERROR HANDLING
@@ -2924,7 +2943,7 @@ Fix hidden failures.
 > allow-listed it):** four `except Exception: pass` around the RNG restore on resume — a resume whose
 > random streams could not be restored continued with a fresh seed while claiming "same random streams";
 > `_restore_rng` now returns a per-stream status recorded as `rng_restore` in `run.resumed`
-> (`verify-checkpoint.ts [rng restore failure is recorded]`). Still open: the 39 Rust sites (Phase 48).
+> (`verify-checkpoint.ts [rng restore failure is recorded]`). The Rust half is done (Phase 48 below).
 ---
 
 # 52. PHASE 51 – RESOURCE LEAK TESTING

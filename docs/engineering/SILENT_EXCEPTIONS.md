@@ -293,3 +293,161 @@ appear N times here.
 - Regression tests: `scripts/verify-failures.ts` (status file, empty loader),
   `scripts/verify-integrity.ts` (corrupt-manifest resumable),
   `scripts/test-sidecar-robustness.ts` (ESPF vocab fallback).
+
+# Rust (`src-tauri/src/*.rs`)
+
+The same rules are applied to the Rust shell. There is no `syn` available in the
+script toolchain, so `scripts/verify-rust-panics.ts` (`npm run verify:rust-panics`,
+self-test `test:rust-panics-selftest`) masks string / line / block / raw / char
+literals and comments, excludes every `#[cfg(test)]` item by brace matching, and
+then flags: `unwrap(` / `expect(` / `panic!` / `unreachable!` / `todo!` /
+`unimplemented!` / `let _ =` / `.ok()` / `unwrap_or_default` / `unwrap_or(` /
+`unwrap_or_else(`. The pattern key is the code **before any same-line comment**, so
+an appended justification comment never changes the allow-list match. A swallow here
+is acceptable only when it cannot make a **UI status**, **stored artifact** or
+**command result** claim something untrue.
+
+**Limits (manual scan, not automatic):** slice/array indexing, `as` casts, integer
+arithmetic and `Duration`/`Instant` subtraction are not machine-scanned. They were
+reviewed by hand for Phase 48: all non-test slices are at `find`/`char_indices`
+boundaries or guarded by a `len()` check (`sanitize_credentials`, `strip_iso_nanos`,
+`parse_gpu_stats`, the `parts[…]` parsers); the only external-arithmetic panic found
+was the epoch `+ 1` fixed below.
+
+## Rust allow-list
+
+| Location | Pattern | Class | Reason (why the swallow cannot lie) | Action |
+|---|---|---|---|---|
+| `src-tauri/src/lib.rs:46` | `.unwrap_or(manifest)` | EXPECTED | a missing parent falls back to the manifest dir; never a false path claim | keep |
+| `src-tauri/src/lib.rs:60` | `.unwrap_or(manifest)` | EXPECTED | a missing parent falls back to the manifest dir; never a false path claim | keep |
+| `src-tauri/src/lib.rs:146` | `let _ = c.kill();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/lib.rs:147` | `let _ = c.wait();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/lib.rs:153` | `let _ = c.kill();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/lib.rs:154` | `let _ = c.wait();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/lib.rs:168` | `torch: sc.torch.lock().map(\|g\| g.is_some()).unwrap_or(false),` | EXPECTED | a poisoned lock reads as not-managed; the holder never panics on these paths | keep |
+| `src-tauri/src/lib.rs:169` | `llm: sc.llm.lock().map(\|g\| g.is_some()).unwrap_or(false),` | EXPECTED | a poisoned lock reads as not-managed; the holder never panics on these paths | keep |
+| `src-tauri/src/lib.rs:215` | `let _ = tx.send(result);` | EXPECTED | best-effort UI/channel send; a dropped receiver has nothing left to mislead | keep |
+| `src-tauri/src/lib.rs:240` | `.ok()` | EXPECTED | an optional/fallible read yields None, the documented unknown rather than a false value | keep |
+| `src-tauri/src/lib.rs:338` | `.unwrap_or(false);` | EXPECTED | the absence reads as not-true (the conservative direction) | keep |
+| `src-tauri/src/lib.rs:443` | `let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(\|d\| d.as_secs()).unwrap_or(0);` | EXPECTED | clock-before-epoch fallback; pid and a counter keep generated ids unique | keep |
+| `src-tauri/src/lib.rs:599` | `let canonical_root = fs::canonicalize(&root).unwrap_or_else(\|_\| root.clone());` | EXPECTED | root was already validated; the lexical fallback is defensive only | keep |
+| `src-tauri/src/lib.rs:665` | `.ok()` | EXPECTED | an optional/fallible read yields None, the documented unknown rather than a false value | keep |
+| `src-tauri/src/lib.rs:666` | `.and_then(\|t\| t.duration_since(UNIX_EPOCH).ok())` | EXPECTED | an optional/fallible read yields None, the documented unknown rather than a false value | keep |
+| `src-tauri/src/lib.rs:668` | `.unwrap_or_default();` | EXPECTED | documented empty default; the surrounding status carries the real state | keep |
+| `src-tauri/src/lib.rs:781` | `let canonical_dsdir = fs::canonicalize(&dsdir).unwrap_or_else(\|_\| dsdir.clone());` | EXPECTED | datasets dir was already validated by resolve(); the fallback is defensive only | keep |
+| `src-tauri/src/lib.rs:799` | `let size = if meta.is_file() { meta.len() } else { dir_size(&entry_canonical).unwrap_or(0) };` | EXPECTED | display-only size; a failed stat shows 0 bytes, not a false listing | keep |
+| `src-tauri/src/lib.rs:820` | `let read = fs::read_dir(p).ok()?;` | EXPECTED | a failed read yields None up the Option chain, the documented skip state | keep |
+| `src-tauri/src/lib.rs:822` | `let meta = entry.metadata().ok()?;` | EXPECTED | a failed read yields None up the Option chain, the documented skip state | keep |
+| `src-tauri/src/lib.rs:826` | `total += dir_size(&entry.path()).unwrap_or(0);` | EXPECTED | display-only size; a failed stat shows 0 bytes, not a false listing | keep |
+| `src-tauri/src/lib.rs:938` | `let _ = remote_sidecar::stop_remote_sidecar(window.app_handle().clone());` | EXPECTED | documented fallback; the primary outcome is reported separately | keep |
+| `src-tauri/src/lib.rs:1011` | `.expect("error while running tauri application");` | EXPECTED | startup failure of the whole app has no caller to return to (Phase 48) | keep |
+| `src-tauri/src/pty.rs:34` | `.unwrap_or(0);` | EXPECTED | clock-before-epoch fallback; pid and a counter keep generated ids unique | keep |
+| `src-tauri/src/pty.rs:62` | `rows: args.rows.unwrap_or(30),` | EXPECTED | UI socket-size fallback; the terminal resizes again on first layout | keep |
+| `src-tauri/src/pty.rs:63` | `cols: args.cols.unwrap_or(100),` | EXPECTED | UI socket-size fallback; the terminal resizes again on first layout | keep |
+| `src-tauri/src/pty.rs:109` | `let _ = app_handle.emit(&exit_event, ());` | EXPECTED | best-effort UI/channel send; a dropped receiver has nothing left to mislead | keep |
+| `src-tauri/src/pty.rs:114` | `.and_then(\|s\| s.sessions.lock().ok().and_then(\|mut m\| m.remove(&id_for_thread)))` | EXPECTED | a poisoned lock reads as the explicit unknown state, never a false value | keep |
+| `src-tauri/src/pty.rs:123` | `let _ = app_handle.emit(&data_event, s);` | EXPECTED | best-effort UI/channel send; a dropped receiver has nothing left to mislead | keep |
+| `src-tauri/src/pty.rs:126` | `let _ = app_handle.emit(&exit_event, format!("read error: {e}"));` | EXPECTED | best-effort UI/channel send; a dropped receiver has nothing left to mislead | keep |
+| `src-tauri/src/pty.rs:140` | `let shell = env::var("SHELL").unwrap_or_else(\|_\| "bash".into());` | EXPECTED | documented executable fallback; a missing binary surfaces as a spawn error | keep |
+| `src-tauri/src/pty.rs:244` | `let _ = child.kill();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/pty.rs:254` | `let _ = child.kill();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/remote_sidecar.rs:113` | `let _ = app.emit("remote-sidecar:status", status);` | EXPECTED | best-effort UI/channel send; a dropped receiver has nothing left to mislead | keep |
+| `src-tauri/src/remote_sidecar.rs:130` | `std::thread::spawn(move \|\| { let _ = s.write_all(&owned); });` | EXPECTED | best-effort side effect; the primary outcome is reported separately | keep |
+| `src-tauri/src/remote_sidecar.rs:135` | `let code = out.status.code().map(\|c\| c.to_string()).unwrap_or_else(\|\| "?".into());` | EXPECTED | documented fallback; the primary outcome is reported separately | keep |
+| `src-tauri/src/remote_sidecar.rs:401` | `let _ = tokens.clear_remote();` | EXPECTED | best-effort token clear; the tunnel is already gone regardless | keep |
+| `src-tauri/src/remote_sidecar.rs:428` | `let force = force.unwrap_or(false);` | EXPECTED | the absence reads as not-true (the conservative direction) | keep |
+| `src-tauri/src/remote_sidecar.rs:450` | `let _ = tokens.clear_remote();` | EXPECTED | best-effort token clear; the tunnel is already gone regardless | keep |
+| `src-tauri/src/remote_sidecar.rs:553` | `let _ = child.kill();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/remote_sidecar.rs:554` | `let _ = child.wait();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/remote_sidecar.rs:558` | `let _ = child.kill();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/remote_sidecar.rs:559` | `let _ = child.wait();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/remote_sidecar.rs:584` | `let _ = tx.send(Ok(()));` | EXPECTED | best-effort UI/channel send; a dropped receiver has nothing left to mislead | keep |
+| `src-tauri/src/remote_sidecar.rs:590` | `let _ = tx.send(Err("remote sidecar exited before announcing readiness".to_string()));` | EXPECTED | best-effort UI/channel send; a dropped receiver has nothing left to mislead | keep |
+| `src-tauri/src/remote_sidecar.rs:593` | `let _ = app_for_thread.emit("remote-sidecar:status", RemoteSidecarStatus::Stopped);` | EXPECTED | best-effort UI/channel send; a dropped receiver has nothing left to mislead | keep |
+| `src-tauri/src/remote_sidecar.rs:606` | `let _ = tx_err.send(Err(format!(` | EXPECTED | best-effort UI/channel send; a dropped receiver has nothing left to mislead | keep |
+| `src-tauri/src/remote_sidecar.rs:620` | `let _ = child.kill();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/remote_sidecar.rs:621` | `let _ = child.wait();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/remote_sidecar.rs:640` | `let _ = child.kill();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/remote_sidecar.rs:641` | `let _ = child.wait();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/remote_sidecar.rs:666` | `let _ = child.kill();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/remote_sidecar.rs:667` | `let _ = child.wait();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/remote_sidecar.rs:707` | `let _ = Command::new("fuser")` | EXPECTED | documented fallback; the primary outcome is reported separately | keep |
+| `src-tauri/src/remote_sidecar.rs:719` | `let _ = Command::new("pkill")` | EXPECTED | documented fallback; the primary outcome is reported separately | keep |
+| `src-tauri/src/remote_sidecar.rs:731` | `let _ = rs.child.kill();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/remote_sidecar.rs:732` | `let _ = rs.child.wait();` | EXPECTED | best-effort cleanup: the child may already have exited, so only the primary result matters | keep |
+| `src-tauri/src/remote_sidecar.rs:737` | `let _ = tokens.clear_remote();` | EXPECTED | best-effort token clear; the tunnel is already gone regardless | keep |
+| `src-tauri/src/scope_file.rs:226` | `.unwrap_or(false)` | EXPECTED | the absence reads as not-true (the conservative direction) | keep |
+| `src-tauri/src/scope_file.rs:298` | `.unwrap_or(0);` | EXPECTED | clock-before-epoch fallback; pid and a counter keep generated ids unique | keep |
+| `src-tauri/src/scope_file.rs:335` | `let _ = fs::remove_file(&tmp_path);` | EXPECTED | best-effort side effect; the primary outcome is reported separately | keep |
+| `src-tauri/src/scope_file.rs:339` | `let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));` | EXPECTED | best-effort side effect; the primary outcome is reported separately | keep |
+| `src-tauri/src/scope_file.rs:345` | `let _ = d.sync_all();` | EXPECTED | best-effort side effect; the primary outcome is reported separately | keep |
+| `src-tauri/src/scope_file.rs:402` | `let scope_path = scope_file_path_impl().ok();` | EXPECTED | an optional/fallible read yields None, the documented unknown rather than a false value | keep |
+| `src-tauri/src/scope_file.rs:454` | `let tail: PathBuf = p.strip_prefix(&cur).unwrap_or(p).into();` | EXPECTED | split/find always yields a value here; the fallback cannot invent data | keep |
+| `src-tauri/src/ssh.rs:200` | `let _ = std::fs::create_dir_all(&dir);` | EXPECTED | best-effort side effect; the primary outcome is reported separately | keep |
+| `src-tauri/src/ssh.rs:258` | `.unwrap_or(tail.len());` | EXPECTED | no match uses the full length; this cannot truncate or invent data | keep |
+| `src-tauri/src/ssh.rs:299` | `let code = exit.map(\|v\| v.to_string()).unwrap_or_else(\|\| "signal".into());` | EXPECTED | documented fallback; the primary outcome is reported separately | keep |
+| `src-tauri/src/ssh.rs:322` | `let _ = stdin.write_all(&owned);` | EXPECTED | best-effort side effect; the primary outcome is reported separately | keep |
+| `src-tauri/src/ssh.rs:524` | `let g = state.current.lock().ok()?;` | EXPECTED | a poisoned lock reads as the explicit unknown state, never a false value | keep |
+| `src-tauri/src/ssh.rs:555` | `let kind = it.next().unwrap_or("");` | EXPECTED | an absent optional field renders as empty, never an invented string | keep |
+| `src-tauri/src/ssh.rs:556` | `let rel = it.next().unwrap_or("").to_string();` | EXPECTED | an absent optional field renders as empty, never an invented string | keep |
+| `src-tauri/src/ssh.rs:561` | `let name = rel.rsplit('/').next().unwrap_or(&rel).to_string();` | EXPECTED | split/find always yields a value here; the fallback cannot invent data | keep |
+| `src-tauri/src/ssh.rs:596` | `.unwrap_or_else(\|\| root.clone());` | EXPECTED | documented fallback; the primary outcome is reported separately | keep |
+| `src-tauri/src/ssh.rs:645` | `.unwrap_or_else(\|\| root.clone());` | EXPECTED | documented fallback; the primary outcome is reported separately | keep |
+| `src-tauri/src/ssh.rs:675` | `.unwrap_or(tail.len());` | EXPECTED | no match uses the full length; this cannot truncate or invent data | keep |
+| `src-tauri/src/ssh.rs:706` | `let size = parts[1].parse::<u64>().unwrap_or(0);` | EXPECTED | an unparseable external numeric value shows the documented default, not a fabricated one | keep |
+| `src-tauri/src/ssh.rs:867` | `let size = parts[2].parse::<u64>().unwrap_or(0);` | EXPECTED | an unparseable external numeric value shows the documented default, not a fabricated one | keep |
+| `src-tauri/src/ssh.rs:999` | `let cfg: Value = serde_json::from_str(&run_json).unwrap_or(Value::Null);` | EXPECTED | a corrupt/absent config yields null fields; the run status is reported separately | keep |
+| `src-tauri/src/ssh.rs:1004` | `.unwrap_or("local");` | EXPECTED | documented default backend when the frozen config omits it | keep |
+| `src-tauri/src/ssh.rs:1055` | `let s = \|k: &str\| slurm.and_then(\|v\| v.get(k)).and_then(\|x\| x.as_str()).unwrap_or("").trim().to_string();` | EXPECTED | an absent optional sbatch field is omitted rather than invented | keep |
+| `src-tauri/src/ssh.rs:1077` | `let cpus = n("cpus_per_task").unwrap_or(8);` | EXPECTED | documented sbatch default when the config omits the field | keep |
+| `src-tauri/src/ssh.rs:1283` | `pid = p.parse::<i32>().ok();` | EXPECTED | an optional/fallible read yields None, the documented unknown rather than a false value | keep |
+| `src-tauri/src/ssh.rs:1388` | `let _ = &root;` | EXPECTED | documented fallback; the primary outcome is reported separately | keep |
+| `src-tauri/src/training.rs:127` | `let cfg: Value = serde_json::from_str(run_json).unwrap_or(Value::Null);` | EXPECTED | a corrupt/absent config yields null fields; the run status is reported separately | keep |
+| `src-tauri/src/training.rs:128` | `let metrics: Value = serde_json::from_str(metrics_json).unwrap_or(Value::Null);` | EXPECTED | a corrupt/absent config yields null fields; the run status is reported separately | keep |
+| `src-tauri/src/training.rs:129` | `let s = \|v: &Value, k: &str\| v.get(k).and_then(\|x\| x.as_str()).unwrap_or("").to_string();` | EXPECTED | an absent optional field renders as empty, never an invented string | keep |
+| `src-tauri/src/training.rs:138` | `.unwrap_or(0) as u32;` | EXPECTED | a truncated/absent epoch field reads as 0, the documented unknown | keep |
+| `src-tauri/src/training.rs:147` | `.unwrap_or("")` | EXPECTED | an absent optional field renders as empty, never an invented string | keep |
+| `src-tauri/src/training.rs:159` | `events_max_epoch.map(\|e\| e.saturating_add(1)).unwrap_or(0)` | EXPECTED | documented fallback; the primary outcome is reported separately | keep |
+| `src-tauri/src/training.rs:172` | `eval_only: cfg.get("eval_only").and_then(\|x\| x.as_bool()).unwrap_or(false),` | EXPECTED | the absence reads as not-true (the conservative direction) | keep |
+| `src-tauri/src/training.rs:231` | `let num = \|s: &str\| s.trim().parse::<f64>().unwrap_or(0.0);` | EXPECTED | an unparseable external numeric value shows the documented default, not a fabricated one | keep |
+| `src-tauri/src/training.rs:239` | `index: cols[0].parse::<u32>().unwrap_or(0),` | EXPECTED | an unparseable external numeric value shows the documented default, not a fabricated one | keep |
+| `src-tauri/src/training.rs:271` | `.ok()` | EXPECTED | an optional/fallible read yields None, the documented unknown rather than a false value | keep |
+| `src-tauri/src/training.rs:272` | `.and_then(\|s\| s.trim().parse::<i32>().ok())` | EXPECTED | an optional/fallible read yields None, the documented unknown rather than a false value | keep |
+| `src-tauri/src/training.rs:284` | `.unwrap_or(false)` | EXPECTED | the absence reads as not-true (the conservative direction) | keep |
+| `src-tauri/src/training.rs:290` | `.unwrap_or_else(\|_\| "unknown".into())` | EXPECTED | documented fallback; the primary outcome is reported separately | keep |
+| `src-tauri/src/training.rs:298` | `let run_json = safe_read_text(dir, "run.json").unwrap_or_default();` | EXPECTED | an absent/unreadable optional run file is the documented empty state | keep |
+| `src-tauri/src/training.rs:299` | `let metrics_json = safe_read_text(dir, "metrics.json").unwrap_or_default();` | EXPECTED | an absent/unreadable optional run file is the documented empty state | keep |
+| `src-tauri/src/training.rs:300` | `let status_raw = safe_read_text(dir, "status").unwrap_or_default();` | EXPECTED | an absent/unreadable optional run file is the documented empty state | keep |
+| `src-tauri/src/training.rs:305` | `.unwrap_or_default();` | EXPECTED | documented empty default; the surrounding status carries the real state | keep |
+| `src-tauri/src/training.rs:306` | `let alive = pid_of(dir).map(is_alive).unwrap_or(false);` | EXPECTED | process-liveness probe defaults to not-alive (the safe direction) | keep |
+| `src-tauri/src/training.rs:324` | `if real.parent().map(\|p\| p != dir).unwrap_or(true) {` | EXPECTED | documented fallback; the primary outcome is reported separately | keep |
+| `src-tauri/src/training.rs:327` | `fs::read_to_string(&real).ok()` | EXPECTED | an unsafe/absent run file yields None, the documented skip state | keep |
+| `src-tauri/src/training.rs:344` | `Ok(real) => real.parent().map(\|p\| p == dir).unwrap_or(false),` | EXPECTED | the absence reads as not-true (the conservative direction) | keep |
+| `src-tauri/src/training.rs:457` | `let a = sacct_state.trim().split_whitespace().next().unwrap_or("").to_ascii_uppercase();` | EXPECTED | an absent optional field renders as empty, never an invented string | keep |
+| `src-tauri/src/training.rs:476` | `let alive = pid.map(is_alive).unwrap_or(false);` | EXPECTED | process-liveness probe defaults to not-alive (the safe direction) | keep |
+| `src-tauri/src/training.rs:543` | `let python = std::env::var("SPINOML_PYTHON").unwrap_or_else(\|_\| "python".into());` | EXPECTED | documented executable fallback; a missing binary surfaces as a spawn error | keep |
+| `src-tauri/src/training.rs:581` | `let _ = fs::write(dir.join("status"), "cancelled\n");` | EXPECTED | cooperative cancel write; a forced SIGTERM follows as the fallback | keep |
+| `src-tauri/src/training.rs:585` | `let _ = Command::new("kill")` | EXPECTED | documented fallback; the primary outcome is reported separately | keep |
+| `src-tauri/src/training.rs:589` | `let _ = Command::new("kill").arg("-TERM").arg(pid.to_string()).status();` | EXPECTED | documented fallback; the primary outcome is reported separately | keep |
+| `src-tauri/src/training.rs:644` | `if pid_of(&dir).map(is_alive).unwrap_or(false) {` | EXPECTED | process-liveness probe defaults to not-alive (the safe direction) | keep |
+
+## Rust: fixed hidden failures (no longer panicking / swallowing falsely)
+
+| Location (before) | Was | Now |
+|---|---|---|
+| `src-tauri/src/training.rs` `RunSummary::from_parts` epochs fallback | `epoch + 1` on an epoch read from an externally-written `events.jsonl`: overflow-panics in debug and wraps to `0` in release for `epoch = u32::MAX` (a wrong/invented epoch count). | `epoch.saturating_add(1)`; regression `training::tests::huge_event_epoch_saturates_instead_of_overflowing` (fails under the old `+ 1`). |
+| `src-tauri/src/training.rs` `list_training_runs` | `fs::canonicalize` failure of an **existing** `experiments/runs/` returned `Ok(vec![])` — a false "no runs" list (e.g. EACCES on a parent). | propagates a descriptive `Err("read_dir …")` so the UI shows the failure instead of an empty list. `not unit-testable: needs a Tauri State + a permission-denied directory`. |
+| `src-tauri/src/remote_sidecar.rs` run watcher | a dead `let _ = &line;` no-op (no error swallowed). | removed; the surrounding `eprintln!` + drain comment stay. |
+
+## Summary — Rust
+
+- Files scanned: **8** (`src-tauri/src/*.rs`).
+- Sites detected by the line scan (non-test, after the fixes): **112**.
+- EXPECTED (kept, each with an in-code `//` reason and an allow-list row): **112**.
+- FIXED hidden failures / panic sources: **2** (`from_parts` epoch overflow,
+  `list_training_runs` false-empty).
+- Non-test `unwrap()` / `panic!` / `unreachable!` / `todo!` / `unimplemented!`: **0**.
+- The single `expect()` is the Tauri builder in `run()`; a startup failure of the
+  whole process has no caller to return to, so it is kept and documented.
+- Class breakdown: `let _ =` 43, `unwrap_or(` 42, `.ok()` 12, `unwrap_or_else(` 9,
+  `unwrap_or_default` 5, `expect(` 1.

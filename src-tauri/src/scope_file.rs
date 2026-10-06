@@ -223,7 +223,7 @@ fn canonicalise_root(p: &Path) -> Result<String, String> {
     }
     if !fs::metadata(&real)
         .map(|m| m.is_dir())
-        .unwrap_or(false)
+        .unwrap_or(false) // the absence reads as not-true (the conservative direction)
     {
         return Err(format!("root entry is not an existing directory: {}", p.display()));
     }
@@ -295,7 +295,7 @@ fn atomic_write(path: &Path, json: &str) -> Result<(), String> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .unwrap_or(0); // clock-before-epoch fallback; pid and a counter keep generated ids unique
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
@@ -332,7 +332,7 @@ fn atomic_write(path: &Path, json: &str) -> Result<(), String> {
         }
     }
     if let Err(e) = fs::rename(&tmp_path, path) {
-        let _ = fs::remove_file(&tmp_path);
+        let _ = fs::remove_file(&tmp_path); // best-effort side effect; the primary outcome is reported separately
         return Err(format!("rename {} → {}: {e}", tmp_path.display(), path.display()));
     }
     // Make extra sure the file is 0600 even if rename preserved a looser mode.
@@ -342,7 +342,7 @@ fn atomic_write(path: &Path, json: &str) -> Result<(), String> {
     // file's own sync_all is the important part.
     let dir = fs::OpenOptions::new().read(true).open(parent);
     if let Ok(d) = dir {
-        let _ = d.sync_all();
+        let _ = d.sync_all(); // best-effort side effect; the primary outcome is reported separately
     }
     Ok(())
 }
@@ -399,7 +399,7 @@ pub fn check_resolved(root: &Path, candidate: &Path) -> Result<PathBuf, String> 
         )
     })?;
     let allowed = allowed_roots();
-    let scope_path = scope_file_path_impl().ok();
+    let scope_path = scope_file_path_impl().ok(); // an optional/fallible read yields None, the documented unknown rather than a false value
     if !path_starts_with(&canonical_candidate, &canonical_root) {
         // Outside the workspace root. Allow only if it falls under a
         // configured symlink target.
@@ -451,7 +451,7 @@ fn canonicalize_tolerating_missing(p: &Path) -> io::Result<PathBuf> {
     loop {
         match fs::canonicalize(&cur) {
             Ok(real) => {
-                let tail: PathBuf = p.strip_prefix(&cur).unwrap_or(p).into();
+                let tail: PathBuf = p.strip_prefix(&cur).unwrap_or(p).into(); // split/find always yields a value here; the fallback cannot invent data
                 if tail.as_os_str().is_empty() {
                     return Ok(real);
                 }

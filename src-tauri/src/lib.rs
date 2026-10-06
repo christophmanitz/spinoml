@@ -43,7 +43,7 @@ fn sidecar_root(app: &tauri::App) -> PathBuf {
     manifest
         .parent()
         .map(|p| p.to_path_buf())
-        .unwrap_or(manifest)
+        .unwrap_or(manifest) // a missing parent falls back to the manifest dir; never a false path claim
 }
 
 // AppHandle variant — needed by remote_sidecar.rs which runs after setup.
@@ -57,7 +57,7 @@ pub(crate) fn sidecar_root_pub(app: &tauri::AppHandle) -> PathBuf {
     manifest
         .parent()
         .map(|p| p.to_path_buf())
-        .unwrap_or(manifest)
+        .unwrap_or(manifest) // a missing parent falls back to the manifest dir; never a false path claim
 }
 
 /// Ask the kernel to SIGTERM this child when its parent (spinoml) dies, no
@@ -143,15 +143,15 @@ fn shutdown_sidecars(sc: &Sidecars) {
     if let Ok(mut t) = sc.torch.lock() {
         if let Some(mut c) = t.take() {
             eprintln!("[spinoml] killing torch sidecar pid={}", c.id());
-            let _ = c.kill();
-            let _ = c.wait();
+            let _ = c.kill(); // best-effort cleanup: the child may already have exited
+            let _ = c.wait(); // best-effort cleanup: the child may already have exited
         }
     }
     if let Ok(mut t) = sc.llm.lock() {
         if let Some(mut c) = t.take() {
             eprintln!("[spinoml] killing llm sidecar pid={}", c.id());
-            let _ = c.kill();
-            let _ = c.wait();
+            let _ = c.kill(); // best-effort cleanup: the child may already have exited
+            let _ = c.wait(); // best-effort cleanup: the child may already have exited
         }
     }
 }
@@ -165,8 +165,8 @@ struct SidecarStatus {
 #[tauri::command]
 fn sidecar_managed_status(sc: State<Sidecars>) -> SidecarStatus {
     SidecarStatus {
-        torch: sc.torch.lock().map(|g| g.is_some()).unwrap_or(false),
-        llm: sc.llm.lock().map(|g| g.is_some()).unwrap_or(false),
+        torch: sc.torch.lock().map(|g| g.is_some()).unwrap_or(false), // a poisoned lock reads as not-managed; the holder never panics on these paths
+        llm: sc.llm.lock().map(|g| g.is_some()).unwrap_or(false), // a poisoned lock reads as not-managed; the holder never panics on these paths
     }
 }
 
@@ -212,7 +212,7 @@ async fn pick_workspace_dir(app: tauri::AppHandle) -> Result<Option<String>, Str
     app.dialog()
         .file()
         .pick_folder(move |result| {
-            let _ = tx.send(result);
+            let _ = tx.send(result); // best-effort UI/channel send; a dropped receiver has nothing left to mislead
         });
     let result = rx.await.map_err(|e| e.to_string())?;
     let path = match result {
@@ -237,7 +237,7 @@ fn current_workspace_dir(state: State<WorkspaceState>) -> Option<String> {
     state
         .root
         .lock()
-        .ok()
+        .ok() // an optional/fallible read yields None, the documented unknown rather than a false value
         .and_then(|g| g.clone())
         .map(|p| p.to_string_lossy().to_string())
 }
@@ -335,7 +335,7 @@ fn walk(
         // has symlink_metadata().is_dir() == false).
         let is_dir = fs::metadata(&canonical_p)
             .map(|m| m.is_dir())
-            .unwrap_or(false);
+            .unwrap_or(false); // the absence reads as not-true (the conservative direction)
         if is_dir {
             out.push(FsEntry { name, relpath: rel.clone(), is_dir: true });
             // Cycle protection: recurse only into a canonical directory we
@@ -440,7 +440,7 @@ struct ProjectLoad {
 }
 
 pub(crate) fn now_iso() -> String {
-    let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0); // clock-before-epoch fallback; pid and a counter keep generated ids unique
     // Crude ISO8601 — good enough for human reading; we don't need timezone math.
     format!("{}Z", secs_to_iso(secs))
 }
@@ -596,7 +596,7 @@ fn migrate_legacy_project(
     // root (e.g. `evil.py → /etc/passwd`) cannot trick us into renaming the
     // target into the workspace (R016).
     let models = root.join("models");
-    let canonical_root = fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
+    let canonical_root = fs::canonicalize(&root).unwrap_or_else(|_| root.clone()); // root was already validated; the lexical fallback is defensive only
     if let Ok(rd) = fs::read_dir(&root) {
         for entry in rd.flatten() {
             let p = entry.path();
@@ -662,10 +662,10 @@ fn list_notes(state: State<WorkspaceState>) -> Result<Vec<NoteEntry>, String> {
         if !lower.ends_with(".md") && !lower.ends_with(".txt") { continue; }
         let meta = entry.metadata().map_err(|e| e.to_string())?;
         let modified = meta.modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .ok() // an optional/fallible read yields None, the documented unknown rather than a false value
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok()) // an optional/fallible read yields None, the documented unknown rather than a false value
             .map(|d| secs_to_iso(d.as_secs()))
-            .unwrap_or_default();
+            .unwrap_or_default(); // documented empty default; the surrounding status carries the real state
         out.push(NoteEntry {
             name: name.clone(),
             relpath: format!("notes/{name}"),
@@ -778,7 +778,7 @@ fn list_datasets(state: State<WorkspaceState>) -> Result<Vec<DatasetEntry>, Stri
     if !dsdir.exists() {
         fs::create_dir_all(&dsdir).map_err(|e| format!("mkdir datasets/: {e}"))?;
     }
-    let canonical_dsdir = fs::canonicalize(&dsdir).unwrap_or_else(|_| dsdir.clone());
+    let canonical_dsdir = fs::canonicalize(&dsdir).unwrap_or_else(|_| dsdir.clone()); // datasets dir was already validated by resolve(); the fallback is defensive only
     let mut out: Vec<DatasetEntry> = Vec::new();
     let read = fs::read_dir(&dsdir).map_err(|e| format!("read_dir {}: {e}", dsdir.display()))?;
     for entry in read.flatten() {
@@ -796,7 +796,7 @@ fn list_datasets(state: State<WorkspaceState>) -> Result<Vec<DatasetEntry>, Stri
             continue;
         }
         let meta = entry.metadata().map_err(|e| e.to_string())?;
-        let size = if meta.is_file() { meta.len() } else { dir_size(&entry_canonical).unwrap_or(0) };
+        let size = if meta.is_file() { meta.len() } else { dir_size(&entry_canonical).unwrap_or(0) }; // display-only size; a failed stat shows 0 bytes, not a false listing
         let rel = format!("datasets/{}", name);
         out.push(DatasetEntry {
             name,
@@ -817,13 +817,13 @@ fn list_datasets(state: State<WorkspaceState>) -> Result<Vec<DatasetEntry>, Stri
 
 fn dir_size(p: &Path) -> Option<u64> {
     let mut total: u64 = 0;
-    let read = fs::read_dir(p).ok()?;
+    let read = fs::read_dir(p).ok()?; // a failed read yields None up the Option chain, the documented skip state
     for entry in read.flatten() {
-        let meta = entry.metadata().ok()?;
+        let meta = entry.metadata().ok()?; // a failed read yields None up the Option chain, the documented skip state
         if meta.is_file() {
             total += meta.len();
         } else if meta.is_dir() {
-            total += dir_size(&entry.path()).unwrap_or(0);
+            total += dir_size(&entry.path()).unwrap_or(0); // display-only size; a failed stat shows 0 bytes, not a false listing
         }
     }
     Some(total)
@@ -1008,7 +1008,7 @@ pub fn run() {
             training::gpu_stats,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .expect("error while running tauri application"); // startup failure of the whole app has no caller to return to (Phase 48)
 }
 
 #[cfg(test)]

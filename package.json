@@ -46,6 +46,8 @@
     "verify:remote-deploy-files": "tsx scripts/verify-remote-deploy-files.ts",
     "verify:silent-catch": "tsx scripts/verify-silent-catch.ts",
     "verify:silent-fixes": "tsx scripts/verify-silent-fixes.ts",
+    "verify:rust-panics": "tsx scripts/verify-rust-panics.ts",
+    "test:rust-panics-selftest": "tsx scripts/verify-rust-panics.ts --self-test",
     "verify:integrity": "tsx scripts/verify-integrity.ts",
     "test:graphstore": "tsx scripts/test-graphstore.ts",
     "test:persistence": "tsx scripts/test-persistence.ts",

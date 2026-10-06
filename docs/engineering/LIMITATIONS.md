@@ -128,13 +128,12 @@
 ## 6. Not yet audited
 
 Phases of `TODO.md` that have no "implemented" note are not done. In particular:
-Rust `unwrap`/`panic` audit (48), the Rust half of the silent-exception
-audit (50; TypeScript, Node and Python are done), resource leak and long-run tests (51/52 — known leak:
+resource leak and long-run tests (51/52 — known leak:
 an empty `/tmp/spinoml-opencode-*` directory remains when the LLM sidecar is killed while an opencode
 turn is in flight; normal turns and client aborts clean up, see `test:opencode-lifecycle`),
 CI (69),
 retries/timeouts (71/72), the
-the remaining parts of the security review (77: the token is done, see §2; the other listed areas were covered piecewise by phases 43–47/76), dependency audit (79) and the final
+remaining parts of the security review (77: the token is done, see §2; the other listed areas were covered piecewise by phases 43–47/76), dependency audit (79) and the final
 reliability report (90).
 
 **CUDA is unverified.** `torch 2.12.0+cpu` is installed here: every CUDA branch of

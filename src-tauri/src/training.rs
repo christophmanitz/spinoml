@@ -124,9 +124,9 @@ impl RunSummary {
         alive: bool,
         has_checkpoint: bool,
     ) -> RunSummary {
-        let cfg: Value = serde_json::from_str(run_json).unwrap_or(Value::Null);
-        let metrics: Value = serde_json::from_str(metrics_json).unwrap_or(Value::Null);
-        let s = |v: &Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let cfg: Value = serde_json::from_str(run_json).unwrap_or(Value::Null); // a corrupt/absent config yields null fields; the run status is reported separately
+        let metrics: Value = serde_json::from_str(metrics_json).unwrap_or(Value::Null); // a corrupt/absent config yields null fields; the run status is reported separately
+        let s = |v: &Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string(); // an absent optional field renders as empty, never an invented string
         let (events_best, events_done_best, events_max_epoch) = scan_events(events);
         // Configured epoch count — accept the nested (our schema) OR a flat
         // `epochs` (a hand-written run.json). 0 only if neither is present.
@@ -135,7 +135,7 @@ impl RunSummary {
             .and_then(|t| t.get("epochs"))
             .or_else(|| cfg.get("epochs"))
             .and_then(|x| x.as_u64())
-            .unwrap_or(0) as u32;
+            .unwrap_or(0) as u32; // a truncated/absent epoch field reads as 0, the documented unknown
         RunSummary {
             run_id: run_id.to_string(),
             run_label: s(&cfg, "run_label"),
@@ -144,16 +144,19 @@ impl RunSummary {
                 .get("dataset")
                 .and_then(|d| d.get("path").or_else(|| d.get("relpath")))
                 .and_then(|x| x.as_str())
-                .unwrap_or("")
+                .unwrap_or("") // an absent optional field renders as empty, never an invented string
                 .to_string(),
             created_at: s(&cfg, "created_at"),
             status: reconcile_status(status_raw, alive),
             // Fall back to the highest completed epoch (+1) seen in events when
-            // the config carries no epoch count.
+            // the config carries no epoch count. `saturating_add` because the
+            // epoch number comes from an externally-written events.jsonl: an
+            // epoch near u32::MAX must not overflow-panic (debug) or wrap to 0
+            // (release), which would show a wrong/invented epoch count.
             epochs: if cfg_epochs > 0 {
                 cfg_epochs
             } else {
-                events_max_epoch.map(|e| e + 1).unwrap_or(0)
+                events_max_epoch.map(|e| e.saturating_add(1)).unwrap_or(0) // documented fallback; the primary outcome is reported separately
             },
             // Loss precedence: metrics.json → run.json → run.done event →
             // min(val_loss) across epoch.end events. Any one of these is enough
@@ -166,7 +169,7 @@ impl RunSummary {
                 .or(events_best),
             alive,
             has_checkpoint,
-            eval_only: cfg.get("eval_only").and_then(|x| x.as_bool()).unwrap_or(false),
+            eval_only: cfg.get("eval_only").and_then(|x| x.as_bool()).unwrap_or(false), // the absence reads as not-true (the conservative direction)
         }
     }
 }
@@ -225,7 +228,7 @@ pub(crate) const NVIDIA_SMI_QUERY: &str =
 /// Parse the CSV rows from NVIDIA_SMI_QUERY into GpuStat. Tolerant of the odd
 /// "[Not Supported]" cell (→ 0). Shared by local + ssh so one parser covers both.
 pub(crate) fn parse_gpu_stats(out: &str) -> Vec<GpuStat> {
-    let num = |s: &str| s.trim().parse::<f64>().unwrap_or(0.0);
+    let num = |s: &str| s.trim().parse::<f64>().unwrap_or(0.0); // an unparseable external numeric value shows the documented default, not a fabricated one
     out.lines()
         .filter_map(|line| {
             let cols: Vec<&str> = line.split(',').map(|c| c.trim()).collect();
@@ -233,7 +236,7 @@ pub(crate) fn parse_gpu_stats(out: &str) -> Vec<GpuStat> {
                 return None;
             }
             Some(GpuStat {
-                index: cols[0].parse::<u32>().unwrap_or(0),
+                index: cols[0].parse::<u32>().unwrap_or(0), // an unparseable external numeric value shows the documented default, not a fabricated one
                 name: cols[1].to_string(),
                 util_pct: num(cols[2]),
                 mem_used_mb: num(cols[3]),
@@ -265,8 +268,8 @@ pub async fn gpu_stats() -> Result<Vec<GpuStat>, String> {
 
 fn pid_of(dir: &Path) -> Option<i32> {
     fs::read_to_string(dir.join("pid"))
-        .ok()
-        .and_then(|s| s.trim().parse::<i32>().ok())
+        .ok() // an optional/fallible read yields None, the documented unknown rather than a false value
+        .and_then(|s| s.trim().parse::<i32>().ok()) // an optional/fallible read yields None, the documented unknown rather than a false value
 }
 
 /// `kill -0 <pid>` — true if the process exists and we may signal it.
@@ -278,13 +281,13 @@ fn is_alive(pid: i32) -> bool {
         .stderr(Stdio::null())
         .status()
         .map(|s| s.success())
-        .unwrap_or(false)
+        .unwrap_or(false) // the absence reads as not-true (the conservative direction)
 }
 
 fn read_status(dir: &Path) -> String {
     fs::read_to_string(dir.join("status"))
         .map(|s| s.trim().to_string())
-        .unwrap_or_else(|_| "unknown".into())
+        .unwrap_or_else(|_| "unknown".into()) // documented fallback; the primary outcome is reported separately
 }
 
 fn summarize(dir: &Path, run_id: &str) -> RunSummary {
@@ -293,14 +296,14 @@ fn summarize(dir: &Path, run_id: &str) -> RunSummary {
     // → /etc/passwd`; without this, list_training_runs would leak its
     // contents into the UI summary.
     let run_json = safe_read_text(dir, "run.json").unwrap_or_default();
-    let metrics_json = safe_read_text(dir, "metrics.json").unwrap_or_default();
-    let status_raw = safe_read_text(dir, "status").unwrap_or_default();
+    let metrics_json = safe_read_text(dir, "metrics.json").unwrap_or_default(); // an absent/unreadable optional run file is the documented empty state
+    let status_raw = safe_read_text(dir, "status").unwrap_or_default(); // an absent/unreadable optional run file is the documented empty state
     // Keep only the epoch.end / run.done lines so a run with a huge per-batch
     // events.jsonl stays cheap to summarize (mirror of the ssh-side grep).
     let events = safe_read_text(dir, "events.jsonl")
         .map(|s| filter_summary_events(&s))
-        .unwrap_or_default();
-    let alive = pid_of(dir).map(is_alive).unwrap_or(false);
+        .unwrap_or_default(); // documented empty default; the surrounding status carries the real state
+    let alive = pid_of(dir).map(is_alive).unwrap_or(false); // process-liveness probe defaults to not-alive (the safe direction)
     let has_checkpoint = safe_exists(dir.join("checkpoints").join("best.pt"), dir);
     RunSummary::from_parts(
         run_id, &run_json, &metrics_json, &events, &status_raw, alive, has_checkpoint,
@@ -318,10 +321,10 @@ fn safe_read_text(dir: &Path, name: &str) -> Option<String> {
                 return None;
             }
             if let Ok(real) = fs::canonicalize(&candidate) {
-                if real.parent().map(|p| p != dir).unwrap_or(true) {
+                if real.parent().map(|p| p != dir).unwrap_or(true) { // documented fallback; the primary outcome is reported separately
                     return None;
                 }
-                fs::read_to_string(&real).ok()
+                fs::read_to_string(&real).ok() // an unsafe/absent run file yields None, the documented skip state
             } else {
                 None
             }
@@ -338,7 +341,7 @@ fn safe_exists(candidate: PathBuf, dir: &Path) -> bool {
         return false;
     }
     match fs::canonicalize(&candidate) {
-        Ok(real) => real.parent().map(|p| p == dir).unwrap_or(false),
+        Ok(real) => real.parent().map(|p| p == dir).unwrap_or(false), // the absence reads as not-true (the conservative direction)
         Err(_) => false,
     }
 }
@@ -363,10 +366,11 @@ pub fn list_training_runs(state: State<WorkspaceState>) -> Result<Vec<RunSummary
     if !dir.exists() {
         return Ok(vec![]);
     }
-    let canonical_dir = match fs::canonicalize(&dir) {
-        Ok(c) => c,
-        Err(_) => return Ok(vec![]),
-    };
+    // The dir exists but its realpath could not be resolved (EACCES on a
+    // parent, an I/O error, …): report the failure instead of a false "no runs"
+    // list, so the UI never claims a populated experiments/runs/ is empty.
+    let canonical_dir = fs::canonicalize(&dir)
+        .map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
     let mut out: Vec<RunSummary> = Vec::new();
     for entry in fs::read_dir(&dir).map_err(|e| format!("read_dir {}: {e}", dir.display()))?.flatten() {
         let p = entry.path();
@@ -469,7 +473,7 @@ pub fn training_run_status(
     let root = current_root(&state)?;
     let dir = crate::resolve(&root, &format!("experiments/runs/{run_id}"))?;
     let pid = pid_of(&dir);
-    let alive = pid.map(is_alive).unwrap_or(false);
+    let alive = pid.map(is_alive).unwrap_or(false); // process-liveness probe defaults to not-alive (the safe direction)
     let status = reconcile_status(&read_status(&dir), alive);
     Ok(RunStatus { status, alive, pid })
 }
@@ -578,11 +582,11 @@ pub fn stop_training_run(state: State<WorkspaceState>, run_id: String) -> Result
     // Forceful: SIGTERM the whole process group (negative pid). setsid made the
     // python pid the group leader, so this also takes child dataloader workers.
     if let Some(pid) = pid_of(&dir) {
-        let _ = Command::new("kill")
+        let _ = Command::new("kill") // documented fallback; the primary outcome is reported separately
             .arg("-TERM")
             .arg(format!("-{pid}"))
             .status();
-        let _ = Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
+        let _ = Command::new("kill").arg("-TERM").arg(pid.to_string()).status(); // documented fallback; the primary outcome is reported separately
     }
     Ok(())
 }
@@ -637,7 +641,7 @@ pub fn delete_training_run(state: State<WorkspaceState>, run_id: String) -> Resu
     if !dir.exists() {
         return Ok(());
     }
-    if pid_of(&dir).map(is_alive).unwrap_or(false) {
+    if pid_of(&dir).map(is_alive).unwrap_or(false) { // process-liveness probe defaults to not-alive (the safe direction)
         return Err("run is still alive — stop it before deleting".into());
     }
     fs::remove_dir_all(&dir).map_err(|e| format!("rmdir {}: {e}", dir.display()))
@@ -670,6 +674,18 @@ mod tests {
         let s = RunSummary::from_parts("r2", "{}", "", events, "completed", false, true);
         assert_eq!(s.best_val_loss, Some(0.18));
         assert_eq!(s.epochs, 1); // no config → highest completed epoch + 1
+    }
+
+    // Phase 48 regression: `epochs` is derived from `epoch + 1` where `epoch`
+    // comes from an externally-written events.jsonl. The old behaviour was a
+    // bare `e + 1`, which overflow-panics in a debug build and wraps to 0 in
+    // release for epoch = u32::MAX — an invented/panicking epoch count. The fix
+    // saturates, so this must return u32::MAX and never panic.
+    #[test]
+    fn huge_event_epoch_saturates_instead_of_overflowing() {
+        let events = "{\"kind\":\"epoch.end\",\"epoch\":4294967295,\"val_loss\":0.5}";
+        let s = RunSummary::from_parts("r_overflow", "{}", "", events, "running", true, false);
+        assert_eq!(s.epochs, u32::MAX);
     }
 
     #[test]

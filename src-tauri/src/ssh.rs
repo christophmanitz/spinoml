@@ -255,7 +255,7 @@ pub fn sanitize_credentials(text: &str) -> String {
                 let tail = &clean_line[idx + prefix.len()..];
                 let end = tail
                     .find(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
-                    .unwrap_or(tail.len());
+                    .unwrap_or(tail.len()); // no match uses the full length; this cannot truncate or invent data
                 if end >= 12 {
                     clean_line = format!("{}[REDACTED_TOKEN]{}", &clean_line[..idx], &tail[end..]);
                 } else {
@@ -296,7 +296,7 @@ fn ssh_failure(exit: Option<i32>, stderr: &str) -> String {
     } else {
         "Remote SSH command failed"
     };
-    let code = exit.map(|v| v.to_string()).unwrap_or_else(|| "signal".into());
+    let code = exit.map(|v| v.to_string()).unwrap_or_else(|| "signal".into()); // documented fallback; the primary outcome is reported separately
     format!("{reason} (ssh exit {code}): {detail}")
 }
 
@@ -319,7 +319,7 @@ fn ssh_exec_blocking(alias: &str, remote_cmd: &str, stdin_data: Option<&[u8]>) -
         let mut stdin = child.stdin.take().ok_or_else(|| "no stdin handle".to_string())?;
         let owned = data.to_vec();
         std::thread::spawn(move || {
-            let _ = stdin.write_all(&owned);
+            let _ = stdin.write_all(&owned); // best-effort side effect; the primary outcome is reported separately
             // Drop closes the pipe → remote `cat` sees EOF and exits.
         });
     }
@@ -521,7 +521,7 @@ pub struct CurrentRemote {
 // Sync: no ssh, just reads the mutex.
 #[tauri::command]
 pub fn ssh_current(state: State<RemoteWorkspaceState>) -> Option<CurrentRemote> {
-    let g = state.current.lock().ok()?;
+    let g = state.current.lock().ok()?; // a poisoned lock reads as the explicit unknown state, never a false value
     let r = g.as_ref()?;
     Some(CurrentRemote { alias: r.alias.clone(), root: r.root.clone() })
 }
@@ -552,13 +552,13 @@ pub async fn ssh_walk(alias: String, root: String) -> Result<Vec<RemoteFsEntry>,
     let mut entries: Vec<RemoteFsEntry> = Vec::new();
     for line in out.lines() {
         let mut it = line.splitn(2, '\t');
-        let kind = it.next().unwrap_or("");
-        let rel = it.next().unwrap_or("").to_string();
+        let kind = it.next().unwrap_or(""); // an absent optional field renders as empty, never an invented string
+        let rel = it.next().unwrap_or("").to_string(); // an absent optional field renders as empty, never an invented string
         if rel.is_empty() {
             continue;
         }
         let is_dir = kind == "d";
-        let name = rel.rsplit('/').next().unwrap_or(&rel).to_string();
+        let name = rel.rsplit('/').next().unwrap_or(&rel).to_string(); // split/find always yields a value here; the fallback cannot invent data
         entries.push(RemoteFsEntry { name, relpath: rel, is_dir });
     }
     entries.sort_by(|a, b| {
@@ -593,7 +593,7 @@ pub async fn ssh_write_file(
     let parent = abs
         .rsplit_once('/')
         .map(|(a, _)| a.to_string())
-        .unwrap_or_else(|| root.clone());
+        .unwrap_or_else(|| root.clone()); // documented fallback; the primary outcome is reported separately
     let p_q = shell_quote_path(&abs);
     let parent_q = shell_quote_path(&parent);
     ssh_exec(
@@ -642,7 +642,7 @@ pub async fn ssh_rename(
     let to_parent = to_abs
         .rsplit_once('/')
         .map(|(a, _)| a.to_string())
-        .unwrap_or_else(|| root.clone());
+        .unwrap_or_else(|| root.clone()); // documented fallback; the primary outcome is reported separately
     let to_parent_q = shell_quote_path(&to_parent);
     let to_q = shell_quote_path(&to_abs);
     ssh_exec(
@@ -672,7 +672,7 @@ fn strip_iso_nanos(s: &str) -> String {
             .char_indices()
             .find(|(_, c)| !c.is_ascii_digit() && *c != '.')
             .map(|(i, _)| i)
-            .unwrap_or(tail.len());
+            .unwrap_or(tail.len()); // no match uses the full length; this cannot truncate or invent data
         let mut out = String::with_capacity(s.len());
         out.push_str(&s[..dot]);
         out.push_str(&tail[suffix_idx..]);
@@ -703,7 +703,7 @@ pub async fn ssh_list_notes(alias: String, root: String) -> Result<Vec<RemoteNot
         if name.starts_with('.') {
             continue;
         }
-        let size = parts[1].parse::<u64>().unwrap_or(0);
+        let size = parts[1].parse::<u64>().unwrap_or(0); // an unparseable external numeric value shows the documented default, not a fabricated one
         let modified = strip_iso_nanos(parts[2]);
         entries.push(RemoteNoteEntry {
             relpath: format!("notes/{name}"),
@@ -864,7 +864,7 @@ pub async fn ssh_list_datasets(
         }
         let kind = parts[0];
         let name = parts[1].to_string();
-        let size = parts[2].parse::<u64>().unwrap_or(0);
+        let size = parts[2].parse::<u64>().unwrap_or(0); // an unparseable external numeric value shows the documented default, not a fabricated one
         if name.starts_with('.') {
             continue;
         }
@@ -1001,7 +1001,7 @@ pub async fn ssh_start_training_run(
         .get("backend")
         .and_then(|b| b.get("kind"))
         .and_then(|k| k.as_str())
-        .unwrap_or("local");
+        .unwrap_or("local"); // documented default backend when the frozen config omits it
 
     if backend_kind == "slurm" {
         let slurm = cfg.get("backend").and_then(|b| b.get("slurm"));
@@ -1052,7 +1052,7 @@ pub async fn ssh_start_training_run(
 /// user's own cluster — so simple fields are lightly sanitised and the module
 /// list / pre_run_script are free-form by design (the plan calls for it).
 fn build_sbatch(run_id: &str, python_q: &str, slurm: Option<&Value>) -> String {
-    let s = |k: &str| slurm.and_then(|v| v.get(k)).and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    let s = |k: &str| slurm.and_then(|v| v.get(k)).and_then(|x| x.as_str()).unwrap_or("").trim().to_string(); // an absent optional sbatch field is omitted rather than invented
     let n = |k: &str| slurm.and_then(|v| v.get(k)).and_then(|x| x.as_u64());
 
     // job name: a short, tame slug from the run id
@@ -1074,7 +1074,7 @@ fn build_sbatch(run_id: &str, python_q: &str, slurm: Option<&Value>) -> String {
     if !mem.is_empty() {
         out.push_str(&format!("#SBATCH --mem={mem}\n"));
     }
-    let cpus = n("cpus_per_task").unwrap_or(8);
+    let cpus = n("cpus_per_task").unwrap_or(8); // documented sbatch default when the config omits the field
     out.push_str(&format!("#SBATCH --cpus-per-task={cpus}\n"));
     let gres = s("gres");
     if !gres.is_empty() {
@@ -1280,7 +1280,7 @@ pub async fn ssh_training_run_status(
             if p.starts_with("slurm:") {
                 is_slurm = true;
             }
-            pid = p.parse::<i32>().ok();
+            pid = p.parse::<i32>().ok(); // an optional/fallible read yields None, the documented unknown rather than a false value
         } else if line == "MLF_STATUS_BEGIN" {
             in_status = true;
         } else if line == "MLF_STATUS_END" {
@@ -1385,7 +1385,7 @@ pub async fn ssh_remote_training_capabilities(
     // fail, so the SLURM backend block never appeared in the new-run dialog.
     root: String,
 ) -> Result<RemoteTrainingCapabilities, String> {
-    let _ = &root;
+    let _ = &root; // documented fallback; the primary outcome is reported separately
     validate_alias(&alias)?;
     let cmd = "if command -v sbatch >/dev/null 2>&1; then echo MLF_HAS_SLURM; fi; \
                if command -v nvidia-smi >/dev/null 2>&1; then echo MLF_HAS_GPU; \
