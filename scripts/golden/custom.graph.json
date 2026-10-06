@@ -1,0 +1,59 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "x",
+      "layerType": "Input",
+      "params": {
+        "name": "x",
+        "shape": [
+          1,
+          8
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "scale",
+      "layerType": "Custom",
+      "params": {
+        "init_args": "factor=2.0",
+        "source": "class Scale(nn.Module):\n    def __init__(self, factor):\n        super().__init__()\n        self.factor = factor\n\n    def forward(self, x):\n        return x * self.factor"
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "logits"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "x",
+      "target": "scale"
+    },
+    {
+      "source": "scale",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        8
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    8
+  ]
+}

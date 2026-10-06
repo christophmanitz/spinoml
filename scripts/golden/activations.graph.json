@@ -1,0 +1,118 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "x",
+      "layerType": "Input",
+      "params": {
+        "name": "x",
+        "shape": [
+          1,
+          8
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "a1",
+      "layerType": "ReLU",
+      "params": {
+        "inplace": false
+      }
+    },
+    {
+      "id": "a2",
+      "layerType": "GELU",
+      "params": {}
+    },
+    {
+      "id": "a3",
+      "layerType": "SiLU",
+      "params": {
+        "inplace": false
+      }
+    },
+    {
+      "id": "a4",
+      "layerType": "Sigmoid",
+      "params": {}
+    },
+    {
+      "id": "a5",
+      "layerType": "Tanh",
+      "params": {}
+    },
+    {
+      "id": "a6",
+      "layerType": "Softmax",
+      "params": {
+        "dim": -1
+      }
+    },
+    {
+      "id": "a7",
+      "layerType": "LogSoftmax",
+      "params": {
+        "dim": -1
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "out"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "x",
+      "target": "a1"
+    },
+    {
+      "source": "a1",
+      "target": "a2"
+    },
+    {
+      "source": "a2",
+      "target": "a3"
+    },
+    {
+      "source": "a3",
+      "target": "a4"
+    },
+    {
+      "source": "a4",
+      "target": "a5"
+    },
+    {
+      "source": "a5",
+      "target": "a6"
+    },
+    {
+      "source": "a6",
+      "target": "a7"
+    },
+    {
+      "source": "a7",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        8
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    8
+  ]
+}

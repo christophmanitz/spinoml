@@ -1,0 +1,146 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "a",
+      "layerType": "Input",
+      "params": {
+        "name": "a",
+        "shape": [
+          1,
+          6
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "b",
+      "layerType": "Input",
+      "params": {
+        "name": "b",
+        "shape": [
+          1,
+          4
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "la",
+      "layerType": "Linear",
+      "params": {
+        "in_features": 6,
+        "out_features": 8,
+        "bias": true
+      }
+    },
+    {
+      "id": "ra",
+      "layerType": "ReLU",
+      "params": {
+        "inplace": false
+      }
+    },
+    {
+      "id": "lb",
+      "layerType": "Linear",
+      "params": {
+        "in_features": 4,
+        "out_features": 8,
+        "bias": true
+      }
+    },
+    {
+      "id": "rb",
+      "layerType": "ReLU",
+      "params": {
+        "inplace": false
+      }
+    },
+    {
+      "id": "cat",
+      "layerType": "Concat",
+      "params": {
+        "dim": 1
+      }
+    },
+    {
+      "id": "fc",
+      "layerType": "Linear",
+      "params": {
+        "in_features": 16,
+        "out_features": 2,
+        "bias": true
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "out"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "a",
+      "target": "la"
+    },
+    {
+      "source": "la",
+      "target": "ra"
+    },
+    {
+      "source": "b",
+      "target": "lb"
+    },
+    {
+      "source": "lb",
+      "target": "rb"
+    },
+    {
+      "source": "ra",
+      "target": "cat"
+    },
+    {
+      "source": "rb",
+      "target": "cat"
+    },
+    {
+      "source": "cat",
+      "target": "fc"
+    },
+    {
+      "source": "fc",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "a",
+      "shape": [
+        1,
+        6
+      ],
+      "dtype": "float32"
+    },
+    {
+      "name": "b",
+      "shape": [
+        1,
+        4
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    2
+  ]
+}

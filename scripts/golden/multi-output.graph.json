@@ -1,0 +1,90 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "x",
+      "layerType": "Input",
+      "params": {
+        "name": "x",
+        "shape": [
+          1,
+          12
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "la",
+      "layerType": "Linear",
+      "params": {
+        "in_features": 12,
+        "out_features": 4,
+        "bias": true
+      }
+    },
+    {
+      "id": "lb",
+      "layerType": "Linear",
+      "params": {
+        "in_features": 12,
+        "out_features": 6,
+        "bias": true
+      }
+    },
+    {
+      "id": "oa",
+      "layerType": "Output",
+      "params": {
+        "name": "logits"
+      }
+    },
+    {
+      "id": "ob",
+      "layerType": "Output",
+      "params": {
+        "name": "embedding"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "x",
+      "target": "la"
+    },
+    {
+      "source": "la",
+      "target": "oa"
+    },
+    {
+      "source": "x",
+      "target": "lb"
+    },
+    {
+      "source": "lb",
+      "target": "ob"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        12
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": {
+    "logits": [
+      1,
+      4
+    ],
+    "embedding": [
+      1,
+      6
+    ]
+  }
+}

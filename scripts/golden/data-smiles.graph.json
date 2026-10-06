@@ -1,0 +1,30 @@
+{
+  "kind": "data",
+  "nodes": [
+    {
+      "id": "src",
+      "dataType": "TableSource",
+      "params": {
+        "dataset": "datasets/mols.csv"
+      }
+    },
+    {
+      "id": "s2g",
+      "dataType": "SmilesToGraph",
+      "params": {
+        "smiles_column": "smiles",
+        "out_name": "datasets/graphs/mol_graphs.pt",
+        "atom_features": "standard",
+        "bond_features": true,
+        "embed_3d": true,
+        "add_hydrogens": true
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "src",
+      "target": "s2g"
+    }
+  ]
+}

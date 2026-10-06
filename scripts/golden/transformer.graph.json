@@ -1,0 +1,83 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "x",
+      "layerType": "Input",
+      "params": {
+        "name": "x",
+        "shape": [
+          1,
+          16,
+          32
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "el",
+      "layerType": "TransformerEncoderLayer",
+      "params": {
+        "d_model": 32,
+        "nhead": 4,
+        "dim_feedforward": 64,
+        "dropout": 0,
+        "activation": "gelu",
+        "batch_first": true
+      }
+    },
+    {
+      "id": "enc",
+      "layerType": "TransformerEncoder",
+      "params": {
+        "d_model": 32,
+        "nhead": 4,
+        "num_layers": 2,
+        "dim_feedforward": 64,
+        "dropout": 0,
+        "activation": "gelu",
+        "batch_first": true
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "embedding"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "x",
+      "target": "el"
+    },
+    {
+      "source": "el",
+      "target": "enc"
+    },
+    {
+      "source": "enc",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        16,
+        32
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    16,
+    32
+  ]
+}

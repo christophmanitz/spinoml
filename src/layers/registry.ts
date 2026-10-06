@@ -47,6 +47,10 @@ export type LayerSpec = {
   /** Module returns a tuple (output, state); codegen unpacks `var, _ = ...` and
    *  the sidecar forward-hook reads element 0. e.g. nn.LSTM/GRU/RNN. */
   tupleOutput?: boolean
+  /** Self-attention module: forward needs (query, key, value) and returns
+   *  (output, weights). Codegen emits `var = self.attr(x, x, x, need_weights=False)[0]`
+   *  (nn.MultiheadAttention). A single-argument call is a TypeError at run time. */
+  selfAttention?: boolean
   /** Message-passing module whose forward takes (x, edge_index). Codegen emits
    *  `var = self.attr(pred, edge_index)`, resolving edge_index from an Input
    *  node named 'edge_index'. e.g. GCNConv/GATConv/SAGEConv. */
@@ -370,7 +374,7 @@ export const LAYERS: Record<string, LayerSpec> = {
   },
 
   MultiheadAttention: {
-    type: 'MultiheadAttention', category: 'Attention', pytorchModule: 'nn.MultiheadAttention',
+    type: 'MultiheadAttention', category: 'Attention', pytorchModule: 'nn.MultiheadAttention', selfAttention: true,
     fields: [
       f.int('embed_dim', 512, { min: 1 }),
       f.int('num_heads', 8, { min: 1 }),

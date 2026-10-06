@@ -1,0 +1,92 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "x",
+      "layerType": "Input",
+      "params": {
+        "name": "x",
+        "shape": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "p",
+      "layerType": "Permute",
+      "params": {
+        "dims": [
+          0,
+          2,
+          1,
+          3
+        ]
+      }
+    },
+    {
+      "id": "t",
+      "layerType": "Transpose",
+      "params": {
+        "dim0": 1,
+        "dim1": 2
+      }
+    },
+    {
+      "id": "v",
+      "layerType": "View",
+      "params": {
+        "shape": [
+          -1
+        ]
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "logits"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "x",
+      "target": "p"
+    },
+    {
+      "source": "p",
+      "target": "t"
+    },
+    {
+      "source": "t",
+      "target": "v"
+    },
+    {
+      "source": "v",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    24
+  ]
+}

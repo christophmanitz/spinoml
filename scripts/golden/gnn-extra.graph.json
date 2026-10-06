@@ -1,0 +1,149 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "x",
+      "layerType": "Input",
+      "params": {
+        "name": "x",
+        "shape": [
+          8,
+          6
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "ei",
+      "layerType": "Input",
+      "params": {
+        "name": "edge_index",
+        "shape": [
+          2,
+          12
+        ],
+        "dtype": "int64",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "batch",
+      "layerType": "Input",
+      "params": {
+        "name": "batch",
+        "shape": [
+          8
+        ],
+        "dtype": "int64",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "sage",
+      "layerType": "SAGEConv",
+      "params": {
+        "in_channels": 6,
+        "out_channels": 5,
+        "aggr": "mean",
+        "normalize": false,
+        "bias": true
+      }
+    },
+    {
+      "id": "gconv",
+      "layerType": "GraphConv",
+      "params": {
+        "in_channels": 5,
+        "out_channels": 4,
+        "aggr": "add",
+        "bias": true
+      }
+    },
+    {
+      "id": "gtrans",
+      "layerType": "GraphTransformer",
+      "params": {
+        "in_channels": 4,
+        "out_channels": 4,
+        "heads": 2,
+        "concat": true,
+        "beta": false,
+        "dropout": 0,
+        "bias": true
+      }
+    },
+    {
+      "id": "gap",
+      "layerType": "GlobalAddPool",
+      "params": {}
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "logits"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "x",
+      "target": "sage"
+    },
+    {
+      "source": "sage",
+      "target": "gconv"
+    },
+    {
+      "source": "gconv",
+      "target": "gtrans"
+    },
+    {
+      "source": "gtrans",
+      "target": "gap"
+    },
+    {
+      "source": "gap",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        8,
+        6
+      ],
+      "dtype": "float32"
+    },
+    {
+      "name": "edge_index",
+      "shape": [
+        2,
+        12
+      ],
+      "dtype": "int64"
+    },
+    {
+      "name": "batch",
+      "shape": [
+        8
+      ],
+      "dtype": "int64"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    8
+  ],
+  "requires": [
+    "torch_geometric"
+  ]
+}

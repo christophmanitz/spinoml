@@ -1,0 +1,63 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "x",
+      "layerType": "Input",
+      "params": {
+        "name": "x",
+        "shape": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "flat",
+      "layerType": "Flatten",
+      "params": {
+        "start_dim": 1,
+        "end_dim": -1
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "logits"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "x",
+      "target": "flat"
+    },
+    {
+      "source": "flat",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    24
+  ]
+}

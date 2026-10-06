@@ -1,0 +1,64 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "x",
+      "layerType": "Input",
+      "params": {
+        "name": "x",
+        "shape": [
+          1,
+          10,
+          32
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "mha",
+      "layerType": "MultiheadAttention",
+      "params": {
+        "embed_dim": 32,
+        "num_heads": 4,
+        "dropout": 0,
+        "batch_first": true
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "attended"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "x",
+      "target": "mha"
+    },
+    {
+      "source": "mha",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        10,
+        32
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    10,
+    32
+  ]
+}

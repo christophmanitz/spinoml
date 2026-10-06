@@ -1,0 +1,49 @@
+{
+  "kind": "data",
+  "nodes": [
+    {
+      "id": "src",
+      "dataType": "TableSource",
+      "params": {
+        "dataset": "datasets/raw.csv"
+      }
+    },
+    {
+      "id": "cs",
+      "dataType": "CustomScript",
+      "params": {
+        "label": "dedup",
+        "code": "df = df.drop_duplicates()\nprint(\"after dedup\", df.shape)"
+      }
+    },
+    {
+      "id": "ren",
+      "dataType": "RenameColumns",
+      "params": {
+        "mapping": "old:new"
+      }
+    },
+    {
+      "id": "out",
+      "dataType": "WriteDataset",
+      "params": {
+        "out_path": "datasets/processed.csv",
+        "format": "csv"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "src",
+      "target": "cs"
+    },
+    {
+      "source": "cs",
+      "target": "ren"
+    },
+    {
+      "source": "ren",
+      "target": "out"
+    }
+  ]
+}

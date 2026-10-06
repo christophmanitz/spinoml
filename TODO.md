@@ -1378,6 +1378,26 @@ Expected generated Python
 
 Do not make the golden tests depend on timestamps or random identifiers.
 
+> **Implemented 2026-10-06.** `npm run test:codegen-golden` (`scripts/test-codegen-golden.ts`,
+> fixtures in `scripts/golden/`, builders in `scripts/lib/golden-cases.ts`): 40 cases — 30 model
+> graphs (every listed category: linear, MLP, CNN, residual, branch/merge, multi-input,
+> multi-output, concat, flatten, reshape, normalization, pooling, attention, transformer, recurrent,
+> GNN, Custom, Subgraph, DataOp passthrough, ESPF/Sequence/manifest inputs, …), 4 training-graph and
+> 6 data-canvas cases — each a committed `<case>.graph.json` + the byte-exact `<case>.expected.py`
+> produced by the real generator (`--update` rewrites and lists what changed, `--list`). Per case:
+> byte equality with a unified diff on mismatch, determinism (twice in-process + once in a fresh
+> process), `ast.parse`, no volatile content (timestamps, absolute paths, addresses, uuids), and for
+> model cases the generated module is imported and run once with the fixture input, asserting the
+> output shape (PyG cases are SKIPPED, loudly, only when PyG is not importable). A **coverage guard**
+> fails when any registry entry (55 layers, 13 training nodes, 12 data nodes) has no golden case and
+> no explicit exclusion — adding a layer without a golden fails CI. Mutations proven red: one space of
+> generator indentation, a deleted fixture, volatile content in the output.
+> **Real bug found by writing the fixtures:** `MultiheadAttention` was emitted as
+> `self.mha(x)`, but `nn.MultiheadAttention.forward` needs `(query, key, value)` and returns
+> `(out, weights)` — the layer could never run (TypeError). Now `LayerSpec.selfAttention` makes the
+> generator emit `self.mha(x, x, x, need_weights=False)[0]`; the `attention` golden case is the
+> regression test (red without the fix, with the TypeError).
+
 ---
 
 # 8. PHASE 7 – EXECUTE GENERATED CODE

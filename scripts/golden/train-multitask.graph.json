@@ -1,0 +1,119 @@
+{
+  "kind": "training",
+  "nodes": [
+    {
+      "id": "ds",
+      "trainingType": "DatasetSource",
+      "params": {
+        "dataset": "datasets/pairs.csv",
+        "target": "",
+        "features": []
+      }
+    },
+    {
+      "id": "model",
+      "trainingType": "ModelSource",
+      "params": {
+        "model": "models/dual.spinoml"
+      }
+    },
+    {
+      "id": "opt",
+      "trainingType": "Optimizer",
+      "params": {
+        "kind": "AdamW",
+        "lr": 0.0005,
+        "weight_decay": 0.01,
+        "momentum": 0.9
+      }
+    },
+    {
+      "id": "h1",
+      "trainingType": "Head",
+      "params": {
+        "output": "logits",
+        "target": "label",
+        "loss": "CrossEntropyLoss",
+        "weight": 1,
+        "label_smoothing": 0
+      }
+    },
+    {
+      "id": "h2",
+      "trainingType": "Head",
+      "params": {
+        "output": "mu",
+        "target": "value",
+        "loss": "MSELoss",
+        "weight": 0.5,
+        "label_smoothing": 0
+      }
+    },
+    {
+      "id": "gc",
+      "trainingType": "GradientClipping",
+      "params": {
+        "max_norm": 1
+      }
+    },
+    {
+      "id": "amp",
+      "trainingType": "MixedPrecision",
+      "params": {
+        "dtype": "bf16"
+      }
+    },
+    {
+      "id": "met",
+      "trainingType": "Metric",
+      "params": {
+        "kind": "accuracy"
+      }
+    },
+    {
+      "id": "loop",
+      "trainingType": "TrainLoop",
+      "params": {
+        "epochs": 5,
+        "seed": 42,
+        "log_every_n_steps": 10,
+        "val_every_n_epochs": 1,
+        "gradient_accumulation_steps": 1
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "ds",
+      "target": "loop"
+    },
+    {
+      "source": "model",
+      "target": "loop"
+    },
+    {
+      "source": "opt",
+      "target": "loop"
+    },
+    {
+      "source": "h1",
+      "target": "loop"
+    },
+    {
+      "source": "h2",
+      "target": "loop"
+    },
+    {
+      "source": "gc",
+      "target": "loop"
+    },
+    {
+      "source": "amp",
+      "target": "loop"
+    },
+    {
+      "source": "met",
+      "target": "loop"
+    }
+  ]
+}

@@ -1,0 +1,144 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "a",
+      "layerType": "Input",
+      "params": {
+        "name": "a",
+        "shape": [
+          1,
+          4
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "b",
+      "layerType": "Input",
+      "params": {
+        "name": "b",
+        "shape": [
+          1,
+          4
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "mul",
+      "layerType": "Multiply",
+      "params": {}
+    },
+    {
+      "id": "add",
+      "layerType": "Add",
+      "params": {}
+    },
+    {
+      "id": "stk",
+      "layerType": "Stack",
+      "params": {
+        "dim": 0
+      }
+    },
+    {
+      "id": "om",
+      "layerType": "Output",
+      "params": {
+        "name": "aux"
+      }
+    },
+    {
+      "id": "oa",
+      "layerType": "Output",
+      "params": {
+        "name": "mu"
+      }
+    },
+    {
+      "id": "os",
+      "layerType": "Output",
+      "params": {
+        "name": "sigma"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "a",
+      "target": "mul"
+    },
+    {
+      "source": "b",
+      "target": "mul"
+    },
+    {
+      "source": "mul",
+      "target": "om"
+    },
+    {
+      "source": "a",
+      "target": "add"
+    },
+    {
+      "source": "b",
+      "target": "add"
+    },
+    {
+      "source": "add",
+      "target": "oa"
+    },
+    {
+      "source": "a",
+      "target": "stk"
+    },
+    {
+      "source": "b",
+      "target": "stk"
+    },
+    {
+      "source": "stk",
+      "target": "os"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "a",
+      "shape": [
+        1,
+        4
+      ],
+      "dtype": "float32"
+    },
+    {
+      "name": "b",
+      "shape": [
+        1,
+        4
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": {
+    "aux": [
+      1,
+      4
+    ],
+    "mu": [
+      1,
+      4
+    ],
+    "sigma": [
+      2,
+      1,
+      4
+    ]
+  }
+}

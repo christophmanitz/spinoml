@@ -1,0 +1,71 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "mani",
+      "layerType": "Manifest",
+      "params": {
+        "dataset": "datasets/pair.manifest"
+      }
+    },
+    {
+      "id": "x",
+      "layerType": "Input",
+      "params": {
+        "name": "x",
+        "shape": [
+          1,
+          8
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "fc",
+      "layerType": "Linear",
+      "params": {
+        "in_features": 8,
+        "out_features": 4,
+        "bias": true
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "logits"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "mani",
+      "target": "x"
+    },
+    {
+      "source": "x",
+      "target": "fc"
+    },
+    {
+      "source": "fc",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        8
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    4
+  ]
+}

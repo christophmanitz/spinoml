@@ -1,0 +1,27 @@
+{
+  "kind": "data",
+  "nodes": [
+    {
+      "id": "src",
+      "dataType": "TableSource",
+      "params": {
+        "dataset": "datasets/pdbs.csv"
+      }
+    },
+    {
+      "id": "s2g",
+      "dataType": "StructureToGraph",
+      "params": {
+        "path_column": "file_path",
+        "out_name": "datasets/graphs/protein_graphs.pt",
+        "contact_threshold": 8
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "src",
+      "target": "s2g"
+    }
+  ]
+}

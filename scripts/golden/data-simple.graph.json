@@ -1,0 +1,38 @@
+{
+  "kind": "data",
+  "nodes": [
+    {
+      "id": "src",
+      "dataType": "TableSource",
+      "params": {
+        "dataset": "datasets/raw.csv"
+      }
+    },
+    {
+      "id": "norm",
+      "dataType": "Normalize",
+      "params": {
+        "columns": "",
+        "method": "zscore"
+      }
+    },
+    {
+      "id": "out",
+      "dataType": "WriteDataset",
+      "params": {
+        "out_path": "datasets/processed.csv",
+        "format": "csv"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "src",
+      "target": "norm"
+    },
+    {
+      "source": "norm",
+      "target": "out"
+    }
+  ]
+}

@@ -1,0 +1,122 @@
+{
+  "kind": "training",
+  "nodes": [
+    {
+      "id": "ds",
+      "trainingType": "DatasetSource",
+      "params": {
+        "dataset": "datasets/features.csv",
+        "target": "label",
+        "features": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    {
+      "id": "split",
+      "trainingType": "Split",
+      "params": {
+        "strategy": "random",
+        "val_ratio": 0.2,
+        "seed": 7
+      }
+    },
+    {
+      "id": "dl",
+      "trainingType": "DataLoader",
+      "params": {
+        "batch_size": 16,
+        "shuffle": true,
+        "num_workers": 0,
+        "drop_last": false
+      }
+    },
+    {
+      "id": "model",
+      "trainingType": "ModelSource",
+      "params": {
+        "model": "models/mlp.spinoml"
+      }
+    },
+    {
+      "id": "loss",
+      "trainingType": "Loss",
+      "params": {
+        "kind": "CrossEntropyLoss",
+        "label_smoothing": 0
+      }
+    },
+    {
+      "id": "opt",
+      "trainingType": "Optimizer",
+      "params": {
+        "kind": "Adam",
+        "lr": 0.001,
+        "weight_decay": 0,
+        "momentum": 0.9
+      }
+    },
+    {
+      "id": "met",
+      "trainingType": "Metric",
+      "params": {
+        "kind": "accuracy"
+      }
+    },
+    {
+      "id": "es",
+      "trainingType": "EarlyStopping",
+      "params": {
+        "monitor": "val_loss",
+        "patience": 5,
+        "mode": "min"
+      }
+    },
+    {
+      "id": "loop",
+      "trainingType": "TrainLoop",
+      "params": {
+        "epochs": 10,
+        "seed": 42,
+        "log_every_n_steps": 5,
+        "val_every_n_epochs": 1,
+        "gradient_accumulation_steps": 1
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "ds",
+      "target": "loop"
+    },
+    {
+      "source": "split",
+      "target": "loop"
+    },
+    {
+      "source": "dl",
+      "target": "loop"
+    },
+    {
+      "source": "model",
+      "target": "loop"
+    },
+    {
+      "source": "loss",
+      "target": "loop"
+    },
+    {
+      "source": "opt",
+      "target": "loop"
+    },
+    {
+      "source": "met",
+      "target": "loop"
+    },
+    {
+      "source": "es",
+      "target": "loop"
+    }
+  ]
+}

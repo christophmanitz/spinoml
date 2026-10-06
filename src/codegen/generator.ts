@@ -428,6 +428,11 @@ function buildClass(
       if (spec.needsEdgeIndex) {
         if (!aux.edgeIndex) issues.push(`Node ${id} (${n.layerType}) needs an Input named 'edge_index' (dtype int64, shape [2, E]).`)
         forwardLines.push(`        ${varName.get(id)} = self.${attrName.get(id)}(${preds[0]}, ${aux.edgeIndex ?? 'edge_index'})`)
+      } else if (spec.selfAttention) {
+        // nn.MultiheadAttention.forward(query, key, value) -> (out, weights): a
+        // single-argument call raises TypeError. Self-attention over the one
+        // incoming stream; the attention weights are not needed downstream.
+        forwardLines.push(`        ${varName.get(id)} = self.${attrName.get(id)}(${preds[0]}, ${preds[0]}, ${preds[0]}, need_weights=False)[0]`)
       } else if (spec.tupleOutput) {
         forwardLines.push(`        ${varName.get(id)}, _ = self.${attrName.get(id)}(${preds[0]})`)
       } else {

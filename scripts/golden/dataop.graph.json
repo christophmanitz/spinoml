@@ -1,0 +1,75 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "x",
+      "layerType": "Input",
+      "params": {
+        "name": "x",
+        "shape": [
+          1,
+          8
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "dop",
+      "layerType": "DataOp",
+      "params": {
+        "input_dataset": "datasets/raw.csv",
+        "output_name": "processed/out",
+        "mode": "shell",
+        "cache": true,
+        "script": "import sys, os, argparse\n\ndef main():\n    ap = argparse.ArgumentParser()\n    ap.add_argument(\"--input\", default=\"\")\n    ap.add_argument(\"--output\", default=\"processed/out\")\n    args = ap.parse_args()\n    out_dir = os.path.join(\"datasets\", args.output)\n    os.makedirs(out_dir, exist_ok=True)\n    with open(os.path.join(out_dir, \".marker\"), \"w\") as f:\n        f.write(\"\")\n    print(f\"wrote marker {out_dir}\")\n\nif __name__ == \"__main__\":\n    main()"
+      }
+    },
+    {
+      "id": "lin",
+      "layerType": "Linear",
+      "params": {
+        "in_features": 8,
+        "out_features": 4,
+        "bias": true
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "logits"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "x",
+      "target": "dop"
+    },
+    {
+      "source": "dop",
+      "target": "lin"
+    },
+    {
+      "source": "lin",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        8
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    4
+  ]
+}

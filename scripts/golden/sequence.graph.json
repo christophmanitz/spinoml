@@ -1,0 +1,82 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "seq",
+      "layerType": "Sequence",
+      "params": {
+        "name": "seq",
+        "shape": [
+          1,
+          8
+        ],
+        "dtype": "int64",
+        "branch": ""
+      }
+    },
+    {
+      "id": "emb",
+      "layerType": "Embedding",
+      "params": {
+        "num_embeddings": 50,
+        "embedding_dim": 16
+      }
+    },
+    {
+      "id": "flat",
+      "layerType": "Flatten",
+      "params": {
+        "start_dim": 1,
+        "end_dim": -1
+      }
+    },
+    {
+      "id": "fc",
+      "layerType": "Linear",
+      "params": {
+        "in_features": 128,
+        "out_features": 4,
+        "bias": true
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "logits"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "seq",
+      "target": "emb"
+    },
+    {
+      "source": "emb",
+      "target": "flat"
+    },
+    {
+      "source": "flat",
+      "target": "fc"
+    },
+    {
+      "source": "fc",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "seq",
+      "shape": [
+        1,
+        8
+      ],
+      "dtype": "int64"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    4
+  ]
+}

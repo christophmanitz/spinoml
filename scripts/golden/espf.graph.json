@@ -1,0 +1,83 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "espf",
+      "layerType": "ESPF",
+      "params": {
+        "name": "espf",
+        "shape": [
+          1,
+          8
+        ],
+        "dtype": "int64",
+        "codebook": "drug",
+        "branch": ""
+      }
+    },
+    {
+      "id": "emb",
+      "layerType": "Embedding",
+      "params": {
+        "num_embeddings": 100,
+        "embedding_dim": 16
+      }
+    },
+    {
+      "id": "flat",
+      "layerType": "Flatten",
+      "params": {
+        "start_dim": 1,
+        "end_dim": -1
+      }
+    },
+    {
+      "id": "fc",
+      "layerType": "Linear",
+      "params": {
+        "in_features": 128,
+        "out_features": 4,
+        "bias": true
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "logits"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "espf",
+      "target": "emb"
+    },
+    {
+      "source": "emb",
+      "target": "flat"
+    },
+    {
+      "source": "flat",
+      "target": "fc"
+    },
+    {
+      "source": "fc",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "espf",
+      "shape": [
+        1,
+        8
+      ],
+      "dtype": "int64"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    4
+  ]
+}

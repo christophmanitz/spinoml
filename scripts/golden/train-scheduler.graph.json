@@ -1,0 +1,82 @@
+{
+  "kind": "training",
+  "nodes": [
+    {
+      "id": "ds",
+      "trainingType": "DatasetSource",
+      "params": {
+        "dataset": "datasets/tab.csv",
+        "target": "y",
+        "features": []
+      }
+    },
+    {
+      "id": "model",
+      "trainingType": "ModelSource",
+      "params": {
+        "model": "models/mlp.spinoml"
+      }
+    },
+    {
+      "id": "loss",
+      "trainingType": "Loss",
+      "params": {
+        "kind": "MSELoss",
+        "label_smoothing": 0
+      }
+    },
+    {
+      "id": "opt",
+      "trainingType": "Optimizer",
+      "params": {
+        "kind": "SGD",
+        "lr": 0.01,
+        "weight_decay": 0,
+        "momentum": 0.9
+      }
+    },
+    {
+      "id": "sch",
+      "trainingType": "Scheduler",
+      "params": {
+        "kind": "StepLR",
+        "step_size": 20,
+        "gamma": 0.5,
+        "patience": 10
+      }
+    },
+    {
+      "id": "loop",
+      "trainingType": "TrainLoop",
+      "params": {
+        "epochs": 30,
+        "seed": 42,
+        "log_every_n_steps": 10,
+        "val_every_n_epochs": 1,
+        "gradient_accumulation_steps": 1
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "ds",
+      "target": "loop"
+    },
+    {
+      "source": "model",
+      "target": "loop"
+    },
+    {
+      "source": "loss",
+      "target": "loop"
+    },
+    {
+      "source": "opt",
+      "target": "loop"
+    },
+    {
+      "source": "sch",
+      "target": "loop"
+    }
+  ]
+}

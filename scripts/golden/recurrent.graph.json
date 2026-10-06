@@ -1,0 +1,98 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "x",
+      "layerType": "Input",
+      "params": {
+        "name": "x",
+        "shape": [
+          1,
+          8,
+          16
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "lstm",
+      "layerType": "LSTM",
+      "params": {
+        "input_size": 16,
+        "hidden_size": 16,
+        "num_layers": 1,
+        "batch_first": true,
+        "bidirectional": false,
+        "dropout": 0
+      }
+    },
+    {
+      "id": "gru",
+      "layerType": "GRU",
+      "params": {
+        "input_size": 16,
+        "hidden_size": 16,
+        "num_layers": 1,
+        "batch_first": true,
+        "bidirectional": false,
+        "dropout": 0
+      }
+    },
+    {
+      "id": "rnn",
+      "layerType": "RNN",
+      "params": {
+        "input_size": 16,
+        "hidden_size": 16,
+        "num_layers": 1,
+        "nonlinearity": "tanh",
+        "batch_first": true,
+        "bidirectional": false
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "out"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "x",
+      "target": "lstm"
+    },
+    {
+      "source": "lstm",
+      "target": "gru"
+    },
+    {
+      "source": "gru",
+      "target": "rnn"
+    },
+    {
+      "source": "rnn",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        8,
+        16
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    8,
+    16
+  ]
+}

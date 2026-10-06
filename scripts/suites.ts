@@ -218,6 +218,14 @@ export const SUITES: readonly Suite[] = [
     why: 'sidecarFetch/probe vs a fake sidecar speaking the auth protocol (retry-once, 401/403, health states, streaming)',
   },
   {
+    name: 'test:codegen-golden',
+    npmScript: 'test:codegen-golden',
+    category: 'integration',
+    timeoutSec: 240,
+    needs: ['torch-env'],
+    why: 'Byte-exact generated Python for 40 reference graphs (model/training/data) + determinism + runs each model once + registry coverage guard',
+  },
+  {
     name: 'verify:silent-except-py',
     npmScript: 'verify:silent-except-py',
     category: 'unit',

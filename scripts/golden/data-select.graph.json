@@ -1,0 +1,71 @@
+{
+  "kind": "data",
+  "nodes": [
+    {
+      "id": "src",
+      "dataType": "TableSource",
+      "params": {
+        "dataset": "datasets/raw.csv"
+      }
+    },
+    {
+      "id": "sel",
+      "dataType": "SelectColumns",
+      "params": {
+        "columns": "id, label, seq"
+      }
+    },
+    {
+      "id": "flt",
+      "dataType": "FilterRows",
+      "params": {
+        "query": "label == 1"
+      }
+    },
+    {
+      "id": "drop",
+      "dataType": "DropNA",
+      "params": {
+        "subset": "seq"
+      }
+    },
+    {
+      "id": "comp",
+      "dataType": "ComputeColumn",
+      "params": {
+        "name": "len",
+        "expr": "a + b"
+      }
+    },
+    {
+      "id": "out",
+      "dataType": "WriteDataset",
+      "params": {
+        "out_path": "datasets/processed.csv",
+        "format": "csv"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "src",
+      "target": "sel"
+    },
+    {
+      "source": "sel",
+      "target": "flt"
+    },
+    {
+      "source": "flt",
+      "target": "drop"
+    },
+    {
+      "source": "drop",
+      "target": "comp"
+    },
+    {
+      "source": "comp",
+      "target": "out"
+    }
+  ]
+}

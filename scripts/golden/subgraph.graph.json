@@ -1,0 +1,114 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "x",
+      "layerType": "Input",
+      "params": {
+        "name": "x",
+        "shape": [
+          1,
+          64
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "block",
+      "layerType": "Subgraph",
+      "params": {
+        "class_name": "MlpBlock",
+        "subgraph": {
+          "nodes": [
+            {
+              "id": "in",
+              "layerType": "Input",
+              "params": {
+                "name": "x",
+                "shape": [
+                  1,
+                  64
+                ],
+                "dtype": "float32",
+                "dataset": "",
+                "features": [],
+                "target": ""
+              }
+            },
+            {
+              "id": "fc1",
+              "layerType": "Linear",
+              "params": {
+                "in_features": 64,
+                "out_features": 32,
+                "bias": true
+              }
+            },
+            {
+              "id": "act",
+              "layerType": "ReLU",
+              "params": {
+                "inplace": false
+              }
+            },
+            {
+              "id": "out",
+              "layerType": "Output",
+              "params": {
+                "name": "out"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "source": "in",
+              "target": "fc1"
+            },
+            {
+              "source": "fc1",
+              "target": "act"
+            },
+            {
+              "source": "act",
+              "target": "out"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "logits"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "x",
+      "target": "block"
+    },
+    {
+      "source": "block",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        64
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    32
+  ]
+}

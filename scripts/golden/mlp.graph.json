@@ -1,0 +1,95 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "x",
+      "layerType": "Input",
+      "params": {
+        "name": "x",
+        "shape": [
+          1,
+          10
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "fc1",
+      "layerType": "Linear",
+      "params": {
+        "in_features": 10,
+        "out_features": 16,
+        "bias": true
+      }
+    },
+    {
+      "id": "act1",
+      "layerType": "ReLU",
+      "params": {
+        "inplace": false
+      }
+    },
+    {
+      "id": "drp",
+      "layerType": "Dropout",
+      "params": {
+        "p": 0.25
+      }
+    },
+    {
+      "id": "fc2",
+      "layerType": "Linear",
+      "params": {
+        "in_features": 16,
+        "out_features": 2,
+        "bias": true
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "out"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "x",
+      "target": "fc1"
+    },
+    {
+      "source": "fc1",
+      "target": "act1"
+    },
+    {
+      "source": "act1",
+      "target": "drp"
+    },
+    {
+      "source": "drp",
+      "target": "fc2"
+    },
+    {
+      "source": "fc2",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        10
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    2
+  ]
+}

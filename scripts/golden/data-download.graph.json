@@ -1,0 +1,41 @@
+{
+  "kind": "data",
+  "nodes": [
+    {
+      "id": "src",
+      "dataType": "TableSource",
+      "params": {
+        "dataset": "datasets/raw.csv"
+      }
+    },
+    {
+      "id": "dl",
+      "dataType": "DownloadColumn",
+      "params": {
+        "id_column": "uniprot",
+        "url_template": "https://files.rcsb.org/download/{id}.pdb",
+        "out_dir": "datasets/raw",
+        "filename_template": "{id}.pdb",
+        "add_path_column": true
+      }
+    },
+    {
+      "id": "out",
+      "dataType": "WriteDataset",
+      "params": {
+        "out_path": "datasets/processed.csv",
+        "format": "csv"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "src",
+      "target": "dl"
+    },
+    {
+      "source": "dl",
+      "target": "out"
+    }
+  ]
+}

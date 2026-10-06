@@ -1,0 +1,105 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "x",
+      "layerType": "Input",
+      "params": {
+        "name": "x",
+        "shape": [
+          1,
+          10
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "l1",
+      "layerType": "Linear",
+      "params": {
+        "in_features": 10,
+        "out_features": 4,
+        "bias": true
+      }
+    },
+    {
+      "id": "l2",
+      "layerType": "Linear",
+      "params": {
+        "in_features": 10,
+        "out_features": 5,
+        "bias": true
+      }
+    },
+    {
+      "id": "l3",
+      "layerType": "Linear",
+      "params": {
+        "in_features": 10,
+        "out_features": 6,
+        "bias": true
+      }
+    },
+    {
+      "id": "cat",
+      "layerType": "Concat",
+      "params": {
+        "dim": 1
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "logits"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "x",
+      "target": "l1"
+    },
+    {
+      "source": "x",
+      "target": "l2"
+    },
+    {
+      "source": "x",
+      "target": "l3"
+    },
+    {
+      "source": "l1",
+      "target": "cat"
+    },
+    {
+      "source": "l2",
+      "target": "cat"
+    },
+    {
+      "source": "l3",
+      "target": "cat"
+    },
+    {
+      "source": "cat",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        10
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    15
+  ]
+}

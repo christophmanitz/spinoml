@@ -1,0 +1,89 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "data",
+      "layerType": "Graph",
+      "params": {
+        "name": "data",
+        "shape": [
+          32,
+          9
+        ],
+        "n_edges": 64,
+        "edge_dim": 0,
+        "dataset": "",
+        "branch": ""
+      }
+    },
+    {
+      "id": "gcn",
+      "layerType": "GCNConv",
+      "params": {
+        "in_channels": -1,
+        "out_channels": 16,
+        "improved": false,
+        "cached": false,
+        "add_self_loops": true,
+        "bias": true
+      }
+    },
+    {
+      "id": "relu",
+      "layerType": "ReLU",
+      "params": {
+        "inplace": false
+      }
+    },
+    {
+      "id": "gmp",
+      "layerType": "GlobalMeanPool",
+      "params": {}
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "logits"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "data",
+      "target": "gcn"
+    },
+    {
+      "source": "gcn",
+      "target": "relu"
+    },
+    {
+      "source": "relu",
+      "target": "gmp"
+    },
+    {
+      "source": "gmp",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "data",
+      "shape": [
+        32,
+        9
+      ],
+      "dtype": "graph",
+      "isGraph": true,
+      "nEdges": 64,
+      "edgeDim": 0
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    16
+  ],
+  "requires": [
+    "torch_geometric"
+  ]
+}

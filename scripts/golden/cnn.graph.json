@@ -1,0 +1,158 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "x",
+      "layerType": "Input",
+      "params": {
+        "name": "x",
+        "shape": [
+          1,
+          3,
+          16,
+          16
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "conv",
+      "layerType": "Conv2d",
+      "params": {
+        "in_channels": 3,
+        "out_channels": 8,
+        "kernel_size": [
+          3,
+          3
+        ],
+        "stride": [
+          1,
+          1
+        ],
+        "padding": [
+          1,
+          1
+        ],
+        "bias": true
+      }
+    },
+    {
+      "id": "bn",
+      "layerType": "BatchNorm2d",
+      "params": {
+        "num_features": 8,
+        "eps": 0.00001,
+        "momentum": 0.1
+      }
+    },
+    {
+      "id": "relu",
+      "layerType": "ReLU",
+      "params": {
+        "inplace": false
+      }
+    },
+    {
+      "id": "drp2d",
+      "layerType": "Dropout2d",
+      "params": {
+        "p": 0.1
+      }
+    },
+    {
+      "id": "pool",
+      "layerType": "MaxPool2d",
+      "params": {
+        "kernel_size": [
+          2,
+          2
+        ],
+        "stride": [
+          2,
+          2
+        ],
+        "padding": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "flat",
+      "layerType": "Flatten",
+      "params": {
+        "start_dim": 1,
+        "end_dim": -1
+      }
+    },
+    {
+      "id": "fc",
+      "layerType": "Linear",
+      "params": {
+        "in_features": 512,
+        "out_features": 10,
+        "bias": true
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "logits"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "x",
+      "target": "conv"
+    },
+    {
+      "source": "conv",
+      "target": "bn"
+    },
+    {
+      "source": "bn",
+      "target": "relu"
+    },
+    {
+      "source": "relu",
+      "target": "drp2d"
+    },
+    {
+      "source": "drp2d",
+      "target": "pool"
+    },
+    {
+      "source": "pool",
+      "target": "flat"
+    },
+    {
+      "source": "flat",
+      "target": "fc"
+    },
+    {
+      "source": "fc",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        3,
+        16,
+        16
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    10
+  ]
+}

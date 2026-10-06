@@ -1,0 +1,86 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "x",
+      "layerType": "Input",
+      "params": {
+        "name": "x",
+        "shape": [
+          1,
+          16
+        ],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "bn",
+      "layerType": "BatchNorm1d",
+      "params": {
+        "num_features": 16,
+        "eps": 0.00001,
+        "momentum": 0.1
+      }
+    },
+    {
+      "id": "ln",
+      "layerType": "LayerNorm",
+      "params": {
+        "normalized_shape": [
+          16
+        ],
+        "eps": 0.00001
+      }
+    },
+    {
+      "id": "gn",
+      "layerType": "GroupNorm",
+      "params": {
+        "num_groups": 4,
+        "num_channels": 16
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "out"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "x",
+      "target": "bn"
+    },
+    {
+      "source": "bn",
+      "target": "ln"
+    },
+    {
+      "source": "ln",
+      "target": "gn"
+    },
+    {
+      "source": "gn",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        16
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": [
+    1,
+    16
+  ]
+}

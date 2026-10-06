@@ -50,6 +50,7 @@
     "test:graphstore": "tsx scripts/test-graphstore.ts",
     "test:persistence": "tsx scripts/test-persistence.ts",
     "test:determinism": "tsx scripts/test-determinism.ts",
+    "test:codegen-golden": "tsx scripts/test-codegen-golden.ts",
     "test:verifier": "tsx scripts/test-verifier.ts",
     "test:races": "tsx scripts/test-races.ts",
     "test:robustness": "tsx scripts/test-sidecar-robustness.ts",

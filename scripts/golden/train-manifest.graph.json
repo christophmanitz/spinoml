@@ -1,0 +1,106 @@
+{
+  "kind": "training",
+  "nodes": [
+    {
+      "id": "ds",
+      "trainingType": "DatasetSource",
+      "params": {
+        "dataset": "datasets/pair.manifest",
+        "target": "",
+        "features": []
+      }
+    },
+    {
+      "id": "split",
+      "trainingType": "Split",
+      "params": {
+        "strategy": "predefined",
+        "val_ratio": 0.2,
+        "seed": 1
+      }
+    },
+    {
+      "id": "model",
+      "trainingType": "ModelSource",
+      "params": {
+        "model": "models/dual.spinoml"
+      }
+    },
+    {
+      "id": "loss",
+      "trainingType": "Loss",
+      "params": {
+        "kind": "BCEWithLogitsLoss",
+        "label_smoothing": 0
+      }
+    },
+    {
+      "id": "opt",
+      "trainingType": "Optimizer",
+      "params": {
+        "kind": "RMSprop",
+        "lr": 0.001,
+        "weight_decay": 0,
+        "momentum": 0.9
+      }
+    },
+    {
+      "id": "sch",
+      "trainingType": "Scheduler",
+      "params": {
+        "kind": "ReduceLROnPlateau",
+        "step_size": 30,
+        "gamma": 0.1,
+        "patience": 3
+      }
+    },
+    {
+      "id": "met",
+      "trainingType": "Metric",
+      "params": {
+        "kind": "f1"
+      }
+    },
+    {
+      "id": "loop",
+      "trainingType": "TrainLoop",
+      "params": {
+        "epochs": 20,
+        "seed": 42,
+        "log_every_n_steps": 10,
+        "val_every_n_epochs": 1,
+        "gradient_accumulation_steps": 1
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "ds",
+      "target": "loop"
+    },
+    {
+      "source": "split",
+      "target": "loop"
+    },
+    {
+      "source": "model",
+      "target": "loop"
+    },
+    {
+      "source": "loss",
+      "target": "loop"
+    },
+    {
+      "source": "opt",
+      "target": "loop"
+    },
+    {
+      "source": "sch",
+      "target": "loop"
+    },
+    {
+      "source": "met",
+      "target": "loop"
+    }
+  ]
+}
