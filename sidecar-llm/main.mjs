@@ -43,7 +43,19 @@ import OpenAI from 'openai'
 import { splitArgs, quoteArgv, checkDownloadUrl, checkSshTarget, safeFetch } from './shell-safety.mjs'
 import { resolveInWorkspace, loadSymlinkTargets } from './path-scope.mjs'
 
-const PORT = 7422
+// Default 7422 (the app and the frontend assume it). SPINOML_LLM_PORT lets the
+// tests run a throw-away sidecar next to a running app; anything that is not a
+// valid port is refused loudly instead of silently falling back.
+const PORT = (() => {
+  const raw = process.env.SPINOML_LLM_PORT
+  if (raw === undefined || raw === '') return 7422
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 1024 || n > 65535) {
+    console.error(`[spinoml-llm] invalid SPINOML_LLM_PORT=${JSON.stringify(raw)} (expected an integer 1024-65535)`)
+    process.exit(2)
+  }
+  return n
+})()
 
 // ────────────────────────────────────────────────────────────────────────────
 // Graph state held only for the duration of one /chat turn.
