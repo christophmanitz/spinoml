@@ -19,7 +19,7 @@ Persistence            | `npm run test:persistence` ✓ (P001/P011: round-trip, 
 Torch sidecar          | `verify-sidecar` 6/6+activations ✓ + `test:robustness` ✓ (11-case matrix: startup, structured errors with `error_code` on every path, slow-client stall cap, abort resistance, kill→restart recovery) | auth/path-scope tests        | §77/78 security
 LLM sidecar            | `verify-opencode` ✓ (+manual ask/confirm) + `verify:command-injection` ✓ (args split/quote round-tripped through a real `sh`, SSRF blocklist + DNS-resolving `safeFetch` with fake lookup/fetch, ssh target policy, runScript `./` prefix)      | `/respond`/auto-approve auth | §14/15, §77 + `verify:silent-catch`/`verify:silent-fixes` ✓ (Node half of phase 50)
 MCP                    | `verify-opencode` (via opencode bridge) ✓      | spec-parity across providers | §16 MCP validation
-Tauri/Rust             | `cargo check` ✓ + `cargo test` (ssh failures + slurm 13 tests) ✓ + `alias_validation_tests` (Phase 44, **written but UNCOMPILED here — no toolchain, see LIMITATIONS §1**) | command integration tests    | §1.6 (env), §48 Rust errors
+Tauri/Rust             | `cargo check` ✓ + `cargo test` (ssh failures + slurm 13 tests) ✓ + `alias_validation_tests` (Phase 44; 22 Rust tests pass, run via `conda run -n mlforge-dev cargo test`) | command integration tests    | §1.6 (env), §48 Rust errors
 Filesystem (local)     | `verify:paths` ✓ (48, Node resolver) + `test:scope` ✓ (88, Python scope: path matrix, modes/config, dataset_handlers incl. hostile manifests, real-HTTP) | Rust `resolve()` symlinks (lexical only, no toolchain) | §45/46
 Filesystem (remote)    | `verify:ssh` ✓                                | ssh mirror parity tests      | §34/35
 SSH                    | `verify:ssh` ✓ + `verify:credentials` ✓       | live cluster integration     | §34/35 (+ R003 alias)
@@ -90,7 +90,7 @@ Planned mutation/unit tests referenced by RISK_REGISTER.md:
 
 1. Any code change: `npm run build` (lint too once §3 is fixed).
 2. Generator/sidecar-sensitive change: full `verify:*` suite.
-3. Rust change: `cargo check` (requires toolchain — see R023).
+3. Rust change: `conda run --no-capture-output -n mlforge-dev bash -c 'cd src-tauri && cargo check && cargo test'` (the toolchain is in the conda env; R023 was a false alarm).
 4. Workspace/persistence change: manual smoke per CLAUDE.md.
 5. Remote/SSH/SLURM change: `ssh zw93onug@login01.sc.uni-leipzig.de echo ok`
    first, then a real sbatch smoke on `paula` (never run training on the login node).

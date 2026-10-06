@@ -28,7 +28,7 @@ baselines the **post-Phase-0** tree, which is the state hardening continues from
 | Python | 3.12.13 (conda env `mlforge-dev`) |
 | Node | v22.23.2 (nvm) |
 | npm | 10.9.8 |
-| Rust | **not installed** (`rustc`/`cargo` absent from PATH and `~/.cargo`) |
+| Rust | **in the conda env `mlforge-dev`** (`cargo 1.96.0`) — CORRECTION 2026-10-06: the original row said "not installed" because only the base-shell PATH was checked |
 | Git | 2.43.0 |
 | PyTorch | 2.12.0+cpu (`torch.cuda.is_available()` → False) |
 
@@ -52,7 +52,7 @@ Run: 2026-09-14, conda env `mlforge-dev` active for all Python-executing harness
 | Checkpoints | `npm run verify:checkpoint` | **PASS** — 45 checks (full state incl. rng + config, resume, cancel-saves, atomic-write crash sim, corrupted-ckpt rejection) |
 | Metrics | `npm run verify:metrics` | **PASS** — 11 checks (weighted aggregation vs Python reference, uneven batches) |
 | OpenCode provider | `npm run verify:opencode` | **PASS** — models list, /chat stream, bogus-model clean error |
-| Rust | `cargo check` in src-tauri | **SKIPPED** — Rust toolchain not installed on this machine |
+| Rust | `cargo check` in src-tauri | **PASS** (re-run 2026-10-06 via `conda run -n mlforge-dev`; the original SKIPPED was a wrong environment check) |
 | Python tests | `python -m pytest` | **SKIPPED** — no Python test suite in repo, pytest not installed |
 | JS/TS tests | `npm test` | **SKIPPED** — no `test` script in package.json |
 

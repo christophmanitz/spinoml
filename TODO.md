@@ -2575,7 +2575,7 @@ filesystem commands
 
 Use argument arrays / safe APIs where possible.
 
-> **2026-10-06 — implemented (Rust part UNCOMPILED).** Search result: no `shell=True`/`os.system`
+> **2026-10-06 — implemented (Rust part compiled and tested: `cargo check` + 22 `cargo test`s pass in the `mlforge-dev` conda env).** Search result: no `shell=True`/`os.system`
 > anywhere; `exec(compile(...))` of model code in the torch sidecar is by design (now gated, see
 > Phase 43). Real defects found and fixed: (1) LLM `run_script` `args` were concatenated unquoted
 > into the shell command → `splitArgs`/`quoteArgv` (`sidecar-llm/shell-safety.mjs`), proven by
@@ -2596,8 +2596,9 @@ Use argument arrays / safe APIs where possible.
 > `validate_alias` (now rejects a leading `-`, shared by `ssh.rs`/`pty.rs`/`remote_sidecar.rs`),
 > `--` before every target, `shell_quote` on `SPINOML_PYTHON` in the `sh -c` launcher.
 > Verified by `verify:command-injection` (162), `test:deps-policy` (34), `test:run-script` (125,
-> mocked `subprocess.run`), `verify:sidecar` (new rejects). **The Rust edits cannot be compiled on
-> this machine (no toolchain) — R042/LIMITATIONS §1.** Still open: path scoping (Phase 45/46),
+> mocked `subprocess.run`), `verify:sidecar` (new rejects). **The Rust edits compile and their
+> tests pass** (`conda run -n mlforge-dev cargo check && cargo test`: 22 passed, incl. the new `alias_validation_tests`;
+> an earlier version of this note wrongly said no toolchain existed — it only checked the base shell PATH). Still open: path scoping (Phase 45/46),
 > pickle (47), sidecar auth/CORS (77/78); the torch `/run_script` endpoint still takes `root` from
 > the payload.
 
@@ -2658,12 +2659,12 @@ where the application expects paths to remain inside a workspace/dataset directo
 > `SCOPE_UNCONFIGURED` with a one-line fix; data-level `ok:false` + `error_code` inside handlers;
 > `/health.scope` shows mode + counts, never paths. Node sidecar: `resolveInWorkspace` on all
 > local `read_file`/`list_dir`/`write_file`/notes/dataset/download paths. Remote HPC sidecar:
-> `remote_sidecar.rs` now exports `SPINOML_ALLOWED_ROOTS="$ROOT…"` (**Rust edit UNCOMPILED**).
+> `remote_sidecar.rs` now exports `SPINOML_ALLOWED_ROOTS="$ROOT…"` (Rust edit; `cargo check` passes).
 > Verified with a real sidecar over HTTP (16 hostile scenarios incl. symlinked files/dirs,
 > hostile manifests, `/proc/self/environ`, `run_script` root `/`: no marker leaked, nothing
 > written outside). **Honest status:** with no root configured the sidecar runs in the visible
 > mode `unconfigured-open` (warning + `/health`), because Rust has no channel to the sidecar
-> and cannot be compiled here — the local app is NOT scoped until Rust writes `scope.json`
+> and Rust had no writer for it yet — the local app is NOT scoped until Rust writes `scope.json`
 > (or the user sets `SPINOML_ALLOWED_ROOTS`); `SPINOML_REQUIRE_SCOPE=1` makes it fail closed.
 > Scoping does not protect the exec endpoints (`/infer`, smoke, activations run model `code`)
 > — that is the sidecar token (Phase 77/78). Rust `resolve()` is still lexical (R016, LIMITATIONS).
@@ -2806,7 +2807,7 @@ Fix hidden failures.
 > fails any new swallow without a ≥15-char prose reason or without an allow-list row;
 > `npm run verify:silent-fixes` (33) asserts each fixed site. Lint unchanged at the 82-problem
 > baseline. **Still open:** Python sidecars (`except …: pass`, broad `except Exception: return …`),
-> the Node sidecar (16 empty catches) and 39 Rust `let _ =`/`.ok()`/`unwrap` sites (no toolchain).
+> the Node sidecar (16 empty catches) and 39 Rust `let _ =`/`.ok()`/`unwrap` sites (Phase 48; the toolchain exists in the conda env).
 
 > **2026-10-06 — Node sidecar half implemented.** The guard now also scans `sidecar-llm/*.mjs`
 > (`ts.ScriptKind.JS`; 132 src + 4 node files, 73 allow-listed sites). The AST scan found 27 Node sites:

@@ -7,19 +7,11 @@
 
 ## 1. Verification environment (this machine)
 
-- **No Rust toolchain.** `cargo`/`rustc` are not installed (`which cargo` empty,
-  no `~/.rustup`). `~/.cargo/registry` and `src-tauri/target/release` carry
-  2026-09-22 timestamps, so a toolchain existed when Phases 30–37 were written,
-  but `cargo check` / `cargo test` cannot be re-run today.
-  - **The Rust edits of 2026-10-06 are UNCOMPILED and their tests unexecuted**:
-    `ssh.rs` (`validate_alias` is now `pub(crate)`, rejects a leading `-`, new
-    `alias_validation_tests`; `--` before the target), `remote_sidecar.rs`
-    (`ensure_remote_sidecar` now validates the alias; `--`), `pty.rs` (uses
-    `validate_alias`; `--`), `training.rs` (`shell_quote` on `SPINOML_PYTHON`).
-    They were reviewed by hand only. Run `cd src-tauri && cargo check && cargo test`
-    before releasing. (R023/R042)
-  - Earlier "cargo ✓" statements in `TEST_MATRIX.md` date from the toolchain era
-    and are not reproducible here.
+- **Rust toolchain lives in the conda env, not on the base PATH.** `cargo 1.96.0` / `rustc 1.96.0` are installed in
+  `mlforge-dev`; run Rust checks as `conda run --no-capture-output -n mlforge-dev cargo check` / `cargo test` from
+  `src-tauri/` (a bare shell has no `cargo`, which fooled earlier sessions and `BASELINE.md`). Verified 2026-10-06:
+  `cargo check` clean, `cargo test` 22 passed (incl. the Phase 44 `alias_validation_tests`). Not covered: `npm run
+  tauri dev`/packaging was not exercised in this session.
 - `verify-*`/`test-*` scripts that need Python must run inside the conda env
   (`conda run -n mlforge-dev …`); the env is still named `mlforge-dev`
   (rename leftover, see memory). Plain `python` is not on PATH in a bare shell.
@@ -50,7 +42,7 @@
   file content, *when a root is configured* — `SPINOML_ALLOWED_ROOTS`,
   `~/.cache/spinoml/scope.json`, or (remote HPC) the launcher's export. The local
   managed sidecar is started before a workspace exists and Rust cannot tell it
-  the root (and cannot be compiled here), so without configuration it runs in the
+  the root (and no Rust writer exists yet), so without configuration it runs in the
   visible mode `unconfigured-open` (stderr warning, `/health.scope.mode`).
   `SPINOML_REQUIRE_SCOPE=1` fails closed. Remote workspaces that symlink data out
   of the project root (e.g. `datasets -> /work2/...`) must export

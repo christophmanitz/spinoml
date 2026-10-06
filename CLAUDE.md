@@ -282,7 +282,7 @@ npm run verify:opencode             # LLM sidecar must be up; asserts /opencode/
 
 After Rust changes:
 ```bash
-( cd src-tauri && cargo check )     # cheap, catches most type errors
+conda run --no-capture-output -n mlforge-dev bash -c 'cd src-tauri && cargo check && cargo test'   # the toolchain is in the conda env, not on the base PATH
 npm run tauri dev                   # full path: link + window + sidecars
 ```
 
@@ -491,8 +491,8 @@ not catch it cleanly. Fix path:
    `assertTrusted`/`listUntrusted` first.
 10. **No shell command is built by concatenating LLM/user values.** Use
     `splitArgs`+`quoteArgv`/`shellQuote`, a `./` prefix for script paths, `validate_alias`
-    plus `--` for ssh targets, `deps_policy.validate_specs` for pip. Rust changes can't be
-    compiled on every machine — say so explicitly instead of claiming `cargo check` passed.
+    plus `--` for ssh targets, `deps_policy.validate_specs` for pip. After any Rust change run
+    `cargo check && cargo test` inside the conda env (a bare shell has no `cargo`) and say what you ran.
 11. **Never open a request- or file-content-derived path without `scope.check_path`** (Python) /
     `resolveInWorkspace` (Node), and never `torch.load` directly — `safe_torch_load` only. New
     dataset kinds must add their open sites to the audit list at the top of `dataset_handlers.py`

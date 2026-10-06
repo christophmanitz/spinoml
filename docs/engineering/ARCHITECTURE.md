@@ -211,8 +211,8 @@ chatbot.
   gate (only commands listed are reachable from JS), deb packaging.
 - Failure modes: a Rust command not in `generate_handler!` is silently unreachable;
   `cargo check` required after changes.
-- Tests: none in-repo (Rust toolchain absent on dev machine → cargo check SKIPPED
-  at baseline).
+- Tests: Rust unit tests exist (`ssh::*`, `training::tests`; 22 pass via `conda run -n mlforge-dev cargo test`).
+  (An earlier version said the toolchain was absent: it lives in the conda env, see LIMITATIONS §1.)
 
 ### 13. Rust commands
 
