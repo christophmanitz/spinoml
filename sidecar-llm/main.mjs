@@ -42,6 +42,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { splitArgs, quoteArgv, checkDownloadUrl, checkSshTarget, safeFetch } from './shell-safety.mjs'
 import { resolveInWorkspace, loadSymlinkTargets } from './path-scope.mjs'
+import { validateNodeParams, wouldCreateCycle, redactSecrets, nodeKind } from './tool-validation.mjs'
 
 // Default 7422 (the app and the frontend assume it). SPINOML_LLM_PORT lets the
 // tests run a throw-away sidecar next to a running app; anything that is not a
@@ -52,6 +53,21 @@ const PORT = (() => {
   const n = Number(raw)
   if (!Number.isInteger(n) || n < 1024 || n > 65535) {
     console.error(`[spinoml-llm] invalid SPINOML_LLM_PORT=${JSON.stringify(raw)} (expected an integer 1024-65535)`)
+    process.exit(2)
+  }
+  return n
+})()
+
+// Idle timeout for an upstream provider request: if no response headers (or no
+// further stream chunk) arrive for this long, abort the request and surface an
+// explicit `provider stalled` error. Validated like SPINOML_LLM_PORT — an
+// invalid value is refused loudly at startup instead of silently defaulting.
+const UPSTREAM_TIMEOUT_MS = (() => {
+  const raw = process.env.SPINOML_LLM_UPSTREAM_TIMEOUT_MS
+  if (raw === undefined || raw === '') return 120000
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n <= 0) {
+    console.error(`[spinoml-llm] invalid SPINOML_LLM_UPSTREAM_TIMEOUT_MS=${JSON.stringify(raw)} (expected a positive integer of milliseconds)`)
     process.exit(2)
   }
   return n
@@ -866,15 +882,16 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
         params: z.record(z.string(), z.unknown()).optional(),
       },
       async ({ layer_type, after, params }) => {
+        // Validate BEFORE any mutation, including `after`. Defaults are NOT
+        // filled here — the frontend fills them; we store only what was given.
+        const v = validateNodeParams('layers', layer_type, params ?? {})
+        if (!v.ok) return content(`error: ${v.error}`, true)
+        if (after && !ctx.nodes.has(after)) return content(`error: source node "${after}" not found`, true)
         const id = ctx.nextId()
-        ctx.nodes.set(id, { id, layerType: layer_type, params: params ?? {} })
-        actions.push({ op: 'add_layer', payload: { id, layer_type, params: params ?? {} } })
+        ctx.nodes.set(id, { id, layerType: layer_type, params: v.params })
+        actions.push({ op: 'add_layer', payload: { id, layer_type, params: v.params } })
         if (after) {
-          if (!ctx.nodes.has(after)) {
-            return content(`error: source node "${after}" not found`, true)
-          }
-          const key = `${after}->${id}`
-          ctx.edges.set(key, { source: after, target: id })
+          ctx.edges.set(`${after}->${id}`, { source: after, target: id })
           actions.push({ op: 'connect', payload: { source: after, target: id } })
         }
         return content(`added ${layer_type} as ${id}${after ? ` after ${after}` : ''}`)
@@ -899,12 +916,13 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
         if (!/class\s+\w+\s*\(/.test(source)) {
           return content('error: source must define a `class X(nn.Module): ...`', true)
         }
+        const v = validateNodeParams('layers', 'Custom', { source, init_args: init_args ?? '' })
+        if (!v.ok) return content(`error: ${v.error}`, true)
+        if (after && !ctx.nodes.has(after)) return content(`error: source node "${after}" not found`, true)
         const id = ctx.nextId()
-        const params = { source, init_args: init_args ?? '' }
-        ctx.nodes.set(id, { id, layerType: 'Custom', params })
-        actions.push({ op: 'add_layer', payload: { id, layer_type: 'Custom', params } })
+        ctx.nodes.set(id, { id, layerType: 'Custom', params: v.params })
+        actions.push({ op: 'add_layer', payload: { id, layer_type: 'Custom', params: v.params } })
         if (after) {
-          if (!ctx.nodes.has(after)) return content(`error: source node "${after}" not found`, true)
           ctx.edges.set(`${after}->${id}`, { source: after, target: id })
           actions.push({ op: 'connect', payload: { source: after, target: id } })
         }
@@ -936,6 +954,23 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
         if (!hasInput || !hasOutput) {
           return content('error: a subgraph needs at least one Input (or Graph) node and one Output node', true)
         }
+        // Validate every inner node + every inner edge endpoint BEFORE mutating.
+        const innerIds = new Set(nodes.map((n) => n.id))
+        for (const n of nodes) {
+          const v = validateNodeParams('layers', n.layer_type, n.params ?? {})
+          if (!v.ok) return content(`error: inner node ${n.id}: ${v.error}`, true)
+        }
+        for (const e of edges) {
+          if (!innerIds.has(e.source) || !innerIds.has(e.target)) {
+            return content(`error: inner edge ${e.source}->${e.target} references an unknown node`, true)
+          }
+          if (wouldCreateCycle(edges, e.source, e.target)) {
+            return content(`error: inner edge ${e.source}->${e.target} would create a cycle`, true)
+          }
+        }
+        const v = validateNodeParams('layers', 'Subgraph', { class_name })
+        if (!v.ok) return content(`error: ${v.error}`, true)
+        if (after && !ctx.nodes.has(after)) return content(`error: source node "${after}" not found`, true)
         const id = ctx.nextId()
         const subgraph = {
           nodes: nodes.map((n, i) => ({
@@ -944,11 +979,10 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
           })),
           edges: edges.map((e) => ({ source: e.source, target: e.target })),
         }
-        const params = { class_name, subgraph }
+        const params = { class_name: v.params.class_name, subgraph }
         ctx.nodes.set(id, { id, layerType: 'Subgraph', params })
         actions.push({ op: 'add_layer', payload: { id, layer_type: 'Subgraph', params } })
         if (after) {
-          if (!ctx.nodes.has(after)) return content(`error: source node "${after}" not found`, true)
           ctx.edges.set(`${after}->${id}`, { source: after, target: id })
           actions.push({ op: 'connect', payload: { source: after, target: id } })
         }
@@ -962,8 +996,18 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
       async ({ source, target }) => {
         if (!ctx.nodes.has(source)) return content(`error: source "${source}" not found`, true)
         if (!ctx.nodes.has(target)) return content(`error: target "${target}" not found`, true)
+        if (source === target) return content(`error: cannot connect a node to itself ("${source}")`, true)
         const key = `${source}->${target}`
-        if (ctx.edges.has(key)) return content(`edge ${source}->${target} already exists`)
+        // Idempotent duplicate: explicit non-error, but NO action (no change).
+        if (ctx.edges.has(key)) return content(`edge ${source}->${target} already exists (no change)`)
+        if (wouldCreateCycle(ctx.edges, source, target)) {
+          return content(`error: edge ${source}->${target} would create a cycle`, true)
+        }
+        const targetKind = nodeKind('layers', ctx.nodes.get(target).layerType)
+        const sourceKind = nodeKind('layers', ctx.nodes.get(source).layerType)
+        if (targetKind === 'input' && sourceKind !== 'manifest') {
+          return content(`error: cannot connect into Input node "${target}" (only a Manifest may feed an Input)`, true)
+        }
         ctx.edges.set(key, { source, target })
         actions.push({ op: 'connect', payload: { source, target } })
         return content(`connected ${source} → ${target}`)
@@ -976,9 +1020,11 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
       async ({ id, params }) => {
         const n = ctx.nodes.get(id)
         if (!n) return content(`error: node "${id}" not found`, true)
-        n.params = { ...n.params, ...params }
-        actions.push({ op: 'update_params', payload: { id, params } })
-        return content(`patched ${id}: ${JSON.stringify(params)}`)
+        const v = validateNodeParams('layers', n.layerType, params, { partial: true })
+        if (!v.ok) return content(`error: ${v.error}`, true)
+        n.params = { ...n.params, ...v.params }
+        actions.push({ op: 'update_params', payload: { id, params: v.params } })
+        return content(`patched ${id}: ${JSON.stringify(v.params)}`)
       },
     ),
     tool(
@@ -988,12 +1034,22 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
       async ({ id }) => {
         if (id === 'input') return content(`error: cannot delete the Input node`, true)
         if (!ctx.nodes.has(id)) return content(`error: node "${id}" not found`, true)
+        const removed = ctx.nodes.get(id)
+        const wasInput = removed.layerType === 'Input'
+        const wasOutput = removed.layerType === 'Output'
         ctx.nodes.delete(id)
         for (const [key, e] of ctx.edges) {
           if (e.source === id || e.target === id) ctx.edges.delete(key)
         }
         actions.push({ op: 'delete_node', payload: { id } })
-        return content(`deleted ${id}`)
+        let msg = `deleted ${id}`
+        if (wasInput && ![...ctx.nodes.values()].some((n) => n.layerType === 'Input')) {
+          msg += '\nwarning: graph now has no Input'
+        }
+        if (wasOutput && ![...ctx.nodes.values()].some((n) => n.layerType === 'Output')) {
+          msg += '\nwarning: graph now has no Output'
+        }
+        return content(msg)
       },
     ),
     // ─── Training-graph tools (Phase 14) ───────────────────────────────────
@@ -1020,11 +1076,13 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
         params: z.record(z.string(), z.unknown()).optional(),
       },
       async ({ node_type, after, params }) => {
+        const v = validateNodeParams('training', node_type, params ?? {})
+        if (!v.ok) return content(`error: ${v.error}`, true)
+        if (after && !trainingCtx.nodes.has(after)) return content(`error: training source "${after}" not found`, true)
         const id = trainingCtx.nextId()
-        trainingCtx.nodes.set(id, { id, trainingType: node_type, params: params ?? {} })
-        actions.push({ op: 'training:add_node', payload: { id, node_type, params: params ?? {} } })
+        trainingCtx.nodes.set(id, { id, trainingType: node_type, params: v.params })
+        actions.push({ op: 'training:add_node', payload: { id, node_type, params: v.params } })
         if (after) {
-          if (!trainingCtx.nodes.has(after)) return content(`error: training source "${after}" not found`, true)
           trainingCtx.edges.set(`${after}->${id}`, { source: after, target: id })
           actions.push({ op: 'training:connect', payload: { source: after, target: id } })
         }
@@ -1038,8 +1096,12 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
       async ({ source, target }) => {
         if (!trainingCtx.nodes.has(source)) return content(`error: training source "${source}" not found`, true)
         if (!trainingCtx.nodes.has(target)) return content(`error: training target "${target}" not found`, true)
+        if (source === target) return content(`error: cannot connect a training node to itself ("${source}")`, true)
         const key = `${source}->${target}`
-        if (trainingCtx.edges.has(key)) return content(`edge ${source}->${target} already exists`)
+        if (trainingCtx.edges.has(key)) return content(`edge ${source}->${target} already exists (no change)`)
+        if (wouldCreateCycle(trainingCtx.edges, source, target)) {
+          return content(`error: edge ${source}->${target} would create a cycle`, true)
+        }
         trainingCtx.edges.set(key, { source, target })
         actions.push({ op: 'training:connect', payload: { source, target } })
         return content(`connected ${source} → ${target}`)
@@ -1052,9 +1114,11 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
       async ({ id, params }) => {
         const n = trainingCtx.nodes.get(id)
         if (!n) return content(`error: training node "${id}" not found`, true)
-        n.params = { ...n.params, ...params }
-        actions.push({ op: 'training:update_params', payload: { id, params } })
-        return content(`patched training ${id}: ${JSON.stringify(params)}`)
+        const v = validateNodeParams('training', n.trainingType, params, { partial: true })
+        if (!v.ok) return content(`error: ${v.error}`, true)
+        n.params = { ...n.params, ...v.params }
+        actions.push({ op: 'training:update_params', payload: { id, params: v.params } })
+        return content(`patched training ${id}: ${JSON.stringify(v.params)}`)
       },
     ),
     tool(
@@ -1105,11 +1169,13 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
         params: z.record(z.string(), z.unknown()).optional(),
       },
       async ({ node_type, after, params }) => {
+        const v = validateNodeParams('data', node_type, params ?? {})
+        if (!v.ok) return content(`error: ${v.error}`, true)
+        if (after && !dataCtx.nodes.has(after)) return content(`error: data source "${after}" not found`, true)
         const id = dataCtx.nextId()
-        dataCtx.nodes.set(id, { id, dataType: node_type, params: params ?? {} })
-        actions.push({ op: 'data:add_node', payload: { id, node_type, params: params ?? {} } })
+        dataCtx.nodes.set(id, { id, dataType: node_type, params: v.params })
+        actions.push({ op: 'data:add_node', payload: { id, node_type, params: v.params } })
         if (after) {
-          if (!dataCtx.nodes.has(after)) return content(`error: data source "${after}" not found`, true)
           dataCtx.edges.set(`${after}->${id}`, { source: after, target: id })
           actions.push({ op: 'data:connect', payload: { source: after, target: id } })
         }
@@ -1123,8 +1189,12 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
       async ({ source, target }) => {
         if (!dataCtx.nodes.has(source)) return content(`error: data source "${source}" not found`, true)
         if (!dataCtx.nodes.has(target)) return content(`error: data target "${target}" not found`, true)
+        if (source === target) return content(`error: cannot connect a data node to itself ("${source}")`, true)
         const key = `${source}->${target}`
-        if (dataCtx.edges.has(key)) return content(`edge ${source}->${target} already exists`)
+        if (dataCtx.edges.has(key)) return content(`edge ${source}->${target} already exists (no change)`)
+        if (wouldCreateCycle(dataCtx.edges, source, target)) {
+          return content(`error: edge ${source}->${target} would create a cycle`, true)
+        }
         dataCtx.edges.set(key, { source, target })
         actions.push({ op: 'data:connect', payload: { source, target } })
         return content(`connected ${source} → ${target}`)
@@ -1138,9 +1208,11 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
       async ({ id, params }) => {
         const n = dataCtx.nodes.get(id)
         if (!n) return content(`error: data node "${id}" not found`, true)
-        n.params = { ...n.params, ...params }
-        actions.push({ op: 'data:update_params', payload: { id, params } })
-        return content(`patched data ${id}: ${JSON.stringify(params)}`)
+        const v = validateNodeParams('data', n.dataType, params, { partial: true })
+        if (!v.ok) return content(`error: ${v.error}`, true)
+        n.params = { ...n.params, ...v.params }
+        actions.push({ op: 'data:update_params', payload: { id, params: v.params } })
+        return content(`patched data ${id}: ${JSON.stringify(v.params)}`)
       },
     ),
     tool(
@@ -1608,17 +1680,54 @@ function specToJsonSchema(spec) {
   return json
 }
 
+// Central argument gate. Every provider path (anthropic / openai-compat /
+// opencode MCP bridge / subscription) funnels through here, so a schema
+// violation is rejected identically regardless of who proposed the call.
+// `parseError` is set by the openai-compat loop when the provider streamed
+// arguments that are not valid JSON — that must never become `{}`.
+function validateToolArgs(spec, args, parseError) {
+  if (parseError) return { ok: false, text: `error: arguments for ${spec.name} are not valid JSON: ${parseError}` }
+  // zod's default object STRIPS unknown keys, so a hallucinated top-level argument
+  // (e.g. `activation` on add_layer) would silently vanish while the model believes
+  // it was applied. Reject it explicitly and name the valid arguments instead.
+  if (args && typeof args === 'object' && !Array.isArray(args)) {
+    const allowed = new Set(Object.keys(spec.schema ?? {}))
+    const extra = Object.keys(args).filter((k) => !allowed.has(k))
+    if (extra.length) {
+      return {
+        ok: false,
+        text: `error: unknown argument${extra.length > 1 ? 's' : ''} ${extra.map((k) => JSON.stringify(k)).join(', ')} for ${spec.name} (valid: ${[...allowed].join(', ') || 'none'})`,
+      }
+    }
+  }
+  const parsed = z.object(spec.schema ?? {}).safeParse(args ?? {})
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .slice(0, 8)
+      .map((i) => `${i.path.length ? i.path.join('.') : '(root)'}: ${i.message}`)
+      .join('; ')
+    return { ok: false, text: `error: invalid arguments for ${spec.name}: ${issues}` }
+  }
+  return { ok: true, data: parsed.data }
+}
+
+// Resolve a tool by name, validate its arguments, then run the handler. Shared
+// by execTool (which mirrors the call to SSE) and the opencode MCP bridge route
+// (which returns the result to opencode instead).
+async function invokeTool(specsByName, name, args, parseError) {
+  const spec = specsByName.get(name)
+  if (!spec) return { text: `error: unknown tool "${name}"`, isError: true }
+  const check = validateToolArgs(spec, args, parseError)
+  if (!check.ok) return { text: check.text, isError: true }
+  try { return readToolResult(await spec.handler(check.data)) }
+  catch (e) { return { text: `error: ${e.message}`, isError: true } }
+}
+
 // Run one tool handler by name, emit the SSE tool_use/tool_result pair, and
 // return { text, isError } for the provider loop to feed back to the model.
-async function execTool(specsByName, emit, id, name, args) {
+async function execTool(specsByName, emit, id, name, args, parseError) {
   emit({ type: 'tool_use', id, name, args: args ?? {} })
-  const spec = specsByName.get(name)
-  let result
-  if (!spec) result = { text: `error: unknown tool "${name}"`, isError: true }
-  else {
-    try { result = readToolResult(await spec.handler(args ?? {})) }
-    catch (e) { result = { text: `error: ${e.message}`, isError: true } }
-  }
+  const result = await invokeTool(specsByName, name, args, parseError)
   emit({ type: 'tool_result', id, ok: !result.isError, result: result.text, error: result.isError ? result.text : undefined })
   return result
 }
@@ -1684,8 +1793,14 @@ async function runAnthropicApi(specs, systemPrompt, history, user, emit, opts, a
 
 // OpenAI Chat Completions (covers OpenAI, Gemini's OpenAI-compatible endpoint,
 // Ollama, OpenRouter, and any other OpenAI-compatible server via baseUrl).
-async function runOpenAiCompat(specs, systemPrompt, history, user, emit, opts, askUser) {
-  const client = new OpenAI({ apiKey: opts.apiKey || 'no-key', ...(opts.baseUrl ? { baseURL: opts.baseUrl } : {}) })
+async function runOpenAiCompat(specs, systemPrompt, history, user, emit, opts, askUser, abortSignal) {
+  // maxRetries: 2 — the SDK default; we state it explicitly to guarantee a cap
+  // on how long a flaky provider can retry before the turn fails.
+  const client = new OpenAI({
+    apiKey: opts.apiKey || 'no-key',
+    ...(opts.baseUrl ? { baseURL: opts.baseUrl } : {}),
+    maxRetries: 2,
+  })
   const specsByName = new Map(specs.map((s) => [s.name, s]))
   const tools = specs.map((s) => ({
     type: 'function',
@@ -1697,15 +1812,48 @@ async function runOpenAiCompat(specs, systemPrompt, history, user, emit, opts, a
     { role: 'user', content: user },
   ]
   const model = opts.model || 'gpt-4o'
+  const stallSeconds = Math.round(UPSTREAM_TIMEOUT_MS / 1000)
 
   let steps = 0
   while (true) {
-    const stream = await client.chat.completions.create({ model, messages, tools, stream: true })
+    // Per-request idle guard: abort the upstream request when nothing arrives
+    // for UPSTREAM_TIMEOUT_MS. A client abort (turnAbort) is merged in so the
+    // upstream connection is torn down promptly too.
+    const idleController = new AbortController()
+    const signal = abortSignal ? AbortSignal.any([abortSignal, idleController.signal]) : idleController.signal
+    let stalled = false
+    const withIdle = async (promise) => {
+      const timer = setTimeout(() => { stalled = true; idleController.abort() }, UPSTREAM_TIMEOUT_MS)
+      try { return await promise } finally { clearTimeout(timer) }
+    }
+
+    let stream
+    try {
+      stream = await withIdle(client.chat.completions.create({ model, messages, tools, stream: true }, { signal }))
+    } catch (e) {
+      if (stalled) throw new Error(`provider stalled: no data for ${stallSeconds} s`)
+      throw e
+    }
 
     let text = ''
     const toolCalls = [] // accumulated by streamed index
-    for await (const chunk of stream) {
-      const delta = chunk.choices?.[0]?.delta
+    let chunkCount = 0
+    let finishReason = null
+    const iterator = stream[Symbol.asyncIterator]()
+    for (;;) {
+      let next
+      try {
+        next = await withIdle(iterator.next())
+      } catch (e) {
+        if (stalled) throw new Error(`provider stalled: no data for ${stallSeconds} s`)
+        throw e
+      }
+      if (next.done) break
+      const chunk = next.value
+      chunkCount++
+      const choice = chunk.choices?.[0]
+      if (choice?.finish_reason) finishReason = choice.finish_reason
+      const delta = choice?.delta
       if (!delta) continue
       if (delta.content) { text += delta.content; emit({ type: 'text', value: delta.content }) }
       for (const tc of delta.tool_calls ?? []) {
@@ -1714,6 +1862,19 @@ async function runOpenAiCompat(specs, systemPrompt, history, user, emit, opts, a
         if (tc.function?.name) slot.name = tc.function.name
         if (tc.function?.arguments) slot.arguments += tc.function.arguments
       }
+    }
+
+    // An abort caused by the idle guard may surface as a clean end-of-stream
+    // rather than a rejected `next()` — surface the stall explicitly.
+    if (stalled) throw new Error(`provider stalled: no data for ${stallSeconds} s`)
+    // Stream integrity: a non-SSE body yields no chunks, and a truncated stream
+    // ends before any finish_reason. Both must be explicit errors, never a
+    // silent `done`, and no partially-received tool call may run.
+    if (chunkCount === 0) {
+      throw new Error('provider returned no stream data (is the baseUrl an OpenAI-compatible endpoint?)')
+    }
+    if (!finishReason) {
+      throw new Error('provider stream ended without a finish_reason (truncated?)')
     }
 
     const calls = toolCalls.filter(Boolean)
@@ -1726,8 +1887,15 @@ async function runOpenAiCompat(specs, systemPrompt, history, user, emit, opts, a
 
     for (const c of calls) {
       let args = {}
-      try { args = JSON.parse(c.arguments || '{}') } catch { /* malformed args → empty */ }
-      const r = await execTool(specsByName, emit, c.id, c.name, args)
+      let parseError = null
+      try {
+        args = JSON.parse(c.arguments || '{}')
+      } catch (e) {
+        // Malformed arguments are NOT silently replaced by {}: the tool call is
+        // rejected explicitly and the handler never runs.
+        parseError = e instanceof Error ? e.message : String(e)
+      }
+      const r = await execTool(specsByName, emit, c.id, c.name, args, parseError)
       messages.push({ role: 'tool', tool_call_id: c.id, content: r.text })
     }
 
@@ -1809,12 +1977,10 @@ async function handleMcpRoute(req, res) {
     return res.end(JSON.stringify({ tools }))
   }
 
-  const { id, name, args } = payload
-  const spec = session.specsByName.get(name)
-  if (!spec) return res.end(JSON.stringify({ ok: false, result: `error: unknown tool "${name}"` }))
-  let result
-  try { result = readToolResult(await spec.handler(args ?? {})) }
-  catch (e) { result = { text: `error: ${e.message}`, isError: true } }
+  const { name, args } = payload
+  // Same validation gate as execTool: opencode's MCP bridge must not be able to
+  // reach a handler with arguments that would fail the schema.
+  const result = await invokeTool(session.specsByName, name, args)
   return res.end(JSON.stringify({ ok: !result.isError, result: result.text }))
 }
 
@@ -2368,7 +2534,15 @@ async function handleChat(req, res) {
   })
 
   // Guarded so a late write after the client disconnects can't crash the turn.
-  function emit(ev) { try { res.write(`data: ${JSON.stringify(ev)}\n\n`) } catch { /* client already disconnected — no reader left to mislead */ } }
+  // Every `status:error` message passes through secret redaction centrally, so
+  // no provider path can leak the apiKey (or any token-shaped string) to the
+  // SSE stream. Never log the payload/llm objects themselves.
+  function emit(ev) {
+    if (ev && ev.type === 'status' && ev.value === 'error' && typeof ev.message === 'string') {
+      ev = { ...ev, message: redactSecrets(ev.message, [llm?.apiKey]) }
+    }
+    try { res.write(`data: ${JSON.stringify(ev)}\n\n`) } catch { /* client already disconnected — no reader left to mislead */ }
+  }
 
   // WebKitGTK (the Tauri webview on Linux) buffers a streamed fetch() body and
   // doesn't surface bytes to the reader until enough accumulate or the stream
@@ -2397,7 +2571,12 @@ async function handleChat(req, res) {
   // Aborted when the client disconnects (Stop/reset in the chat) → kills any
   // running run_script child so the user isn't stuck waiting on the login node.
   const turnAbort = new AbortController()
-  req.on('close', () => { turnAbort.abort(); rejectPendingAsks('client disconnected') })
+  // The client can go away via an explicit Stop/reset (the EventSource/fetch is
+  // aborted). Node may report that on the request OR the response depending on
+  // how the client tears the connection down, so watch both.
+  const onClientGone = () => { turnAbort.abort(); rejectPendingAsks('client disconnected') }
+  req.on('close', onClientGone)
+  res.on('close', onClientGone)
 
   const actions = makeActionStream()
   // Single outbound-event lane. Events emitted from INSIDE a tool handler (ask,
@@ -2446,7 +2625,7 @@ async function handleChat(req, res) {
       if (!llm?.apiKey) throw new Error('Anthropic API key missing')
       await runAnthropicApi(specs, systemPrompt, messages, user, emit, llm, askUser)
     } else if (kind === 'openai-compat') {
-      await runOpenAiCompat(specs, systemPrompt, messages, user, emit, llm, askUser)
+      await runOpenAiCompat(specs, systemPrompt, messages, user, emit, llm, askUser, turnAbort.signal)
     } else if (kind === 'opencode') {
       // Register the per-turn MCP session BEFORE spawning opencode: the bridge
       // connects the moment the CLI starts. Unregistered in finally below.
@@ -2614,8 +2793,9 @@ const server = createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/chat') {
     try { await handleChat(req, res) }
     catch (e) {
-      if (!res.headersSent) sendJson(res, 500, { error: `${e.name}: ${e.message}` })
-      else { try { res.write(`data: ${JSON.stringify({ type: 'status', value: 'error', message: e.message })}\n\n`); res.end() } catch { /* client already disconnected — already in the error path */ } }
+      const msg = redactSecrets(`${e.name}: ${e.message}`, [])
+      if (!res.headersSent) sendJson(res, 500, { error: msg })
+      else { try { res.write(`data: ${JSON.stringify({ type: 'status', value: 'error', message: msg })}\n\n`); res.end() } catch { /* client already disconnected — already in the error path */ } }
     }
     return
   }

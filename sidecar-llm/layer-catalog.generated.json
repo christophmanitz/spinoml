@@ -1,0 +1,1984 @@
+{
+  "layers": {
+    "AdaptiveAvgPool2d": {
+      "kind": "module",
+      "category": "Pool",
+      "fields": [
+        {
+          "name": "output_size",
+          "type": "tuple-int",
+          "arity": 2,
+          "default": [
+            1,
+            1
+          ]
+        }
+      ]
+    },
+    "Add": {
+      "kind": "merge",
+      "category": "Merge",
+      "fields": []
+    },
+    "AvgPool2d": {
+      "kind": "module",
+      "category": "Pool",
+      "fields": [
+        {
+          "name": "kernel_size",
+          "type": "tuple-int",
+          "arity": 2,
+          "default": [
+            2,
+            2
+          ]
+        },
+        {
+          "name": "stride",
+          "type": "tuple-int",
+          "arity": 2,
+          "default": [
+            2,
+            2
+          ]
+        },
+        {
+          "name": "padding",
+          "type": "tuple-int",
+          "arity": 2,
+          "default": [
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    "BatchNorm1d": {
+      "kind": "module",
+      "category": "Norm",
+      "fields": [
+        {
+          "name": "num_features",
+          "type": "int",
+          "default": 64,
+          "min": 1
+        },
+        {
+          "name": "eps",
+          "type": "float",
+          "default": 0.00001,
+          "step": 0.000001
+        },
+        {
+          "name": "momentum",
+          "type": "float",
+          "default": 0.1,
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        }
+      ]
+    },
+    "BatchNorm2d": {
+      "kind": "module",
+      "category": "Norm",
+      "fields": [
+        {
+          "name": "num_features",
+          "type": "int",
+          "default": 64,
+          "min": 1
+        },
+        {
+          "name": "eps",
+          "type": "float",
+          "default": 0.00001,
+          "step": 0.000001
+        },
+        {
+          "name": "momentum",
+          "type": "float",
+          "default": 0.1,
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        }
+      ]
+    },
+    "BuildGraph": {
+      "kind": "function",
+      "category": "IO",
+      "fields": [
+        {
+          "name": "method",
+          "type": "select",
+          "options": [
+            "knn",
+            "radius",
+            "fully_connected"
+          ],
+          "default": "knn"
+        },
+        {
+          "name": "k",
+          "type": "int",
+          "default": 6,
+          "min": 1
+        },
+        {
+          "name": "radius",
+          "type": "float",
+          "default": 1,
+          "min": 0,
+          "step": 0.1
+        },
+        {
+          "name": "dims",
+          "type": "int-list",
+          "default": []
+        },
+        {
+          "name": "loop",
+          "type": "bool",
+          "default": false
+        },
+        {
+          "name": "cosine",
+          "type": "bool",
+          "default": false
+        }
+      ]
+    },
+    "Concat": {
+      "kind": "merge",
+      "category": "Merge",
+      "fields": [
+        {
+          "name": "dim",
+          "type": "int",
+          "default": 1
+        }
+      ]
+    },
+    "Conv1d": {
+      "kind": "module",
+      "category": "Conv",
+      "fields": [
+        {
+          "name": "in_channels",
+          "type": "int",
+          "default": 1,
+          "min": 1
+        },
+        {
+          "name": "out_channels",
+          "type": "int",
+          "default": 16,
+          "min": 1
+        },
+        {
+          "name": "kernel_size",
+          "type": "int",
+          "default": 3,
+          "min": 1
+        },
+        {
+          "name": "stride",
+          "type": "int",
+          "default": 1,
+          "min": 1
+        },
+        {
+          "name": "padding",
+          "type": "int",
+          "default": 1,
+          "min": 0
+        },
+        {
+          "name": "bias",
+          "type": "bool",
+          "default": true
+        }
+      ]
+    },
+    "Conv2d": {
+      "kind": "module",
+      "category": "Conv",
+      "fields": [
+        {
+          "name": "in_channels",
+          "type": "int",
+          "default": 3,
+          "min": 1
+        },
+        {
+          "name": "out_channels",
+          "type": "int",
+          "default": 64,
+          "min": 1
+        },
+        {
+          "name": "kernel_size",
+          "type": "tuple-int",
+          "arity": 2,
+          "default": [
+            3,
+            3
+          ]
+        },
+        {
+          "name": "stride",
+          "type": "tuple-int",
+          "arity": 2,
+          "default": [
+            1,
+            1
+          ]
+        },
+        {
+          "name": "padding",
+          "type": "tuple-int",
+          "arity": 2,
+          "default": [
+            1,
+            1
+          ]
+        },
+        {
+          "name": "bias",
+          "type": "bool",
+          "default": true
+        }
+      ]
+    },
+    "Conv3d": {
+      "kind": "module",
+      "category": "Conv",
+      "fields": [
+        {
+          "name": "in_channels",
+          "type": "int",
+          "default": 3,
+          "min": 1
+        },
+        {
+          "name": "out_channels",
+          "type": "int",
+          "default": 16,
+          "min": 1
+        },
+        {
+          "name": "kernel_size",
+          "type": "tuple-int",
+          "arity": 3,
+          "default": [
+            3,
+            3,
+            3
+          ]
+        },
+        {
+          "name": "stride",
+          "type": "tuple-int",
+          "arity": 3,
+          "default": [
+            1,
+            1,
+            1
+          ]
+        },
+        {
+          "name": "padding",
+          "type": "tuple-int",
+          "arity": 3,
+          "default": [
+            1,
+            1,
+            1
+          ]
+        },
+        {
+          "name": "bias",
+          "type": "bool",
+          "default": true
+        }
+      ]
+    },
+    "ConvTranspose2d": {
+      "kind": "module",
+      "category": "Conv",
+      "fields": [
+        {
+          "name": "in_channels",
+          "type": "int",
+          "default": 64,
+          "min": 1
+        },
+        {
+          "name": "out_channels",
+          "type": "int",
+          "default": 32,
+          "min": 1
+        },
+        {
+          "name": "kernel_size",
+          "type": "tuple-int",
+          "arity": 2,
+          "default": [
+            3,
+            3
+          ]
+        },
+        {
+          "name": "stride",
+          "type": "tuple-int",
+          "arity": 2,
+          "default": [
+            2,
+            2
+          ]
+        },
+        {
+          "name": "padding",
+          "type": "tuple-int",
+          "arity": 2,
+          "default": [
+            1,
+            1
+          ]
+        }
+      ]
+    },
+    "Custom": {
+      "kind": "custom",
+      "category": "Custom",
+      "fields": [
+        {
+          "name": "init_args",
+          "type": "text",
+          "default": "",
+          "placeholder": "z.B. 384, 256, dropout=0.0"
+        },
+        {
+          "name": "source",
+          "type": "code",
+          "default": "class MyModule(nn.Module):\n    def __init__(self):\n        super().__init__()\n        self.fc = nn.LazyLinear(32)\n\n    def forward(self, x):\n        return self.fc(x)",
+          "placeholder": "class MyModule(nn.Module): ..."
+        }
+      ]
+    },
+    "DataOp": {
+      "kind": "dataop",
+      "category": "Data",
+      "fields": [
+        {
+          "name": "input_dataset",
+          "type": "dataset-ref",
+          "default": ""
+        },
+        {
+          "name": "output_name",
+          "type": "text",
+          "default": "processed/out",
+          "placeholder": "z.B. protein_seq_tokens"
+        },
+        {
+          "name": "mode",
+          "type": "select",
+          "options": [
+            "shell",
+            "slurm"
+          ],
+          "default": "shell"
+        },
+        {
+          "name": "cache",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "script",
+          "type": "code",
+          "default": "import sys, os, argparse\n\n# DataOp: transform an input dataset into a cached output under datasets/.\n# Invoked by SpinoML as:  python <this>.py --input <rel> --output <rel>\ndef main():\n    ap = argparse.ArgumentParser()\n    ap.add_argument(\"--input\", default=\"\")\n    ap.add_argument(\"--output\", default=\"processed/out\")\n    args = ap.parse_args()\n    out_dir = os.path.join(\"datasets\", args.output)\n    os.makedirs(out_dir, exist_ok=True)\n    # TODO: read args.input, transform it, write tensors/files into out_dir,\n    #       and (for a paired model) extend the .manifest with a new branch.\n    print(f\"wrote nothing yet — fill in main(); input={args.input} output={out_dir}\")\n\nif __name__ == \"__main__\":\n    main()",
+          "placeholder": "Python: read input_dataset → write output under datasets/"
+        }
+      ]
+    },
+    "Dropout": {
+      "kind": "module",
+      "category": "Regularize",
+      "fields": [
+        {
+          "name": "p",
+          "type": "float",
+          "default": 0.5,
+          "min": 0,
+          "max": 1,
+          "step": 0.05
+        }
+      ]
+    },
+    "Dropout2d": {
+      "kind": "module",
+      "category": "Regularize",
+      "fields": [
+        {
+          "name": "p",
+          "type": "float",
+          "default": 0.5,
+          "min": 0,
+          "max": 1,
+          "step": 0.05
+        }
+      ]
+    },
+    "ESPF": {
+      "kind": "input",
+      "category": "IO",
+      "fields": [
+        {
+          "name": "name",
+          "type": "text",
+          "default": "smiles_espf",
+          "placeholder": "smiles_espf",
+          "datalist": [
+            "smiles_espf",
+            "ligand_espf",
+            "drug_tokens"
+          ]
+        },
+        {
+          "name": "shape",
+          "type": "shape",
+          "default": [
+            50
+          ]
+        },
+        {
+          "name": "dtype",
+          "type": "select",
+          "options": [
+            "int64"
+          ],
+          "default": "int64"
+        },
+        {
+          "name": "codebook",
+          "type": "select",
+          "options": [
+            "drug",
+            "protein"
+          ],
+          "default": "drug"
+        },
+        {
+          "name": "branch",
+          "type": "text",
+          "default": "",
+          "placeholder": "ligand_smiles"
+        }
+      ]
+    },
+    "Embedding": {
+      "kind": "module",
+      "category": "Linear",
+      "fields": [
+        {
+          "name": "num_embeddings",
+          "type": "int",
+          "default": 1000,
+          "min": 1
+        },
+        {
+          "name": "embedding_dim",
+          "type": "int",
+          "default": 128,
+          "min": 1
+        }
+      ]
+    },
+    "Flatten": {
+      "kind": "module",
+      "category": "Linear",
+      "fields": [
+        {
+          "name": "start_dim",
+          "type": "int",
+          "default": 1,
+          "min": 0
+        },
+        {
+          "name": "end_dim",
+          "type": "int",
+          "default": -1
+        }
+      ]
+    },
+    "GATConv": {
+      "kind": "module",
+      "category": "Graph",
+      "fields": [
+        {
+          "name": "in_channels",
+          "type": "int",
+          "default": -1,
+          "min": -1
+        },
+        {
+          "name": "out_channels",
+          "type": "int",
+          "default": 32,
+          "min": 1
+        },
+        {
+          "name": "heads",
+          "type": "int",
+          "default": 1,
+          "min": 1
+        },
+        {
+          "name": "concat",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "dropout",
+          "type": "float",
+          "default": 0,
+          "min": 0,
+          "max": 1,
+          "step": 0.05
+        },
+        {
+          "name": "bias",
+          "type": "bool",
+          "default": true
+        }
+      ]
+    },
+    "GCNConv": {
+      "kind": "module",
+      "category": "Graph",
+      "fields": [
+        {
+          "name": "in_channels",
+          "type": "int",
+          "default": -1,
+          "min": -1
+        },
+        {
+          "name": "out_channels",
+          "type": "int",
+          "default": 32,
+          "min": 1
+        },
+        {
+          "name": "improved",
+          "type": "bool",
+          "default": false
+        },
+        {
+          "name": "cached",
+          "type": "bool",
+          "default": false
+        },
+        {
+          "name": "add_self_loops",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "bias",
+          "type": "bool",
+          "default": true
+        }
+      ]
+    },
+    "GELU": {
+      "kind": "module",
+      "category": "Activation",
+      "fields": []
+    },
+    "GRU": {
+      "kind": "module",
+      "category": "Recurrent",
+      "fields": [
+        {
+          "name": "input_size",
+          "type": "int",
+          "default": 64,
+          "min": 1
+        },
+        {
+          "name": "hidden_size",
+          "type": "int",
+          "default": 128,
+          "min": 1
+        },
+        {
+          "name": "num_layers",
+          "type": "int",
+          "default": 1,
+          "min": 1
+        },
+        {
+          "name": "batch_first",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "bidirectional",
+          "type": "bool",
+          "default": false
+        },
+        {
+          "name": "dropout",
+          "type": "float",
+          "default": 0,
+          "min": 0,
+          "max": 1,
+          "step": 0.05
+        }
+      ]
+    },
+    "GlobalAddPool": {
+      "kind": "function",
+      "category": "Graph",
+      "fields": []
+    },
+    "GlobalMaxPool": {
+      "kind": "function",
+      "category": "Graph",
+      "fields": []
+    },
+    "GlobalMeanPool": {
+      "kind": "function",
+      "category": "Graph",
+      "fields": []
+    },
+    "Graph": {
+      "kind": "input",
+      "category": "IO",
+      "fields": [
+        {
+          "name": "name",
+          "type": "text",
+          "default": "data",
+          "placeholder": "data",
+          "datalist": [
+            "data",
+            "graph",
+            "ligand",
+            "protein",
+            "mol",
+            "enzyme"
+          ]
+        },
+        {
+          "name": "shape",
+          "type": "shape",
+          "default": [
+            32,
+            9
+          ]
+        },
+        {
+          "name": "n_edges",
+          "type": "int",
+          "default": 64,
+          "min": 0
+        },
+        {
+          "name": "edge_dim",
+          "type": "int",
+          "default": 0,
+          "min": 0
+        },
+        {
+          "name": "dataset",
+          "type": "dataset-ref",
+          "default": ""
+        },
+        {
+          "name": "branch",
+          "type": "text",
+          "default": "",
+          "placeholder": "ligand"
+        }
+      ]
+    },
+    "GraphConv": {
+      "kind": "module",
+      "category": "Graph",
+      "fields": [
+        {
+          "name": "in_channels",
+          "type": "int",
+          "default": -1,
+          "min": -1
+        },
+        {
+          "name": "out_channels",
+          "type": "int",
+          "default": 32,
+          "min": 1
+        },
+        {
+          "name": "aggr",
+          "type": "select",
+          "options": [
+            "add",
+            "mean",
+            "max"
+          ],
+          "default": "add"
+        },
+        {
+          "name": "bias",
+          "type": "bool",
+          "default": true
+        }
+      ]
+    },
+    "GraphTransformer": {
+      "kind": "module",
+      "category": "Graph",
+      "fields": [
+        {
+          "name": "in_channels",
+          "type": "int",
+          "default": 16,
+          "min": 1
+        },
+        {
+          "name": "out_channels",
+          "type": "int",
+          "default": 32,
+          "min": 1
+        },
+        {
+          "name": "heads",
+          "type": "int",
+          "default": 1,
+          "min": 1
+        },
+        {
+          "name": "concat",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "beta",
+          "type": "bool",
+          "default": false
+        },
+        {
+          "name": "dropout",
+          "type": "float",
+          "default": 0,
+          "min": 0,
+          "max": 1,
+          "step": 0.05
+        },
+        {
+          "name": "bias",
+          "type": "bool",
+          "default": true
+        }
+      ]
+    },
+    "GroupNorm": {
+      "kind": "module",
+      "category": "Norm",
+      "fields": [
+        {
+          "name": "num_groups",
+          "type": "int",
+          "default": 8,
+          "min": 1
+        },
+        {
+          "name": "num_channels",
+          "type": "int",
+          "default": 64,
+          "min": 1
+        }
+      ]
+    },
+    "Input": {
+      "kind": "input",
+      "category": "IO",
+      "fields": [
+        {
+          "name": "name",
+          "type": "text",
+          "default": "x",
+          "placeholder": "x",
+          "datalist": [
+            "x",
+            "x1",
+            "x2",
+            "x3",
+            "q",
+            "k",
+            "v",
+            "cond",
+            "edge_index",
+            "edge_attr",
+            "pos",
+            "batch",
+            "y"
+          ]
+        },
+        {
+          "name": "shape",
+          "type": "shape",
+          "default": [
+            1,
+            3,
+            224,
+            224
+          ]
+        },
+        {
+          "name": "dtype",
+          "type": "select",
+          "options": [
+            "float32",
+            "int64"
+          ],
+          "default": "float32"
+        },
+        {
+          "name": "dataset",
+          "type": "dataset-ref",
+          "default": ""
+        },
+        {
+          "name": "features",
+          "type": "columns-multi",
+          "default": []
+        },
+        {
+          "name": "target",
+          "type": "column-single",
+          "default": ""
+        }
+      ]
+    },
+    "LSTM": {
+      "kind": "module",
+      "category": "Recurrent",
+      "fields": [
+        {
+          "name": "input_size",
+          "type": "int",
+          "default": 64,
+          "min": 1
+        },
+        {
+          "name": "hidden_size",
+          "type": "int",
+          "default": 128,
+          "min": 1
+        },
+        {
+          "name": "num_layers",
+          "type": "int",
+          "default": 1,
+          "min": 1
+        },
+        {
+          "name": "batch_first",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "bidirectional",
+          "type": "bool",
+          "default": false
+        },
+        {
+          "name": "dropout",
+          "type": "float",
+          "default": 0,
+          "min": 0,
+          "max": 1,
+          "step": 0.05
+        }
+      ]
+    },
+    "LayerNorm": {
+      "kind": "module",
+      "category": "Norm",
+      "fields": [
+        {
+          "name": "normalized_shape",
+          "type": "shape",
+          "default": [
+            512
+          ]
+        },
+        {
+          "name": "eps",
+          "type": "float",
+          "default": 0.00001,
+          "step": 0.000001
+        }
+      ]
+    },
+    "Linear": {
+      "kind": "module",
+      "category": "Linear",
+      "fields": [
+        {
+          "name": "in_features",
+          "type": "int",
+          "default": 512,
+          "min": 1
+        },
+        {
+          "name": "out_features",
+          "type": "int",
+          "default": 128,
+          "min": 1
+        },
+        {
+          "name": "bias",
+          "type": "bool",
+          "default": true
+        }
+      ]
+    },
+    "LogSoftmax": {
+      "kind": "module",
+      "category": "Activation",
+      "fields": [
+        {
+          "name": "dim",
+          "type": "int",
+          "default": -1
+        }
+      ]
+    },
+    "Manifest": {
+      "kind": "manifest",
+      "category": "IO",
+      "fields": [
+        {
+          "name": "dataset",
+          "type": "dataset-ref",
+          "default": ""
+        }
+      ]
+    },
+    "MaxPool2d": {
+      "kind": "module",
+      "category": "Pool",
+      "fields": [
+        {
+          "name": "kernel_size",
+          "type": "tuple-int",
+          "arity": 2,
+          "default": [
+            2,
+            2
+          ]
+        },
+        {
+          "name": "stride",
+          "type": "tuple-int",
+          "arity": 2,
+          "default": [
+            2,
+            2
+          ]
+        },
+        {
+          "name": "padding",
+          "type": "tuple-int",
+          "arity": 2,
+          "default": [
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    "MultiheadAttention": {
+      "kind": "module",
+      "category": "Attention",
+      "fields": [
+        {
+          "name": "embed_dim",
+          "type": "int",
+          "default": 512,
+          "min": 1
+        },
+        {
+          "name": "num_heads",
+          "type": "int",
+          "default": 8,
+          "min": 1
+        },
+        {
+          "name": "dropout",
+          "type": "float",
+          "default": 0,
+          "min": 0,
+          "max": 1,
+          "step": 0.05
+        },
+        {
+          "name": "batch_first",
+          "type": "bool",
+          "default": true
+        }
+      ]
+    },
+    "Multiply": {
+      "kind": "merge",
+      "category": "Merge",
+      "fields": []
+    },
+    "Output": {
+      "kind": "output",
+      "category": "IO",
+      "fields": [
+        {
+          "name": "name",
+          "type": "select",
+          "options": [
+            "out",
+            "logits",
+            "embedding",
+            "mu",
+            "sigma",
+            "aux"
+          ],
+          "default": "out"
+        }
+      ]
+    },
+    "Permute": {
+      "kind": "function",
+      "category": "Reshape",
+      "fields": [
+        {
+          "name": "dims",
+          "type": "int-list",
+          "default": [
+            0,
+            2,
+            1
+          ]
+        }
+      ]
+    },
+    "RNN": {
+      "kind": "module",
+      "category": "Recurrent",
+      "fields": [
+        {
+          "name": "input_size",
+          "type": "int",
+          "default": 64,
+          "min": 1
+        },
+        {
+          "name": "hidden_size",
+          "type": "int",
+          "default": 128,
+          "min": 1
+        },
+        {
+          "name": "num_layers",
+          "type": "int",
+          "default": 1,
+          "min": 1
+        },
+        {
+          "name": "nonlinearity",
+          "type": "select",
+          "options": [
+            "tanh",
+            "relu"
+          ],
+          "default": "tanh"
+        },
+        {
+          "name": "batch_first",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "bidirectional",
+          "type": "bool",
+          "default": false
+        }
+      ]
+    },
+    "ReLU": {
+      "kind": "module",
+      "category": "Activation",
+      "fields": [
+        {
+          "name": "inplace",
+          "type": "bool",
+          "default": false
+        }
+      ]
+    },
+    "Reshape": {
+      "kind": "function",
+      "category": "Reshape",
+      "fields": [
+        {
+          "name": "shape",
+          "type": "int-list",
+          "default": [
+            -1
+          ]
+        }
+      ]
+    },
+    "SAGEConv": {
+      "kind": "module",
+      "category": "Graph",
+      "fields": [
+        {
+          "name": "in_channels",
+          "type": "int",
+          "default": -1,
+          "min": -1
+        },
+        {
+          "name": "out_channels",
+          "type": "int",
+          "default": 32,
+          "min": 1
+        },
+        {
+          "name": "aggr",
+          "type": "select",
+          "options": [
+            "mean",
+            "max",
+            "add",
+            "min"
+          ],
+          "default": "mean"
+        },
+        {
+          "name": "normalize",
+          "type": "bool",
+          "default": false
+        },
+        {
+          "name": "bias",
+          "type": "bool",
+          "default": true
+        }
+      ]
+    },
+    "Sequence": {
+      "kind": "input",
+      "category": "IO",
+      "fields": [
+        {
+          "name": "name",
+          "type": "text",
+          "default": "seq",
+          "placeholder": "seq",
+          "datalist": [
+            "seq",
+            "tokens",
+            "protein_seq",
+            "smiles_ids"
+          ]
+        },
+        {
+          "name": "shape",
+          "type": "shape",
+          "default": [
+            512
+          ]
+        },
+        {
+          "name": "dtype",
+          "type": "select",
+          "options": [
+            "int64",
+            "float32"
+          ],
+          "default": "int64"
+        },
+        {
+          "name": "branch",
+          "type": "text",
+          "default": "",
+          "placeholder": "protein_seq"
+        }
+      ]
+    },
+    "SiLU": {
+      "kind": "module",
+      "category": "Activation",
+      "fields": [
+        {
+          "name": "inplace",
+          "type": "bool",
+          "default": false
+        }
+      ]
+    },
+    "Sigmoid": {
+      "kind": "module",
+      "category": "Activation",
+      "fields": []
+    },
+    "Softmax": {
+      "kind": "module",
+      "category": "Activation",
+      "fields": [
+        {
+          "name": "dim",
+          "type": "int",
+          "default": -1
+        }
+      ]
+    },
+    "Stack": {
+      "kind": "merge",
+      "category": "Merge",
+      "fields": [
+        {
+          "name": "dim",
+          "type": "int",
+          "default": 0
+        }
+      ]
+    },
+    "Subgraph": {
+      "kind": "group",
+      "category": "Custom",
+      "fields": [
+        {
+          "name": "class_name",
+          "type": "text",
+          "default": "SubModule",
+          "placeholder": "verschachtelter Modulname"
+        }
+      ]
+    },
+    "Tanh": {
+      "kind": "module",
+      "category": "Activation",
+      "fields": []
+    },
+    "TransformerEncoder": {
+      "kind": "module",
+      "category": "Attention",
+      "fields": [
+        {
+          "name": "d_model",
+          "type": "int",
+          "default": 512,
+          "min": 1
+        },
+        {
+          "name": "nhead",
+          "type": "int",
+          "default": 8,
+          "min": 1
+        },
+        {
+          "name": "num_layers",
+          "type": "int",
+          "default": 6,
+          "min": 1
+        },
+        {
+          "name": "dim_feedforward",
+          "type": "int",
+          "default": 2048,
+          "min": 1
+        },
+        {
+          "name": "dropout",
+          "type": "float",
+          "default": 0.1,
+          "min": 0,
+          "max": 1,
+          "step": 0.05
+        },
+        {
+          "name": "activation",
+          "type": "select",
+          "options": [
+            "relu",
+            "gelu"
+          ],
+          "default": "gelu"
+        },
+        {
+          "name": "batch_first",
+          "type": "bool",
+          "default": true
+        }
+      ]
+    },
+    "TransformerEncoderLayer": {
+      "kind": "module",
+      "category": "Attention",
+      "fields": [
+        {
+          "name": "d_model",
+          "type": "int",
+          "default": 512,
+          "min": 1
+        },
+        {
+          "name": "nhead",
+          "type": "int",
+          "default": 8,
+          "min": 1
+        },
+        {
+          "name": "dim_feedforward",
+          "type": "int",
+          "default": 2048,
+          "min": 1
+        },
+        {
+          "name": "dropout",
+          "type": "float",
+          "default": 0.1,
+          "min": 0,
+          "max": 1,
+          "step": 0.05
+        },
+        {
+          "name": "activation",
+          "type": "select",
+          "options": [
+            "relu",
+            "gelu"
+          ],
+          "default": "relu"
+        },
+        {
+          "name": "batch_first",
+          "type": "bool",
+          "default": true
+        }
+      ]
+    },
+    "Transpose": {
+      "kind": "function",
+      "category": "Reshape",
+      "fields": [
+        {
+          "name": "dim0",
+          "type": "int",
+          "default": 1
+        },
+        {
+          "name": "dim1",
+          "type": "int",
+          "default": 2
+        }
+      ]
+    },
+    "View": {
+      "kind": "function",
+      "category": "Reshape",
+      "fields": [
+        {
+          "name": "shape",
+          "type": "int-list",
+          "default": [
+            -1
+          ]
+        }
+      ]
+    }
+  },
+  "training": {
+    "DataLoader": {
+      "category": "Data",
+      "fields": [
+        {
+          "name": "batch_size",
+          "type": "int",
+          "default": 32,
+          "min": 1
+        },
+        {
+          "name": "shuffle",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "num_workers",
+          "type": "int",
+          "default": 0,
+          "min": 0
+        },
+        {
+          "name": "drop_last",
+          "type": "bool",
+          "default": false
+        }
+      ]
+    },
+    "DatasetSource": {
+      "category": "Data",
+      "fields": [
+        {
+          "name": "dataset",
+          "type": "dataset-ref",
+          "default": ""
+        },
+        {
+          "name": "target",
+          "type": "column-single",
+          "default": ""
+        },
+        {
+          "name": "features",
+          "type": "columns-multi",
+          "default": []
+        }
+      ]
+    },
+    "EarlyStopping": {
+      "category": "Callback",
+      "fields": [
+        {
+          "name": "monitor",
+          "type": "select",
+          "options": [
+            "val_loss",
+            "val_acc",
+            "train_loss"
+          ],
+          "default": "val_loss"
+        },
+        {
+          "name": "patience",
+          "type": "int",
+          "default": 20,
+          "min": 1
+        },
+        {
+          "name": "mode",
+          "type": "select",
+          "options": [
+            "min",
+            "max"
+          ],
+          "default": "min"
+        }
+      ]
+    },
+    "GradientClipping": {
+      "category": "Callback",
+      "fields": [
+        {
+          "name": "max_norm",
+          "type": "float",
+          "default": 1,
+          "min": 0,
+          "step": 0.1
+        }
+      ]
+    },
+    "Head": {
+      "category": "Objective",
+      "fields": [
+        {
+          "name": "output",
+          "type": "select",
+          "options": [
+            "out",
+            "logits",
+            "embedding",
+            "mu",
+            "sigma",
+            "aux"
+          ],
+          "default": "out"
+        },
+        {
+          "name": "target",
+          "type": "column-single",
+          "default": ""
+        },
+        {
+          "name": "loss",
+          "type": "select",
+          "options": [
+            "CrossEntropyLoss",
+            "BCEWithLogitsLoss",
+            "MSELoss",
+            "L1Loss"
+          ],
+          "default": "CrossEntropyLoss"
+        },
+        {
+          "name": "weight",
+          "type": "float",
+          "default": 1,
+          "min": 0,
+          "step": 0.1
+        },
+        {
+          "name": "label_smoothing",
+          "type": "float",
+          "default": 0,
+          "min": 0,
+          "max": 0.9,
+          "step": 0.01
+        }
+      ]
+    },
+    "Loss": {
+      "category": "Objective",
+      "fields": [
+        {
+          "name": "kind",
+          "type": "select",
+          "options": [
+            "CrossEntropyLoss",
+            "BCEWithLogitsLoss",
+            "MSELoss",
+            "L1Loss"
+          ],
+          "default": "CrossEntropyLoss"
+        },
+        {
+          "name": "label_smoothing",
+          "type": "float",
+          "default": 0,
+          "min": 0,
+          "max": 0.9,
+          "step": 0.01
+        }
+      ]
+    },
+    "Metric": {
+      "category": "Metric",
+      "fields": [
+        {
+          "name": "kind",
+          "type": "select",
+          "options": [
+            "accuracy",
+            "f1",
+            "precision",
+            "recall",
+            "mse",
+            "mae",
+            "r2"
+          ],
+          "default": "accuracy"
+        }
+      ]
+    },
+    "MixedPrecision": {
+      "category": "Callback",
+      "fields": [
+        {
+          "name": "dtype",
+          "type": "select",
+          "options": [
+            "fp16",
+            "bf16"
+          ],
+          "default": "bf16"
+        }
+      ]
+    },
+    "ModelSource": {
+      "category": "Model",
+      "fields": [
+        {
+          "name": "model",
+          "type": "model-ref",
+          "default": ""
+        }
+      ]
+    },
+    "Optimizer": {
+      "category": "Objective",
+      "fields": [
+        {
+          "name": "kind",
+          "type": "select",
+          "options": [
+            "Adam",
+            "AdamW",
+            "SGD",
+            "RMSprop"
+          ],
+          "default": "Adam"
+        },
+        {
+          "name": "lr",
+          "type": "float",
+          "default": 0.001,
+          "min": 0,
+          "step": 0.0001
+        },
+        {
+          "name": "weight_decay",
+          "type": "float",
+          "default": 0,
+          "min": 0,
+          "step": 0.0001
+        },
+        {
+          "name": "momentum",
+          "type": "float",
+          "default": 0.9,
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        }
+      ]
+    },
+    "Scheduler": {
+      "category": "Schedule",
+      "fields": [
+        {
+          "name": "kind",
+          "type": "select",
+          "options": [
+            "none",
+            "StepLR",
+            "CosineAnnealingLR",
+            "ReduceLROnPlateau"
+          ],
+          "default": "none"
+        },
+        {
+          "name": "step_size",
+          "type": "int",
+          "default": 30,
+          "min": 1
+        },
+        {
+          "name": "gamma",
+          "type": "float",
+          "default": 0.1,
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        {
+          "name": "patience",
+          "type": "int",
+          "default": 10,
+          "min": 1
+        }
+      ]
+    },
+    "Split": {
+      "category": "Data",
+      "fields": [
+        {
+          "name": "strategy",
+          "type": "select",
+          "options": [
+            "random",
+            "stratified",
+            "grouped",
+            "time-based",
+            "predefined"
+          ],
+          "default": "random"
+        },
+        {
+          "name": "val_ratio",
+          "type": "float",
+          "default": 0.2,
+          "min": 0,
+          "max": 0.9,
+          "step": 0.05
+        },
+        {
+          "name": "seed",
+          "type": "int",
+          "default": 42,
+          "min": 0
+        }
+      ]
+    },
+    "TrainLoop": {
+      "category": "Loop",
+      "fields": [
+        {
+          "name": "epochs",
+          "type": "int",
+          "default": 50,
+          "min": 1
+        },
+        {
+          "name": "seed",
+          "type": "int",
+          "default": 42,
+          "min": 0
+        },
+        {
+          "name": "log_every_n_steps",
+          "type": "int",
+          "default": 10,
+          "min": 1
+        },
+        {
+          "name": "val_every_n_epochs",
+          "type": "int",
+          "default": 1,
+          "min": 1
+        },
+        {
+          "name": "gradient_accumulation_steps",
+          "type": "int",
+          "default": 1,
+          "min": 1
+        }
+      ]
+    }
+  },
+  "data": {
+    "ComputeColumn": {
+      "category": "Transform",
+      "fields": [
+        {
+          "name": "name",
+          "type": "text",
+          "default": "new_col",
+          "placeholder": "neue Spalte"
+        },
+        {
+          "name": "expr",
+          "type": "text",
+          "default": "",
+          "placeholder": "pandas eval, z.B. a + b"
+        }
+      ]
+    },
+    "CustomScript": {
+      "category": "Custom",
+      "fields": [
+        {
+          "name": "label",
+          "type": "text",
+          "default": "custom step",
+          "placeholder": "kurzer Name"
+        },
+        {
+          "name": "code",
+          "type": "code",
+          "default": "# Custom step. `df` is the pandas DataFrame coming from the previous node;\n# reassign `df` to pass your result on (or write files / save tensors here).\n# torch, pandas as pd and numpy as np are available if installed.\ndf = df  # TODO: your transformation"
+        }
+      ]
+    },
+    "DownloadColumn": {
+      "category": "Fetch",
+      "fields": [
+        {
+          "name": "id_column",
+          "type": "text",
+          "default": "uniprot",
+          "placeholder": "Spalte mit IDs/URLs"
+        },
+        {
+          "name": "url_template",
+          "type": "text",
+          "default": "https://files.rcsb.org/download/{id}.pdb",
+          "placeholder": "URL, {id} wird ersetzt"
+        },
+        {
+          "name": "out_dir",
+          "type": "text",
+          "default": "datasets/raw",
+          "placeholder": "Zielordner"
+        },
+        {
+          "name": "filename_template",
+          "type": "text",
+          "default": "{id}.pdb",
+          "placeholder": "Dateiname, {id} wird ersetzt"
+        },
+        {
+          "name": "add_path_column",
+          "type": "bool",
+          "default": true
+        }
+      ]
+    },
+    "DropNA": {
+      "category": "Transform",
+      "fields": [
+        {
+          "name": "subset",
+          "type": "text",
+          "default": "",
+          "placeholder": "leer = alle Spalten"
+        }
+      ]
+    },
+    "FilterRows": {
+      "category": "Transform",
+      "fields": [
+        {
+          "name": "query",
+          "type": "text",
+          "default": "",
+          "placeholder": "pandas query, z.B. label == 1"
+        }
+      ]
+    },
+    "Normalize": {
+      "category": "Transform",
+      "fields": [
+        {
+          "name": "columns",
+          "type": "text",
+          "default": "",
+          "placeholder": "leer = alle numerischen"
+        },
+        {
+          "name": "method",
+          "type": "select",
+          "options": [
+            "zscore",
+            "minmax"
+          ],
+          "default": "zscore"
+        }
+      ]
+    },
+    "RenameColumns": {
+      "category": "Transform",
+      "fields": [
+        {
+          "name": "mapping",
+          "type": "text",
+          "default": "old:new, old2:new2",
+          "placeholder": "alt:neu, kommagetrennt"
+        }
+      ]
+    },
+    "SelectColumns": {
+      "category": "Transform",
+      "fields": [
+        {
+          "name": "columns",
+          "type": "text",
+          "default": "",
+          "placeholder": "spalte1, spalte2, …"
+        }
+      ]
+    },
+    "SmilesToGraph": {
+      "category": "Graph",
+      "fields": [
+        {
+          "name": "smiles_column",
+          "type": "text",
+          "default": "smiles",
+          "placeholder": "Spalte mit SMILES"
+        },
+        {
+          "name": "out_name",
+          "type": "text",
+          "default": "datasets/graphs/mol_graphs.pt",
+          "placeholder": "Ziel (.pt)"
+        },
+        {
+          "name": "atom_features",
+          "type": "select",
+          "options": [
+            "atomic_num",
+            "standard",
+            "rich"
+          ],
+          "default": "standard"
+        },
+        {
+          "name": "bond_features",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "embed_3d",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "add_hydrogens",
+          "type": "bool",
+          "default": true
+        }
+      ]
+    },
+    "StructureToGraph": {
+      "category": "Graph",
+      "fields": [
+        {
+          "name": "path_column",
+          "type": "text",
+          "default": "file_path",
+          "placeholder": "Spalte mit .pdb-Pfaden"
+        },
+        {
+          "name": "out_name",
+          "type": "text",
+          "default": "datasets/graphs/protein_graphs.pt",
+          "placeholder": "Ziel (.pt)"
+        },
+        {
+          "name": "contact_threshold",
+          "type": "float",
+          "default": 8,
+          "min": 1,
+          "step": 0.5
+        }
+      ]
+    },
+    "TableSource": {
+      "category": "Source",
+      "fields": [
+        {
+          "name": "dataset",
+          "type": "dataset-ref",
+          "default": ""
+        }
+      ]
+    },
+    "WriteDataset": {
+      "category": "Sink",
+      "fields": [
+        {
+          "name": "out_path",
+          "type": "text",
+          "default": "datasets/processed.csv",
+          "placeholder": "Ziel unter datasets/"
+        },
+        {
+          "name": "format",
+          "type": "select",
+          "options": [
+            "csv",
+            "parquet",
+            "pt"
+          ],
+          "default": "csv"
+        }
+      ]
+    }
+  }
+}

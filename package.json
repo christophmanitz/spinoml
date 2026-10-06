@@ -56,6 +56,9 @@
     "test:datasets": "python scripts/test-datasets.py",
     "test:scope": "python scripts/test-scope.py",
     "test:safe-load": "python scripts/test-safe-load.py",
+    "test:llm-safety": "tsx scripts/test-llm-safety.ts",
+    "test:llm-validation-parity": "tsx scripts/test-llm-validation-parity.ts",
+    "gen:layer-catalog": "tsx scripts/gen-layer-catalog.ts",
     "sidecar:torch": "python sidecar-torch/main.py",
     "sidecar:llm": "node sidecar-llm/main.mjs"
   },

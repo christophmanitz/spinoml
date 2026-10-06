@@ -1599,6 +1599,31 @@ Code generation
 
 Never rely on Claude producing correct Python code directly.
 
+> **2026-10-06 — implemented for the model-graph/training/data tool surface; found with a fake-provider harness.**
+> `npm run test:llm-safety` runs the REAL `sidecar-llm/main.mjs` against a fake OpenAI-compatible server that scripts
+> exactly what the "model" does (no real model, no key, only 127.0.0.1). It first reported 11 genuine findings, all now
+> fixed (124 assertions, 0 findings; `docs/engineering/LLM_SAFETY.md` has the scenario table and evidence):
+> `execTool` called handlers WITHOUT validating arguments (the zod schema only described the tool to the model);
+> malformed JSON arguments silently became `{}` and `add_layer` stored `layerType: undefined`; `add_layer` had no layer
+> registry or value checks (unknown layers, negative/`Infinity`/`"NaN"` dimensions, wrong types all `ok:true` with an
+> action); a failed `add_layer` (unknown `after`) had ALREADY created the node and emitted the action; `connect` accepted
+> self-loops and cycles; a non-SSE or truncated provider stream ended as a silent `done`; there was no upstream timeout
+> and a client abort did not close the provider connection; a provider error body that echoed the API key reached the
+> SSE stream. A decisive extra reason: the frontend's `coerceParams` silently REPLACES junk values by defaults, so
+> what the sidecar called "added" could be a different graph than the model believed.
+> Fix: one central gate (`invokeTool`: zod validation + strict top-level arguments + explicit JSON-parse errors) shared
+> by every provider path and the MCP bridge route; `sidecar-llm/tool-validation.mjs` validates node types and params
+> against a COMMITTED catalog generated from the three frontend registries (`npm run gen:layer-catalog`, drift-tested)
+> and accepts only values the frontend would store UNCHANGED (+ magnitude cap, prototype keys, unknown keys);
+> handlers validate first and mutate only after every check passed (atomic); `connect` rejects self-loops, cycles and
+> edges into Input nodes (except from a Manifest), duplicates are an explicit no-op; stream integrity (no data / no
+> `finish_reason` → explicit error, no partial tool call runs); `AbortSignal` from the client plus an idle timeout
+> (`SPINOML_LLM_UPSTREAM_TIMEOUT_MS`, default 120 s, invalid value refused at startup), SDK `maxRetries: 2`; every
+> `status:error` goes through `redactSecrets`. `npm run test:llm-validation-parity` (8284 cases: the sidecar never
+> accepts a value the frontend would change or reject; 274 deliberately stricter). Review caught one more hole: zod's
+> default object STRIPS unknown top-level arguments (a hallucinated `activation` would vanish while the model believes
+> it applied) → now an explicit error (T14b).
+
 ---
 
 # 16. PHASE 15 – MCP VALIDATION
@@ -1621,6 +1646,14 @@ Invalid graph mutation
 ```
 
 All invalid operations must be rejected cleanly.
+
+> **2026-10-06 — implemented through the shared gate; MCP bridge not exercised end-to-end.** The inputs the plan
+> lists are covered by `test:llm-safety` scenarios: unknown node id (T9), invalid layer (T6), invalid/unknown parameter
+> (T14), missing parameter (T4), wrong parameter type (T5), negative dimension / NaN / Infinity (T7: `-5`, `1e999`,
+> `"NaN"`, `1e12`, nested negatives), invalid connection (T9/T16), duplicate edge (T9: explicit no-op, no action),
+> invalid mutation (T11: deleting Input/Output is allowed but the result now carries a warning). The opencode MCP bridge
+> route (`/internal/mcp/<id>/call`) goes through the SAME `invokeTool`, but no test drives the stdio bridge or the real
+> `opencode` CLI. There is no `disconnect` tool, so "unknown edge id" does not apply.
 
 ---
 
@@ -1646,6 +1679,14 @@ Claude may propose the operation.
 Validator must reject invalid operation.
 Invalid state must never be committed.
 ```
+
+> **2026-10-06 — implemented for the openai-compat path.** The six adversarial instructions are scripted as model
+> output: connect to a nonexistent node (T9), delete the input node (T11), negative dimension (T7), duplicate edges (T9),
+> invalid output size (T7 `out_features: -3`) → rejected at the tool layer with no action, state unchanged; "connect
+> incompatible tensors" is structurally valid, so it is caught one stage later: the semantic mutants of `test:fuzz`
+> (wrong `in_features`, Concat/Add mismatch, conv kernel > input) come back from the real sidecar as a structured error
+> that `verificationFromInferResult` classifies `invalid` and the training gate refuses. Deleting the Input node is
+> accepted (with a warning) — the model is then UNKNOWN/invalid and cannot train, but the delete itself is not blocked.
 
 ---
 
@@ -3303,7 +3344,6 @@ Hardware
 Prefer many fast unit tests.
 
 Use fewer expensive E2E tests.
-
 ---
 
 # 69. PHASE 68 – CONTRACT TESTS
@@ -3328,7 +3368,6 @@ Expected response
 Expected error
 Timeout
 ```
-
 ---
 
 # 70. PHASE 69 – CI
@@ -3349,7 +3388,6 @@ Python tests
 ```
 
 CI must not require private credentials for ordinary tests.
-
 ---
 
 # 71. PHASE 70 – CI DETERMINISM
@@ -3368,7 +3406,6 @@ Private datasets
 ```
 
 Integration tests requiring these resources must be clearly separated.
-
 ---
 
 # 72. PHASE 71 – TEST TIMEOUTS
@@ -3388,7 +3425,6 @@ Training processes
 ```
 
 No automated test should hang indefinitely.
-
 ---
 
 # 73. PHASE 72 – RETRY LOGIC
@@ -3403,7 +3439,6 @@ Final failure state
 ```
 
 Never implement infinite retry loops.
-
 ---
 
 # 74. PHASE 73 – EXPERIMENT RESULT INTEGRITY
@@ -3500,7 +3535,6 @@ Local training
 ```
 
 should remain available where designed to be local.
-
 ---
 
 # 77. PHASE 76 – CLAUDE FAILURE
@@ -3516,6 +3550,16 @@ Claude proposes invalid graph
 ```
 
 The application must fail safely.
+
+> **2026-10-06 — implemented for the openai-compat provider (fake server).** Provider unavailable (connection
+> refused P1.4), HTTP 500/401/429 (P1.1–3), body that is not SSE (P1.5), invalid JSON inside an SSE frame (P1.6), stream cut
+> in the middle of a tool call (P1.7), a provider that never answers (P2: client abort closes the upstream connection;
+> idle timeout `provider stalled`), a model that never stops calling tools (P3: confirm card after exactly 100 steps,
+> "no" ends the turn, bounded request count), invalid tool arguments and invalid graph proposals (T2–T9). Every case ends
+> in an explicit `status:error` (or a normal completed turn) followed by `done`, the sidecar stays healthy and serves the
+> next chat, and no secret reaches the stream (S1). NOT tested: the Anthropic API path, the claude-agent-sdk subscription
+> path and the opencode CLI path (process failure, invalid model, unexpected exit, cancellation — plan §0.7/§0.12 — would
+> need a fake `SPINOML_OPENCODE_BIN`); the idle timeout/abort changes were made for `openai-compat` only.
 
 ---
 
