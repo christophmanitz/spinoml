@@ -15,10 +15,18 @@
 // sees tools as `<mcpname>_<tool>` (e.g. `graph_add_layer`). This bridge maps
 // between that prefixed name and the sidecar's bare tool name.
 //
+// Authentication (Phase 78): the sidecar hands the bridge a per-turn random
+// session secret via the opencode MCP `environment` field
+// (`SPINOML_MCP_SECRET`, NEVER argv — argv is world-readable in `ps`). Every
+// HTTP call to the sidecar carries it as `X-SpinoML-Token`. The master token
+// is not accepted on this route; on a 401 the bridge prints a clear stderr
+// line so a misconfiguration is obvious instead of hanging the model.
+//
 // Usage: node mcp-bridge.mjs <requestId>
 
 const SIDECAR = process.env.SPINOML_SIDECAR || 'http://127.0.0.1:7422'
 const MCP_NAME = 'graph'
+const MCP_SECRET = process.env.SPINOML_MCP_SECRET || ''
 const requestId = process.argv[2]
 if (!requestId) {
   console.error('[spinoml-mcp] missing requestId argument')
@@ -35,16 +43,33 @@ function sendResult(id, result) {
   send({ jsonrpc: '2.0', id, result })
 }
 
+function authHeader() {
+  if (!MCP_SECRET) return {}
+  return { 'X-SpinoML-Token': MCP_SECRET }
+}
+
+function authError() {
+  // Sidecar rejected the secret (or it was never set). Print a clear stderr
+  // line on EVERY authentication failure so the cause is obvious — opencode
+  // otherwise sees an opaque HTTP failure and the model hangs on the tool
+  // result. The MCP secret is never echoed here (only the class of failure).
+  const msg = 'authentication to the sidecar failed (SPINOML_MCP_SECRET missing or rejected)'
+  console.error(`[spinoml-mcp] ${msg}`)
+  return { error: msg }
+}
+
 async function sidecarJson(pathname, body, timeoutMs = 30000) {
+  if (!MCP_SECRET) return authError()
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
     const r = await fetch(`${SIDECAR}${pathname}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify(body),
       signal: ctrl.signal,
     })
+    if (r.status === 401) return authError()
     const json = await r.json().catch(() => /* non-JSON body handled as an explicit error just below */ null)
     if (!r.ok || !json) {
       return { error: `sidecar HTTP ${r.status}: ${JSON.stringify(json)}` }

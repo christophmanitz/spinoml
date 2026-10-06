@@ -369,6 +369,39 @@ canvas) and the blocked training launch open the dialog via
   files you trust: start the sidecar/trainer with `SPINOML_ALLOW_UNSAFE_PICKLE=1` (recorded in
   the run as `unsafe_pickle`). Proof: `npm run test:safe-load`, `test:scope`, `verify:paths`.
 
+## 8e. Sidecar authentication (Phase 77/78)
+
+- **What the user sees**: nothing in normal use. The app generates a random token per launch
+  and attaches it to every sidecar request. Header badges show `auth failed` (rose, tooltip =
+  German message) instead of `offline` when a sidecar rejects the token; an amber
+  `ungesichert` chip appears when a Tauri build talks to a sidecar that runs without a token
+  (e.g. one started by hand). Browser-dev (`npm run dev` + manual sidecars) runs tokenless
+  on purpose and is marked `unauthenticated-dev` in `/health`.
+- **Wire protocol** (`docs/engineering/SIDECAR_AUTH.md` is the spec): header
+  `X-SpinoML-Token` on everything except `OPTIONS` and `GET /health`; Host must be a loopback
+  name; `Origin`, when present, must be in the exact allow-list (`tauri://localhost`,
+  `http://tauri.localhost`, `https://tauri.localhost`, `http://localhost:5173`,
+  `http://127.0.0.1:5173`, + `SPINOML_ALLOWED_ORIGINS`); CORS echoes the allowed Origin
+  (never `*`). `/health` without a token returns only `{ok, auth, requiresAuth, tokenOk:false}`.
+- **Where it lives**: `sidecar-torch/auth.py`, `sidecar-llm/auth.mjs` (same decision order),
+  `src-tauri/src/sidecar_auth.rs` (token generation + the `sidecar_token` command),
+  `src/sidecars/auth.ts` (`sidecarFetch`: header, retry once on 401, `SidecarAuthError`,
+  `probeSidecarHealth`). `scripts/verify-sidecar-fetch.ts` fails if any `src/` file calls bare
+  `fetch` — a new client MUST use `sidecarFetch`/`torchFetch`.
+- **Environment** (sidecars): `SPINOML_SIDECAR_TOKEN` (≥ 32 chars `[A-Za-z0-9_-]`, else exit 2),
+  `SPINOML_REQUIRE_TOKEN=1` (token mandatory; the Rust shell sets both for managed sidecars),
+  `SPINOML_ALLOWED_ORIGINS`. The sidecar deletes the token from its own environment after
+  reading it, so children (pip, scripts, opencode) never inherit it.
+- **Remote sidecar**: a fresh token per session, delivered over ssh stdin (never argv).
+  `deploy()` ships every file in `SIDECAR_FILES` (`remote_sidecar.rs`) — add a new
+  `sidecar-torch/*.py` module there (`npm run verify:remote-deploy-files` tells you).
+- **opencode MCP bridge**: authenticated with a per-turn session secret (env
+  `SPINOML_MCP_SECRET` via the opencode `environment`), never the master token; ask/request ids
+  are random UUIDs.
+- **Proof**: `test:sidecar-auth-torch`, `test:sidecar-auth-llm`, `test:sidecar-auth-frontend`,
+  `test:opencode-lifecycle`, `verify:sidecar-fetch`, `verify:remote-deploy-files`, `cargo test`.
+  Limits (webview trust, same-user processes, CSP/Monaco CDN): LIMITATIONS.md §2, R052.
+
 ## 9. Common tasks (how to do X)
 
 - **Build a dual-encoder (ligand + protein → affinity)**: `Manifest` → `Graph`
@@ -382,6 +415,7 @@ canvas) and the blocked training launch open the dialog via
 
 ## Changelog (append one dated line per feature; newest first)
 
+- 2026-10-06 — **Sidecar authentication (Phase 77/78)**: per-launch token + Host/Origin allow-list on both sidecars (no more `CORS *`), `sidecarFetch` wrapper with an `auth failed` UI state, per-session remote token over ssh stdin, per-turn MCP bridge secret, random ask/request ids; also fixes the remote deploy that shipped only 2 of the sidecar's files (see §8e, `docs/engineering/SIDECAR_AUTH.md`).
 - 2026-10-06 — **Test infrastructure (Phase 67–72)**: `npm run suites` / `npm run ci` — one registry of 54 suites by test-pyramid category with hard per-suite timeouts, scrubbed environment (no API keys/ssh agent), port preflight, scoped leak detection and honest PASS/FAIL/SKIPPED/BLOCKED/TIMEOUT statuses; `npm run typecheck:scripts`; `.github/workflows/ci.yml` (defined, not yet run on GitHub); pinned `sidecar-torch/requirements.txt`.
 - 2026-10-06 — **LLM tool-call safety (Phase 14–16, 76)**: every provider's tool calls pass one gate (argument schema, strict top-level args, JSON errors) and a catalog-based validator that accepts only values the frontend would store unchanged; handlers are atomic; connect rejects self-loops/cycles; broken provider streams end as explicit errors with abort + idle timeout (`SPINOML_LLM_UPSTREAM_TIMEOUT_MS`); API keys are redacted from error events. `SPINOML_LLM_PORT` selects the sidecar port. `npm run test:llm-safety` (fake OpenAI server, 124 assertions), `npm run test:llm-validation-parity`, `npm run gen:layer-catalog`. See `docs/engineering/LLM_SAFETY.md`.
 

@@ -1,3 +1,5 @@
+import { sidecarFetch, probeSidecarHealth, SidecarAuthError, type SidecarHealth } from '../sidecars/auth'
+
 export type AskKind = 'confirm' | 'select' | 'text'
 
 export type ChatEvent =
@@ -62,32 +64,34 @@ const SIDECAR_URL = 'http://127.0.0.1:7422'
  *  /chat turn continues. Best-effort: a missing/expired ask just no-ops. */
 export async function respondToChat(askId: string, answer: unknown): Promise<void> {
   try {
-    await fetch(`${SIDECAR_URL}/respond`, {
+    await sidecarFetch('llm', `${SIDECAR_URL}/respond`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ askId, answer }),
     })
-  } catch {
+  } catch (e) {
+    // A rejected approval the user actually clicked must not vanish. Only a pure
+    // network failure (sidecar gone → the turn times out on its side) is a no-op;
+    // an auth failure is re-thrown so answerAsk can surface it in the chat.
+    if (e instanceof SidecarAuthError) throw e
     /* sidecar gone — the turn will time out on its side */
   }
 }
 
 export async function llmHealth(): Promise<boolean> {
-  try {
-    const r = await fetch(`${SIDECAR_URL}/health`)
-    return r.ok
-  } catch {
-    // Health probe: an unreachable sidecar is reported as offline (explicit
-    // distinct UI state), not as a failed model or turn.
-    return false
-  }
+  return (await llmHealthState()).state === 'online'
+}
+
+/** Full health probe (online / offline / auth-failed + auth mode). */
+export async function llmHealthState(): Promise<SidecarHealth> {
+  return probeSidecarHealth('llm', SIDECAR_URL)
 }
 
 /** Live provider/model list from the opencode CLI (`opencode models`, cached
  *  in the sidecar). Empty on any error — the UI falls back to suggestions. */
 export async function fetchOpenCodeModels(): Promise<string[]> {
   try {
-    const r = await fetch(`${SIDECAR_URL}/opencode/models`)
+    const r = await sidecarFetch('llm', `${SIDECAR_URL}/opencode/models`)
     if (!r.ok) return []
     const j = (await r.json()) as { ok?: boolean; models?: string[] }
     return Array.isArray(j.models) ? j.models : []
@@ -103,7 +107,7 @@ export async function streamChat(
   onEvent: (e: ChatEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`${SIDECAR_URL}/chat`, {
+  const res = await sidecarFetch('llm', `${SIDECAR_URL}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),

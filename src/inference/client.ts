@@ -1,3 +1,6 @@
+import { currentTorchEndpoint, currentTorchUrl, torchFetch } from '../sidecars/torchUrl'
+import { SidecarAuthError, probeSidecarHealth, type SidecarHealth } from '../sidecars/auth'
+
 export type InferOk = {
   ok: true
   shapes: Record<string, number[]>
@@ -16,16 +19,24 @@ export type InferErr = {
 
 export type InferResult = InferOk | InferErr
 
-import { currentTorchUrl } from '../sidecars/torchUrl'
+/** Auth failure: the sidecar is reachable but rejected the request — reported
+ *  with `offline: false` so it is never rendered as "unreachable". */
+export type InferAuthErr = {
+  ok: false
+  error: string
+  offline: false
+  authFailed: true
+  shapes: Record<string, number[]>
+}
 
 export async function inferShapes(
   code: string,
   inputShapes: number[][],
   inputDtypes?: string[],
   signal?: AbortSignal,
-): Promise<InferResult | { ok: false; error: string; offline: true; shapes: Record<string, number[]> }> {
+): Promise<InferResult | { ok: false; error: string; offline: true; shapes: Record<string, number[]> } | InferAuthErr> {
   try {
-    const res = await fetch(`${currentTorchUrl()}/infer`, {
+    const res = await torchFetch('/infer', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code, input_shapes: inputShapes, input_dtypes: inputDtypes }),
@@ -37,18 +48,20 @@ export async function inferShapes(
     return (await res.json()) as InferResult
   } catch (e: unknown) {
     if (e instanceof DOMException && e.name === 'AbortError') throw e
+    if (e instanceof SidecarAuthError) {
+      // Reachable but rejected (401/403): an explicit auth error, NOT offline.
+      return { ok: false, error: e.message, shapes: {}, offline: false, authFailed: true }
+    }
     const msg = e instanceof Error ? e.message : String(e)
     return { ok: false, error: `sidecar unreachable: ${msg}`, shapes: {}, offline: true }
   }
 }
 
 export async function sidecarHealth(): Promise<boolean> {
-  try {
-    const res = await fetch(`${currentTorchUrl()}/health`)
-    return res.ok
-  } catch {
-    // Health probe: an unreachable sidecar is reported as offline (a distinct
-    // UI state), not as "model verified".
-    return false
-  }
+  return (await sidecarHealthState()).state === 'online'
+}
+
+/** Full health probe (online / offline / auth-failed + auth mode). */
+export async function sidecarHealthState(): Promise<SidecarHealth> {
+  return probeSidecarHealth(currentTorchEndpoint(), currentTorchUrl())
 }

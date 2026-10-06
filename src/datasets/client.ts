@@ -1,9 +1,10 @@
 import type { InspectResult, StatsResult, SmokeResult } from './types'
-import { currentTorchUrl } from '../sidecars/torchUrl'
+import { torchFetch } from '../sidecars/torchUrl'
+import { SidecarAuthError } from '../sidecars/auth'
 
-async function post<T>(path: string, body: unknown): Promise<T | { ok: false; error: string; offline: true }> {
+async function post<T>(path: string, body: unknown): Promise<T | { ok: false; error: string; offline: boolean }> {
   try {
-    const res = await fetch(`${currentTorchUrl()}${path}`, {
+    const res = await torchFetch(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -13,6 +14,11 @@ async function post<T>(path: string, body: unknown): Promise<T | { ok: false; er
     }
     return (await res.json()) as T
   } catch (e) {
+    if (e instanceof SidecarAuthError) {
+      // Reachable but rejected: `offline: false` keeps the store from labelling
+      // it "unreachable" and surfaces the German auth message instead.
+      return { ok: false, error: e.message, offline: false } as const
+    }
     const msg = e instanceof Error ? e.message : String(e)
     return { ok: false, error: `sidecar unreachable: ${msg}`, offline: true } as const
   }

@@ -42,6 +42,12 @@ export interface ChatOptions {
   autoMode?: boolean
   loop?: boolean
   user?: string
+  // Phase 78: forward as X-SpinoML-Token on the /chat POST (and /respond),
+  // so tests can drive a sidecar started in mode `token`. No token by default
+  // — the existing unauthenticated-dev tests stay green.
+  token?: string
+  // Phase 78: forward as Origin (exercises the Host/Origin gate).
+  origin?: string
 }
 
 export interface AskEvent {
@@ -137,6 +143,21 @@ export class LlmHarness {
     return h
   }
 
+  // Phase 78: connect to a sidecar the caller already started (e.g. via
+  // scripts/lib/auth-probe's startSidecar) and pair it with a freshly-spun
+  // fake OpenAI server. The harness only owns the fake server's lifecycle
+  // from this point on; stop() tears it down. No new sidecar is spawned.
+  static async connect(opts: { baseUrl: string }): Promise<LlmHarness> {
+    const fake = await FakeOpenAI.start()
+    const h = Object.create(LlmHarness.prototype) as LlmHarness
+    ;(h as unknown as { fake: FakeOpenAI }).fake = fake
+    ;(h as unknown as { port: number }).port = 0
+    ;(h as unknown as { base: string }).base = opts.baseUrl
+    ;(h as unknown as { stdout: string }).stdout = ''
+    ;(h as unknown as { stderr: string }).stderr = ''
+    return h
+  }
+
   get baseUrl(): string {
     return this.base
   }
@@ -178,11 +199,13 @@ export class LlmHarness {
     }
   }
 
-  async respond(askId: string, answer: string | boolean): Promise<boolean> {
+  async respond(askId: string, answer: string | boolean, token?: string): Promise<boolean> {
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (typeof token === 'string' && token.length > 0) headers['X-SpinoML-Token'] = token
       const r = await fetch(`${this.base}/respond`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ askId, answer }),
       })
       return r.ok
@@ -229,9 +252,16 @@ export class LlmHarness {
       elapsedMs: 0,
     }
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (typeof opts.token === 'string' && opts.token.length > 0) {
+        headers['X-SpinoML-Token'] = opts.token
+      }
+      if (typeof opts.origin === 'string' && opts.origin.length > 0) {
+        headers.Origin = opts.origin
+      }
       const res = await fetch(`${this.base}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(body),
         signal,
       })
@@ -304,7 +334,8 @@ export class LlmHarness {
   }
 
   async stop(): Promise<void> {
-    if (this.child.exitCode === null) {
+    // connect() doesn't spawn a sidecar — only the fake server has lifecycle.
+    if (this.child && this.child.exitCode === null) {
       this.child.kill('SIGTERM')
       const exited = await Promise.race([
         new Promise<boolean>((resolve) => this.child.once('exit', () => resolve(true))),

@@ -43,6 +43,33 @@ import OpenAI from 'openai'
 import { splitArgs, quoteArgv, checkDownloadUrl, checkSshTarget, safeFetch } from './shell-safety.mjs'
 import { resolveInWorkspace, loadSymlinkTargets } from './path-scope.mjs'
 import { validateNodeParams, wouldCreateCycle, redactSecrets, nodeKind } from './tool-validation.mjs'
+import { randomUUID } from 'node:crypto'
+import {
+  loadConfig as loadAuthConfig,
+  scrubEnv as scrubAuthEnv,
+  decideFromHeaders,
+  applyCorsHeaders,
+  healthBody,
+  limitedHealthBody,
+  CODE_UNAUTHORIZED,
+  CODE_BAD_ORIGIN,
+  CODE_BAD_HOST,
+  sessionSecretMatches,
+  generateMcpSecret,
+} from './auth.mjs'
+
+// Authentication / Host / Origin gate (Phase 77/78; see
+// docs/engineering/SIDECAR_AUTH.md). Read once at startup; SPINOML_SIDECAR_TOKEN
+// is then scrubbed from process.env so subprocess children (opencode, Claude
+// CLI, run_script helpers) cannot inherit it.
+let AUTH_CONFIG
+try {
+  AUTH_CONFIG = loadAuthConfig(process.env)
+} catch (e) {
+  console.error(`[spinoml-llm] ${e.message}`)
+  process.exit(2)
+}
+scrubAuthEnv(process.env)
 
 // Default 7422 (the app and the frontend assume it). SPINOML_LLM_PORT lets the
 // tests run a throw-away sidecar next to a running app; anything that is not a
@@ -679,15 +706,13 @@ function isAffirmative(a) {
 // A tool handler running inside a live /chat turn can pause, ask the frontend a
 // question (SSE `ask`), and await the answer posted to POST /respond. Backs
 // both the ask_user tool and run_script's confirmation gate.
-let askSeq = 0
-let reqSeq = 0
 const pendingAsks = new Map() // askId → { resolve, reject }
 const ASK_TIMEOUT_MS = 10 * 60 * 1000
 
 // Build an askUser bound to one turn's emit + a registry for cleanup.
 function makeAsker(pushEvent, requestId, registry) {
   return function askUser({ kind, prompt, options, payload }) {
-    const askId = `${requestId}:${++askSeq}`
+    const askId = randomUUID()
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         if (pendingAsks.delete(askId)) { registry.delete(askId); reject(new Error('no answer (timed out)')) }
@@ -1916,11 +1941,24 @@ async function runOpenAiCompat(specs, systemPrompt, history, user, emit, opts, a
 
 const OPENCODE_BIN = process.env.SPINOML_OPENCODE_BIN || 'opencode'
 const OPENCODE_DEFAULT_MODEL = 'opencode/big-pickle'
-const OPENCODE_TIMEOUT_MS = 30 * 60 * 1000 // hard cap on one opencode run
+// Optional overrides for tests: validated exactly like SPINOML_LLM_PORT /
+// SPINOML_LLM_UPSTREAM_TIMEOUT_MS — a non-positive / non-integer value is
+// refused loudly at startup (exit 2) instead of silently falling back.
+const positiveIntEnv = (name, fallback) => {
+  const raw = process.env[name]
+  if (raw === undefined || raw === '') return fallback
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n <= 0) {
+    console.error(`[spinoml-llm] invalid ${name}=${JSON.stringify(raw)} (expected a positive integer of milliseconds)`)
+    process.exit(2)
+  }
+  return n
+}
+const OPENCODE_TIMEOUT_MS = positiveIntEnv('SPINOML_OPENCODE_TIMEOUT_MS', 30 * 60 * 1000) // hard cap on one opencode run
 // The FIRST step can take a while: one-time provider/account sync, model
 // metadata fetch, backend retries (title agent). A chat turn is async — the UI
 // shows "thinking" meanwhile — so give a generous window before giving up.
-const OPENCODE_START_TIMEOUT_MS = 90 * 1000
+const OPENCODE_START_TIMEOUT_MS = positiveIntEnv('SPINOML_OPENCODE_START_TIMEOUT_MS', 90 * 1000)
 const OPENCODE_MAX_TOOL_STEPS = 150 // opt-out guard; opencode has internal loops too
 const OPENCODE_MODELS_TTL_MS = 60 * 1000 // opencode models is ~1s to run — cache it
 const OPENCODE_MAX_JSON_CHUNK = 1_000_000 // guard on accumulated stdout
@@ -1942,10 +1980,22 @@ function opencodeDisabledTools() {
 // handlers as every other provider, so actions/ask/log event routing is
 // identical and no tool ever runs without hitting the graph-validation gate.
 // Keyed by the /chat requestId; the session lives only for the turn.
-const mcpSessions = new Map() // requestId → { specsByName }
+//
+// Each session is born with a per-turn random secret (32 bytes hex, generated
+// here). The bridge authenticates by sending it as `X-SpinoML-Token` on every
+// `/internal/mcp/<id>/…` request. The master token is NEVER accepted here —
+// the opencode process must not see it (it could leak via `ps`, core dumps,
+// environment dumps, etc.). The secret reaches the bridge through the
+// `environment` of the opencode `mcp.graph` config entry, never argv.
+const mcpSessions = new Map() // requestId → { specsByName, secret }
 
 function registerMcpSession(requestId, specs) {
-  mcpSessions.set(requestId, { specsByName: new Map(specs.map((s) => [s.name, s])) })
+  const secret = generateMcpSecret()
+  mcpSessions.set(requestId, {
+    specsByName: new Map(specs.map((s) => [s.name, s])),
+    secret,
+  })
+  return secret
 }
 
 function unregisterMcpSession(requestId) {
@@ -1954,34 +2004,46 @@ function unregisterMcpSession(requestId) {
 
 // HTTP handler for POST /internal/mcp/<requestId>/list | /call — the bridge's
 // single point of contact (localhost-only, like the rest of the sidecar).
+// Always authenticated with the per-turn session secret; an unauthenticated
+// caller can neither reach a session nor learn whether one exists (same 401
+// for a wrong secret and for an unknown requestId).
 async function handleMcpRoute(req, res) {
-  res.setHeader('Content-Type', 'application/json')
+  const m = req.url.match(/^\/internal\/mcp\/([^/]+)\/(list|call)$/)
+  if (!m) {
+    setCorsOrigin(res, RESPONSE_ORIGIN.get(res))
+    return sendJson(res, 404, { error: 'not found' })
+  }
+  const [, requestId, action] = m
+  const session = mcpSessions.get(requestId)
+  const supplied = req.headers['x-spinoml-token']
+  const suppliedStr = Array.isArray(supplied) ? supplied.join(', ') : (typeof supplied === 'string' ? supplied : '')
+  const ok = !!session && sessionSecretMatches(suppliedStr, session.secret)
+  if (!ok) {
+    // Same body for "no session" and "wrong secret" — a probe must not be
+    // able to enumerate live session ids.
+    setCorsOrigin(res, RESPONSE_ORIGIN.get(res))
+    return sendJson(res, 401, { error: CODE_UNAUTHORIZED, code: CODE_UNAUTHORIZED, reason: 'invalid' })
+  }
   let body = ''
   for await (const chunk of req) {
-    if (body.length > 1e6) { res.statusCode = 413; return res.end(JSON.stringify({ error: 'body too large' })) }
+    if (body.length > 1e6) return sendJson(res, 413, { error: 'body too large' })
     body += chunk
   }
   let payload = {}
-  try { payload = body ? JSON.parse(body) : {} } catch { res.statusCode = 400; return res.end(JSON.stringify({ error: 'invalid json' })) }
-
-  const m = req.url.match(/^\/internal\/mcp\/([^/]+)\/(list|call)$/)
-  if (!m) { res.statusCode = 404; return res.end(JSON.stringify({ error: 'not found' })) }
-  const [, requestId, action] = m
-  const session = mcpSessions.get(requestId)
-  if (!session) { res.statusCode = 404; return res.end(JSON.stringify({ error: 'no such session' })) }
+  try { payload = body ? JSON.parse(body) : {} } catch { return sendJson(res, 400, { error: 'invalid json' }) }
 
   if (action === 'list') {
     const tools = [...session.specsByName.values()].map((s) => ({
       name: s.name, description: s.description, inputSchema: specToJsonSchema(s),
     }))
-    return res.end(JSON.stringify({ tools }))
+    return sendJson(res, 200, { tools })
   }
 
   const { name, args } = payload
   // Same validation gate as execTool: opencode's MCP bridge must not be able to
   // reach a handler with arguments that would fail the schema.
   const result = await invokeTool(session.specsByName, name, args)
-  return res.end(JSON.stringify({ ok: !result.isError, result: result.text }))
+  return sendJson(res, 200, { ok: !result.isError, result: result.text })
 }
 
 function stringifyPartOutput(output) {
@@ -2015,13 +2077,18 @@ async function listOpenCodeModels() {
 // results are fed back to opencode directly because it runs its OWN tool loop
 // (unlike the other providers where this file orchestrates the loop); we only
 // translate events and enforce budgets/timeouts/abort.
-async function runOpenCode(specs, systemPrompt, history, user, emit, opts, requestId, turnAbort) {
+async function runOpenCode(specs, systemPrompt, history, user, emit, opts, requestId, turnAbort, mcpSecret) {
   const model = opts?.model || OPENCODE_DEFAULT_MODEL
   const prompt = `${systemPrompt}\n\n${formatHistoryAsPrompt(history ?? [], user)}`
   const bridgePath = new URL('./mcp-bridge.mjs', import.meta.url).pathname
 
   // Fresh, disposable config: inline config wins over global/session/project.
   // MCP tool server name "graph" → the model sees `graph_<tool>`.
+  // The per-turn MCP secret is delivered via the `environment` field of the
+  // MCP entry (opencode supports it for local MCP servers — see its docs /
+  // `opencode mcp add --env KEY=VALUE`). The bridge reads it from
+  // `SPINOML_MCP_SECRET` and sends it as `X-SpinoML-Token`. The master token
+  // never reaches opencode.
   const opencodeConfig = {
     model,
     autoupdate: false,
@@ -2033,6 +2100,7 @@ async function runOpenCode(specs, systemPrompt, history, user, emit, opts, reque
         type: 'local',
         command: [process.execPath, bridgePath, requestId],
         enabled: true,
+        environment: { SPINOML_MCP_SECRET: mcpSecret },
       },
     },
   }
@@ -2042,6 +2110,11 @@ async function runOpenCode(specs, systemPrompt, history, user, emit, opts, reque
     ...process.env,
     OPENCODE_CONFIG_CONTENT: JSON.stringify(opencodeConfig),
     OPENCODE_CONFIG_DIR: sessionDir,
+    // The MCP bridge defaults to 7422; when this sidecar runs on an overridden
+    // port (SPINOML_LLM_PORT, used by tests / side-by-side dev) the bridge would
+    // otherwise call the wrong port and every opencode tool call would fail.
+    // Pin it to THIS sidecar's real address; it is a localhost-only URL.
+    SPINOML_SIDECAR: `http://127.0.0.1:${PORT}`,
     NO_COLOR: '1',
   }
 
@@ -2157,11 +2230,15 @@ async function runOpenCode(specs, systemPrompt, history, user, emit, opts, reque
   })
 
   return await new Promise((resolve) => {
-    child.on('close', (code) => {
+    // Deterministic cleanup: remove the disposable session dir BEFORE resolving,
+    // so a completed/aborted turn never leaves a `spinoml-opencode-*` behind.
+    // A fire-and-forget rm raced the process teardown (the lifecycle test
+    // asserts no leftover temp dir, and a killed sidecar would keep them).
+    const cleanupSessionDir = () => fs.rm(sessionDir, { recursive: true, force: true }).catch(() => { /* disposable opencode session dir cleanup */ })
+    child.on('close', async (code) => {
       clearTimeout(deadline)
       clearTimeout(startDeadline)
-      // Best-effort: drop the disposable session dir (opencode.json snapshot etc.)
-      fs.rm(sessionDir, { recursive: true, force: true }).catch(() => {})
+      await cleanupSessionDir()
       if (turnAbort.signal.aborted) return resolve(finalText) // user aborted — no error noise
       if (forcedEnd) return resolve(finalText)
       if (code !== 0 && !sawErrorEvent) {
@@ -2170,10 +2247,10 @@ async function runOpenCode(specs, systemPrompt, history, user, emit, opts, reque
       }
       resolve(finalText)
     })
-    child.on('error', (e) => {
+    child.on('error', async (e) => {
       clearTimeout(deadline)
       clearTimeout(startDeadline)
-      fs.rm(sessionDir, { recursive: true, force: true }).catch(() => { /* disposable session dir cleanup */ })
+      await cleanupSessionDir()
       resolve(finalText)
       emit({ type: 'status', value: 'error', message: `OpenCode-Start fehlgeschlagen: ${e.message}` })
     })
@@ -2182,17 +2259,47 @@ async function runOpenCode(specs, systemPrompt, history, user, emit, opts, reque
 
 // ────────────────────────────────────────────────────────────────────────────
 // HTTP layer.
+//
+// Every code path that writes headers MUST honour the validated origin the
+// auth gate produced for the request. We attach it to the `res` object via a
+// WeakMap so no site can forget it and fall back to a wildcard. `applyCors`
+// writes the (origin-conditional) CORS headers and `setCorsOrigin` plants the
+// value BEFORE the first `res.writeHead`. 401/403/4xx responses also echo the
+// allowed Origin (when there is one) so the webview can read them.
 
-function cors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+const RESPONSE_ORIGIN = new WeakMap()
+
+function setCorsOrigin(res, origin) {
+  RESPONSE_ORIGIN.set(res, origin)
+}
+
+function applyCors(res) {
+  const origin = RESPONSE_ORIGIN.get(res)
+  // Match the torch reference exactly: CORS headers ONLY for a validated
+  // Origin — none at all when the request had no Origin or it was rejected.
+  if (typeof origin === 'string' && origin.length > 0) {
+    applyCorsHeaders(res, origin)
+  }
 }
 
 function sendJson(res, status, obj) {
-  cors(res)
-  res.writeHead(status, { 'Content-Type': 'application/json' })
-  res.end(JSON.stringify(obj))
+  applyCors(res)
+  const payload = JSON.stringify(obj)
+  // Explicit Content-Length: keeps the body a single framed response (no
+  // chunked transfer-encoding), which the auth test's raw HTTP client and
+  // any minimal client can read without a chunk decoder.
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(payload),
+  })
+  res.end(payload)
+}
+
+function rejectRequest(res, decision) {
+  const code = decision.code
+  const reason = decision.reason || undefined
+  setCorsOrigin(res, decision.origin)
+  sendJson(res, decision.status, reason === undefined ? { error: code, code } : { error: code, code, reason })
 }
 
 // FEAT-4 — the reproducibility-documentation instruction, by doc mode:
@@ -2525,7 +2632,7 @@ async function handleChat(req, res) {
   // fully backward-compatible with older frontends.
   const kind = llm?.kind ?? 'subscription'
 
-  cors(res)
+  applyCors(res)
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -2559,7 +2666,7 @@ async function handleChat(req, res) {
 
   // Per-turn ask/answer plumbing. The registry lets us reject any still-pending
   // question when the turn ends or the client disconnects (no hung handlers).
-  const requestId = `req${++reqSeq}`
+  const requestId = randomUUID()
   const askRegistry = new Set()
   const rejectPendingAsks = (reason) => {
     for (const askId of askRegistry) {
@@ -2628,10 +2735,12 @@ async function handleChat(req, res) {
       await runOpenAiCompat(specs, systemPrompt, messages, user, emit, llm, askUser, turnAbort.signal)
     } else if (kind === 'opencode') {
       // Register the per-turn MCP session BEFORE spawning opencode: the bridge
-      // connects the moment the CLI starts. Unregistered in finally below.
-      registerMcpSession(requestId, specs)
+      // connects the moment the CLI starts. The generated secret is delivered
+      // to the bridge through the opencode `environment` of the MCP config —
+      // not argv, not a file (`ps` is world-readable). Unregistered in finally.
+      const mcpSecret = registerMcpSession(requestId, specs)
       try {
-        await runOpenCode(specs, systemPrompt, messages, user, emit, llm, requestId, turnAbort)
+        await runOpenCode(specs, systemPrompt, messages, user, emit, llm, requestId, turnAbort, mcpSecret)
       } finally {
         unregisterMcpSession(requestId)
       }
@@ -2766,10 +2875,32 @@ function handleSdkMessage(m, emit) {
   // user whether to continue), not surfaced here as an error.
 }
 
+const HEALTH_FULL_BODY = { ok: true }
+
 const server = createServer(async (req, res) => {
-  if (req.method === 'OPTIONS') { cors(res); res.writeHead(204); res.end(); return }
+  // Per docs/engineering/SIDECAR_AUTH.md § 'Per-request enforcement order':
+  // Host → Origin → OPTIONS → GET /health → token → otherwise. The auth
+  // gate runs BEFORE any body is read so a malformed credential cannot
+  // trigger work.
+  const decision = decideFromHeaders(req.method, req.url ?? '/', req, AUTH_CONFIG)
+  setCorsOrigin(res, decision.origin)
+  if (decision.kind === 'reject') {
+    return rejectRequest(res, decision)
+  }
+  if (decision.kind === 'ok_health_limited') {
+    // Wrong / missing token on /health: limited body, no other keys.
+    return sendJson(res, 200, limitedHealthBody())
+  }
+  // decision.kind === 'ok'
+
+  if (req.method === 'OPTIONS') {
+    applyCors(res)
+    res.writeHead(204)
+    res.end()
+    return
+  }
   if (req.method === 'GET' && req.url === '/health') {
-    return sendJson(res, 200, { ok: true })
+    return sendJson(res, 200, healthBody(AUTH_CONFIG, HEALTH_FULL_BODY, decision.tokenOk))
   }
   if (req.method === 'POST' && req.url === '/respond') {
     let body = ''

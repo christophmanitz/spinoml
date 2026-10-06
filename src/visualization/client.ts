@@ -1,4 +1,5 @@
-import { currentTorchUrl } from '../sidecars/torchUrl'
+import { torchFetch } from '../sidecars/torchUrl'
+import { SidecarAuthError } from '../sidecars/auth'
 
 // Mirrors the payload from sidecar-torch/main.py `activations()`.
 
@@ -41,7 +42,7 @@ export type ActivationsErr = {
   trace?: string
   details?: unknown
 }
-export type ActivationsResult = ActivationsOk | ActivationsErr | { ok: false; error: string; offline: true }
+export type ActivationsResult = ActivationsOk | ActivationsErr | { ok: false; error: string; offline: boolean }
 
 export async function runActivationsReq(
   code: string,
@@ -54,7 +55,7 @@ export async function runActivationsReq(
   signal?: AbortSignal,
 ): Promise<ActivationsResult> {
   try {
-    const res = await fetch(`${currentTorchUrl()}/activations`, {
+    const res = await torchFetch('/activations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -72,6 +73,10 @@ export async function runActivationsReq(
     return (await res.json()) as ActivationsResult
   } catch (e: unknown) {
     if (e instanceof DOMException && e.name === 'AbortError') throw e
+    if (e instanceof SidecarAuthError) {
+      // Reachable but rejected: explicit auth error, not "unreachable".
+      return { ok: false, error: e.message, offline: false }
+    }
     const msg = e instanceof Error ? e.message : String(e)
     return { ok: false, error: `sidecar unreachable: ${msg}`, offline: true }
   }

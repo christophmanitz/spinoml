@@ -462,6 +462,20 @@ Secrets
 
 are not written to ordinary logs or experiment artifacts.
 
+> **0.12 — partially implemented 2026-10-06 (Phase 77/78 session).** `npm run test:opencode-lifecycle`
+> (68 rows) drives the real LLM sidecar and the REAL `mcp-bridge.mjs` against a fake `opencode`
+> binary (`scripts/lib/fake-opencode`, `SPINOML_OPENCODE_BIN`): tool call through the bridge in
+> token mode, no/wrong bridge secret rejected, master token and secret not in argv/env they must not
+> be in, non-zero exit / `error` event / garbage lines / silent process (start timeout) / client
+> abort (fake AND bridge child gone), invalid timeout env exits 2, no leftover processes or
+> `spinoml-opencode-*` dirs. It found a real defect (the bridge always called port 7422, ignoring
+> `SPINOML_LLM_PORT`) and an unawaited temp-dir cleanup — both fixed. The real opencode CLI
+> (1.18.15) was exercised once by hand against a token-mode sidecar with a ScaDS model (the free
+> `opencode/*` tier refuses non-OpenCode callers with 403): the `environment` secret reached the
+> bridge and `add_layer` produced an `action`. NOT done: provider selection / model handling tests
+> (default Big Pickle, unknown model), an automated real-CLI suite (needs a live model —
+> `verify:opencode` stays BLOCKED), Anthropic/subscription paths.
+
 ---
 
 # 0.13 OpenCode integration acceptance criteria
@@ -3632,6 +3646,15 @@ Secrets
 Logs
 ```
 
+> **Phase 77 — partially implemented 2026-10-06 (sidecar authentication; the rest of the
+> review was done piecewise).** The "Local HTTP sidecars" item is closed by Phase 77/78 below
+> (R013/R014). Command injection, path traversal, Python code injection, unsafe
+> deserialization, subprocess/ssh construction, LLM tool access, secrets and logs were
+> covered by phases 43–47 and 76 (R012, R015, R016, R039–R041, R048–R050). NOT done: a
+> single end-to-end threat-model walkthrough; the webview trust boundary (CSP null, Monaco
+> from a CDN — new R052) and workspace-level file permissions were only noted
+> (docs/engineering/LIMITATIONS.md §2).
+
 ---
 
 # 79. PHASE 78 – LOCALHOST SERVICES
@@ -3654,6 +3677,41 @@ Do not expose a service on:
 ```
 
 unless there is an explicit reason.
+
+> **Phase 78 — implemented 2026-10-06.** Both sidecars bind `127.0.0.1` only (code review:
+> `ThreadingHTTPServer(("127.0.0.1", …))`, `server.listen(PORT, '127.0.0.1')`; the bind itself is not
+> asserted by a test — the auth tests assert that a non-loopback `Host` header is refused, DNS-rebinding style).
+> **CORS** no longer sends `*`: only an exact-match Origin from the allow-list is echoed
+> (`Vary: Origin`), a disallowed Origin gets 403 and no CORS headers; preflights need no token.
+> **Authentication**: per-launch 256-bit token (`X-SpinoML-Token`, constant-time compare) on
+> every endpoint except `OPTIONS` and `GET /health` (which without a token reveals only
+> `{ok, auth, requiresAuth, tokenOk:false}`); generated in Rust (`getrandom`), passed to the
+> managed sidecars by env (`Command::env`, never `set_var`/argv), to the webview via
+> `sidecar_token`; the sidecar deletes it from its own env so children never inherit it.
+> Remote sidecar: fresh token per session over ssh stdin, exported only after `env.sh` ran
+> (so `env.sh` cannot replace it). LLM sidecar: `/respond` and `/chat` need the token, ids are
+> random UUIDs, the opencode MCP bridge uses a per-turn session secret via the opencode
+> `environment` (never argv, never the master token). Frontend: `src/sidecars/auth.ts`
+> `sidecarFetch` (retry once on 401; distinct `auth failed` vs `offline` states);
+> `verify:sidecar-fetch` forbids bare `fetch(` in `src/`. Spec:
+> `docs/engineering/SIDECAR_AUTH.md`.
+> **Review caught before commit** (the workers' tests were green): (1) the LLM sidecar's global
+> gate demanded the master token on `/internal/mcp/*`, so in token mode every opencode tool call
+> would have been rejected — the bridge never has the master token; fixed with an explicit route
+> exemption + a real-bridge e2e test (`test:opencode-lifecycle`); (2) the probe stayed on
+> `auth-failed` after a remote sidecar restart with a new token (health answers 200 +
+> `tokenOk:false`, so the 401 retry never ran) → probe now refreshes the token and re-probes once;
+> (3) `verify-remote-deploy-files` read paths out of Rust comments.
+> **Found while designing the rollout (a regression of my own phases 45–47):** the remote deploy
+> uploaded only `main.py` + `dataset_handlers.py`, so a remote sidecar would have died with
+> `ModuleNotFoundError` (`scope`, `safe_load`, `deps_policy`; the ESPF codebook was never shipped
+> either). One `SIDECAR_FILES` constant now drives `deploy()` and `verify:remote-deploy-files`
+> checks it against the import closure (R053; not exercised against a real login node).
+> **Not done / honest limits:** no CSP (needs a real-webview test and bundled Monaco — R052),
+> browser-dev stays tokenless, no rotation, same-user processes can read the token
+> (LIMITATIONS.md §2). Verified: `test:sidecar-auth-torch` (143 rows, token/Origin/Host mutations
+> red), `test:sidecar-auth-llm` (125 rows, 4 mutations red), `test:sidecar-auth-frontend`,
+> `verify:sidecar-fetch`, `verify:remote-deploy-files`, `cargo test` (37).
 
 ---
 

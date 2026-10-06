@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useGraphStore } from '../canvas/GraphStore'
-import { llmHealth } from '../chat/client'
+import { llmHealthState } from '../chat/client'
 import { explainModel } from './explain'
 import { fetchModelExplanation } from './modelIntent'
 import Markdown from '../ui/Markdown'
@@ -16,13 +16,19 @@ export default function ExplainModal({ onClose }: { onClose: () => void }) {
   const exp = useMemo(() => explainModel(nodes, edges), [nodes, edges])
 
   const [intent, setIntent] = useState('')
-  const [intentState, setIntentState] = useState<'loading' | 'ok' | 'offline' | 'error'>('loading')
+  const [intentState, setIntentState] = useState<'loading' | 'ok' | 'offline' | 'auth' | 'error'>('loading')
+  const [authMessage, setAuthMessage] = useState('')
 
   useEffect(() => {
     const ctrl = new AbortController()
     let alive = true
     ;(async () => {
-      if (!(await llmHealth())) { if (alive) setIntentState('offline'); return }
+      const h = await llmHealthState()
+      if (h.state === 'auth-failed') {
+        if (alive) { setAuthMessage(h.message ?? 'Sidecar-Authentifizierung fehlgeschlagen.'); setIntentState('auth') }
+        return
+      }
+      if (h.state !== 'online') { if (alive) setIntentState('offline'); return }
       try {
         const s = await fetchModelExplanation(exp, ctrl.signal)
         if (!alive) return
@@ -64,6 +70,9 @@ export default function ExplainModal({ onClose }: { onClose: () => void }) {
               <p className="text-[#6f767e]">
                 LLM offline — nur der Datenfluss unten (deterministisch). Starte den LLM-Sidecar für eine Klartext-Zusammenfassung.
               </p>
+            )}
+            {intentState === 'auth' && (
+              <p className="text-rose-300/90">{authMessage}</p>
             )}
             {intentState === 'error' && (
               <p className="text-[#6f767e]">Konnte keine LLM-Zusammenfassung holen — der Datenfluss unten beschreibt das Modell.</p>

@@ -12,9 +12,10 @@ Endpoints:
   POST /deps/check       { specs: str[] }                   → pip dry-run resolve (compat smoke test)
   POST /deps/install     { specs: str[] }                   → pip install into the sidecar env
 
-Safety: this exec's code from the local frontend only. CORS is permissive
-because the dev server (Vite, port 5173) and the Tauri webview both need
-to call it; the bind address is 127.0.0.1 so no external host can reach it.
+Safety: this exec's code from the local frontend only. Authentication is the
+X-SpinoML-Token header (mode 'token') plus Host/Origin checks on EVERY request
+(see docs/engineering/SIDECAR_AUTH.md); CORS echoes only a validated Origin and
+never '*'. The bind address is 127.0.0.1 so no external host can reach it.
 """
 
 from __future__ import annotations
@@ -27,6 +28,25 @@ import sys
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import auth
+
+# ── Authentication / Host / Origin (Phase 77/78) ─────────────────────────
+# Read and validate the config ONCE, before any heavy import and BEFORE the
+# port is bound. A bad token is a hard, fail-closed startup error (exit 2)
+# with a message that never contains the value. Then scrub the token from
+# this process env so subprocess children (pip, /run_script, sbatch) never
+# inherit it. See docs/engineering/SIDECAR_AUTH.md.
+try:
+    AUTH = auth.load_config(os.environ)
+except auth.AuthConfigError as _auth_exc:
+    print(f"[spinoml-torch] auth config error: {_auth_exc}", file=sys.stderr, flush=True)
+    sys.exit(2)
+auth.scrub_environ(os.environ)
+
+CODE_UNAUTHORIZED = auth.CODE_UNAUTHORIZED
+CODE_BAD_ORIGIN = auth.CODE_BAD_ORIGIN
+CODE_BAD_HOST = auth.CODE_BAD_HOST
 
 import torch
 import torch.nn as nn
@@ -934,23 +954,79 @@ class Handler(BaseHTTPRequestHandler):
     # outer watchdog + restart covers it.
     timeout = REQUEST_TIMEOUT
 
-    def _cors(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+    def _cors(self, origin: str | None) -> None:
+        """CORS headers ONLY for a validated Origin. Never emits ``*`` and emits
+        no CORS headers at all when there was no Origin or it was rejected."""
+        if origin is None:
+            return
+        self.send_header("Access-Control-Allow-Origin", origin)
+        self.send_header("Vary", "Origin")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-SpinoML-Token")
+        self.send_header("Access-Control-Max-Age", "600")
+
+    def _headers_get(self, name: str, default=None):
+        """Header lookup that surfaces duplicates as ``auth.DUPLICATE_HEADER`` so a
+        repeated ``X-SpinoML-Token`` (or Host/Origin) cannot smuggle a value."""
+        values = self.headers.get_all(name)
+        if not values:
+            return default
+        if len(values) > 1:
+            return auth.DUPLICATE_HEADER
+        return values[0]
+
+    def _enforce(self, method: str):
+        """Run ``auth.decide`` BEFORE the body is read, remember the validated
+        Origin for the response, and emit the rejection if any. Returns the
+        Decision on success, or None when a rejection was already sent."""
+        self._origin = None
+        decision = auth.decide(method, self.path, self._headers_get, AUTH)
+        self._origin = decision.origin
+        if decision.kind == "reject":
+            message = {
+                CODE_UNAUTHORIZED: "unauthorized",
+                CODE_BAD_ORIGIN: "forbidden: origin not allowed",
+                CODE_BAD_HOST: "forbidden: host not allowed",
+            }.get(decision.code, "forbidden")
+            extra = {"reason": decision.reason} if decision.reason else {}
+            self._json(decision.status, _err(decision.code, message, **extra))
+            return None
+        return decision
+
+    def _health_body(self, decision) -> dict:
+        """GET /health body per SIDECAR_AUTH.md §4. Without a valid token in
+        mode ``token`` the body is limited to the auth triple (no version/scope);
+        otherwise the existing full body plus the same three keys."""
+        if not AUTH.require_token:
+            return {"ok": True, "torch": torch.__version__, "scope": scope.scope_status(),
+                    "auth": "unauthenticated-dev", "requiresAuth": False, "tokenOk": True}
+        if decision.token_ok:
+            return {"ok": True, "torch": torch.__version__, "scope": scope.scope_status(),
+                    "auth": "token", "requiresAuth": True, "tokenOk": True}
+        return {"ok": True, "auth": "token", "requiresAuth": True, "tokenOk": False}
 
     def do_OPTIONS(self) -> None:  # noqa: N802
+        decision = self._enforce("OPTIONS")
+        if decision is None:
+            return
         self.send_response(204)
-        self._cors()
+        self._cors(decision.origin)
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
+        decision = self._enforce("GET")
+        if decision is None:
+            return
         if self.path == "/health":
-            self._json(200, {"ok": True, "torch": torch.__version__, "scope": scope.scope_status()})
+            self._json(200, self._health_body(decision))
             return
         self._json(404, _err(CODE_UNKNOWN_ENDPOINT, f"unknown endpoint: {self.path}"))
 
     def do_POST(self) -> None:  # noqa: N802
+        decision = self._enforce("POST")
+        if decision is None:
+            return
         length = int(self.headers.get("Content-Length", "0") or "0")
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -1127,7 +1203,7 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(obj).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
-        self._cors()
+        self._cors(getattr(self, "_origin", None))
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

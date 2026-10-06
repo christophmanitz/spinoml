@@ -8,6 +8,7 @@ import ChatPanel from './chat/ChatPanel'
 import CodePreview from './codegen/CodePreview'
 import Terminal from './terminal/Terminal'
 import { useInferenceStore } from './inference/store'
+import { sidecarHealthState } from './inference/client'
 import { useChatStore } from './chat/store'
 import { providerById, useProviderStore } from './chat/providerStore'
 import { useVizStore } from './visualization/store'
@@ -40,12 +41,39 @@ import DataCodePanel from './data/graph/DataCodePanel'
 import { useConnectionsStore, getCurrentConnection, sshTarget } from './connections/store'
 import { useRemoteSidecarStore } from './sidecars/remoteSidecar'
 
+/** Poll the torch sidecar's /health for its auth mode. Used for the amber
+ *  "ungesichert" chip in Tauri mode (browser-dev shows no chip). */
+function useTorchAuthMode(): 'token' | 'unauthenticated-dev' | null {
+  const [auth, setAuth] = useState<'token' | 'unauthenticated-dev' | null>(null)
+  useEffect(() => {
+    let alive = true
+    const probe = async () => {
+      const h = await sidecarHealthState()
+      if (alive) setAuth(h.auth ?? null)
+    }
+    void probe()
+    const t = setInterval(() => { void probe() }, 5000)
+    return () => { alive = false; clearInterval(t) }
+  }, [])
+  return auth
+}
+
+function UnsafeChip() {
+  return (
+    <span
+      className="rounded bg-amber-900/40 px-2 py-0.5 text-amber-300"
+      title="Sidecar läuft ohne Token (nicht von der App gestartet?)"
+    >ungesichert</span>
+  )
+}
+
 function InferenceBadge() {
   const status = useInferenceStore((s) => s.status)
   const nParams = useInferenceStore((s) => s.nParams)
   const error = useInferenceStore((s) => s.error)
   const untrusted = useInferenceStore((s) => s.untrusted)
   const managed = useManagedSidecars((s) => s.torch)
+  const torchAuth = useTorchAuthMode()
 
   // Phase 43 — unapproved Custom/DataOp code blocks all execution. The badge is
   // the entry point to the approval dialog; it never approves by itself.
@@ -67,16 +95,22 @@ function InferenceBadge() {
     : status === 'inferring' ? `${prefix}: inferring…`
     : status === 'ok' ? `${prefix}: ok · ${nParams != null ? nParams.toLocaleString() + ' params' : ''}`
     : status === 'offline' ? `${prefix}: sidecar offline`
+    : status === 'auth' ? `${prefix}: auth failed`
     : `${prefix}: ${error?.split(':')[0] ?? 'error'}`
 
   const color =
     status === 'ok' ? 'bg-emerald-900/40 text-emerald-300'
     : status === 'inferring' ? 'bg-[#1f2429] text-[#6f767e]'
     : status === 'offline' ? 'bg-[#1f2429] text-[#6f767e]'
-    : status === 'error' ? 'bg-rose-900/40 text-rose-300'
+    : status === 'error' || status === 'auth' ? 'bg-rose-900/40 text-rose-300'
     : 'bg-[#1f2429] text-[#6f767e]'
 
-  return <span className={`rounded px-2 py-0.5 ${color}`} title={error ?? ''}>{label}</span>
+  return (
+    <span className="flex items-center gap-1">
+      <span className={`rounded px-2 py-0.5 ${color}`} title={error ?? ''}>{label}</span>
+      {isTauri() && torchAuth === 'unauthenticated-dev' && <UnsafeChip />}
+    </span>
+  )
 }
 
 function RemoteSidecarBadge() {
@@ -150,22 +184,38 @@ function LLMBadge() {
   const online = useChatStore((s) => s.online)
   const status = useChatStore((s) => s.status)
   const managed = useManagedSidecars((s) => s.llm)
+  const authFailed = useChatStore((s) => s.authFailed)
+  const authMessage = useChatStore((s) => s.authMessage)
+  const llmAuth = useChatStore((s) => s.llmAuth)
   const currentId = useProviderStore((s) => s.currentId)
   const provider = providerById(currentId)
   const prefix = managed ? 'LLM (auto)' : 'LLM'
   const state =
     online === null ? '…'
+    : authFailed ? 'auth failed'
     : online === false ? 'offline'
     : status === 'streaming' ? 'thinking'
     : 'ready'
   const model = useProviderStore((s) => s.configs[currentId]?.model?.trim()) || provider.defaultModel
   const label = `${prefix} · ${provider.label}${model && provider.kind !== 'subscription' ? ` · ${model}` : ''}: ${state}`
   const color =
-    online === false ? 'bg-[#1f2429] text-[#6f767e]'
+    authFailed ? 'bg-rose-900/40 text-rose-300'
+    : online === false ? 'bg-[#1f2429] text-[#6f767e]'
     : status === 'streaming' ? 'bg-violet-900/40 text-violet-300'
     : online ? 'bg-emerald-900/40 text-emerald-300'
     : 'bg-[#1f2429] text-[#6f767e]'
-  return <span className={`rounded px-2 py-0.5 ${color}`}>{label}</span>
+  // Title: auth failure > unauthenticated-dev hint > nothing
+  const badgeTitle = authFailed
+    ? (authMessage ?? 'Sidecar-Authentifizierung fehlgeschlagen.')
+    : !isTauri() && llmAuth === 'unauthenticated-dev'
+      ? 'Sidecar läuft ohne Token (nicht von der App gestartet?)'
+      : ''
+  return (
+    <span className="flex items-center gap-1">
+      <span className={`rounded px-2 py-0.5 ${color}`} title={badgeTitle}>{label}</span>
+      {isTauri() && llmAuth === 'unauthenticated-dev' && <UnsafeChip />}
+    </span>
+  )
 }
 
 function ProjectHeader() {

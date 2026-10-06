@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { inferShapes, type InferResult } from './client'
+import { inferShapes, type InferResult, type InferAuthErr } from './client'
 import { useGraphStore } from '../canvas/GraphStore'
 import { generate } from '../codegen/generator'
 import { LAYERS } from '../layers/registry'
@@ -7,7 +7,7 @@ import { listUntrusted } from '../trust/guard'
 import { UNTRUSTED_MESSAGE, type UntrustedBlob } from '../trust/gate'
 import { trust } from '../trust/trustStore'
 
-type Status = 'idle' | 'inferring' | 'ok' | 'error' | 'offline' | 'untrusted'
+type Status = 'idle' | 'inferring' | 'ok' | 'error' | 'offline' | 'untrusted' | 'auth'
 
 type InferenceState = {
   status: Status
@@ -97,7 +97,7 @@ export const useInferenceStore = create<InferenceState>((set) => ({
 
       set({ status: 'inferring', untrusted: [] })
 
-      let result: InferResult | { ok: false; error: string; offline: true; shapes: Record<string, number[]> }
+      let result: InferResult | { ok: false; error: string; offline: true; shapes: Record<string, number[]> } | InferAuthErr
       try {
         result = await inferShapes(code, inputShapes, inputDtypes, ctrl.signal)
       } catch (e) {
@@ -149,6 +149,23 @@ export const useInferenceStore = create<InferenceState>((set) => ({
       // Phase 40 — stale-response guard: graph changed since we started
       // (runCounter covers ordering, revision covers structural move).
       if (runId !== runCounter || graphRev !== useGraphStore.getState().revision) return
+
+      if ('authFailed' in result && result.authFailed) {
+        // Reachable but rejected (401/403): a distinct state from offline so the
+        // badge can say "auth failed" and show the German auth message.
+        set({
+          status: 'auth',
+          error: result.error,
+          errorStage: null,
+          errorTrace: null,
+          failingNodeId: null,
+          failingNodeLayerType: null,
+          attrShapes: {},
+          untrusted: [],
+        })
+        clearShapesOnNodes()
+        return
+      }
 
       if ('offline' in result && result.offline) {
         set({

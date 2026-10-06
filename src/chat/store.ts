@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { llmHealth, streamChat, respondToChat, type ChatEvent, type AskKind } from './client'
+import { llmHealthState, streamChat, respondToChat, type ChatEvent, type AskKind } from './client'
 import { useGraphStore, autoPositionAfter } from '../canvas/GraphStore'
 import { useTrainingGraphStore } from '../training/graph/store'
 import { useDataGraphStore } from '../data/graph/store'
@@ -43,6 +43,13 @@ type ChatState = {
   messages: ChatMessage[]
   status: Status
   online: boolean | null
+  /** Reachable but rejected (401/403) — a distinct state from "offline". The
+   *  choice: `online` stays false for an auth failure (the model is NOT usable),
+   *  and `authFailed` tells the badge to show the rose "auth failed" style. */
+  authFailed: boolean
+  authMessage: string | null
+  /** Auth mode reported by the last successful probe (null = older sidecar). */
+  llmAuth: 'token' | 'unauthenticated-dev' | null
   /** Set while the LLM/run_script is waiting for a GUI answer. */
   pendingAsk: PendingAsk | null
   send: (text: string) => Promise<void>
@@ -122,6 +129,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: loadPersistedMessages(),
   status: 'idle',
   online: null,
+  authFailed: false,
+  authMessage: null,
+  llmAuth: null,
   pendingAsk: null,
 
   reset: () => {
@@ -152,15 +162,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   refreshHealth: async () => {
-    const ok = await llmHealth()
-    set({ online: ok })
+    const h = await llmHealthState()
+    set({
+      online: h.state === 'online',
+      authFailed: h.state === 'auth-failed',
+      authMessage: h.state === 'auth-failed' ? (h.message ?? 'Sidecar-Authentifizierung fehlgeschlagen.') : null,
+      llmAuth: h.auth ?? null,
+    })
   },
 
   answerAsk: (answer) => {
     const ask = get().pendingAsk
     if (!ask) return
     set({ pendingAsk: null })
-    void respondToChat(ask.id, answer)
+    // A rejected approval the user clicked must be visible, not swallowed by
+    // the fire-and-forget POST: append an explicit error line to the chat.
+    void respondToChat(ask.id, answer).catch((e: unknown) => {
+      const msg = e instanceof Error ? e.message : String(e)
+      set({
+        messages: [...get().messages, {
+          id: `a${++assistantSeq}`, role: 'assistant', content: '', toolCalls: [],
+          status: 'error', error: msg,
+        }],
+      })
+    })
   },
 
   send: async (text) => {

@@ -210,6 +210,11 @@ sidecar-torch/safe_load.py     safe_torch_load — the ONLY torch.load. The bloc
                                markers is duplicated byte-for-byte in training_template.py (standalone
                                train.py); scripts/test-safe-load.py enforces equality.
 sidecar-llm/path-scope.mjs     resolveInWorkspace: symlink-aware containment for the LLM tools' local paths.
+sidecar-torch/auth.py          Token + Host + Origin gate (`decide`, called BEFORE the body is read); sidecar-llm/auth.mjs is
+sidecar-llm/auth.mjs           its twin (same order/codes). Spec: docs/engineering/SIDECAR_AUTH.md. The token is read from
+                               SPINOML_SIDECAR_TOKEN then deleted from the process env.
+src-tauri/src/sidecar_auth.rs  Per-launch token (getrandom), `sidecar_token` command; remote token per ssh session.
+src/sidecars/auth.ts           `sidecarFetch`/`torchFetch` — the ONLY way to call a sidecar from src/ (verify:sidecar-fetch).
 ```
 
 ## Two execution modes + two FS backends — keep them straight
@@ -280,6 +285,12 @@ npm run typecheck:scripts           # tsc over scripts/ — tsx does NOT type-ch
 npm run ci                          # every suite with timeouts/clean env (`npm run suites` lists them; run it with no app/sidecar running)
 npm run test:scope                  # Python scope + hostile manifests + real HTTP (inside the conda env)
 npm run test:safe-load              # real malicious-pickle attempts (inside the conda env)
+npm run test:sidecar-auth-torch     # token/Host/Origin vs a REAL torch sidecar process (inside the conda env)
+npm run test:sidecar-auth-llm       # same for the LLM sidecar + /respond + MCP bridge secret
+npm run test:sidecar-auth-frontend  # sidecarFetch retry/401/403/health states vs a fake sidecar
+npm run verify:sidecar-fetch        # no bare fetch( in src/ outside src/sidecars/auth.ts
+npm run verify:remote-deploy-files  # Rust SIDECAR_FILES covers the sidecar-torch import closure + espf data
+npm run test:opencode-lifecycle     # opencode provider vs a fake opencode binary (bridge auth e2e, exit/abort/timeout)
 npm run verify:opencode             # LLM sidecar must be up; asserts /opencode/models
                                     # + a real opencode chat + clean bogus-model error
 ```
@@ -506,6 +517,13 @@ not catch it cleanly. Fix path:
     or touch `ctx` before all checks passed, and a tool result must never say "added" for something the frontend will change or reject.
     New registry fields/layers: `npm run gen:layer-catalog`, then `test:llm-validation-parity`. New scripts must be registered in
     `scripts/suites.ts` (`npm run ci -- --check` fails otherwise).
+
+13. **Every sidecar request goes through `sidecarFetch`/`torchFetch`; every sidecar endpoint goes through `decide`.** A new
+    HTTP endpoint inherits the token/Host/Origin gate automatically only if it is added inside the existing handlers — never
+    create a second server/listener, never answer before `decide` ran, never emit `Access-Control-Allow-Origin: *`, never put the
+    token in argv, a log line, an error message or a file, and never hand the master token to a child process (the opencode MCP
+    bridge uses its own per-turn secret). A new `sidecar-torch/*.py` module must be added to `SIDECAR_FILES` in
+    `remote_sidecar.rs` (`verify:remote-deploy-files`).
 
 ## Patterns that work
 

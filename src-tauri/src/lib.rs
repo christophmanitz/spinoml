@@ -11,6 +11,7 @@ use tauri_plugin_dialog::DialogExt;
 mod ssh;
 mod pty;
 mod remote_sidecar;
+mod sidecar_auth;
 mod training;
 
 pub(crate) const PROJECT_FILE: &str = "spinoml.project.json";
@@ -76,17 +77,51 @@ pub(crate) fn set_pdeathsig(cmd: &mut Command) {
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn set_pdeathsig(_cmd: &mut Command) {}
 
-fn spawn_managed(label: &str, prog: &str, arg: PathBuf, cwd: &Path) -> Option<Child> {
+fn spawn_managed(
+    label: &str,
+    prog: &str,
+    arg: PathBuf,
+    cwd: &Path,
+    tokens: &sidecar_auth::SidecarTokens,
+) -> Option<Child> {
     if !arg.exists() {
         eprintln!("[spinoml] {label}: sidecar script not found at {}", arg.display());
         return None;
     }
+    // Read the local token once. If reading fails here the whole app is broken
+    // (we wouldn't have been able to `.manage()` the state at startup either),
+    // so bail out without spawning — never spawn a sidecar without a token.
+    let token = match tokens.endpoint_token("torch-local") {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            eprintln!(
+                "[spinoml] {label}: no local sidecar token configured — refusing to spawn"
+            );
+            return None;
+        }
+        Err(e) => {
+            eprintln!("[spinoml] {label}: token lookup failed: {e}");
+            return None;
+        }
+    };
     let mut cmd = Command::new(prog);
     cmd.arg(&arg)
         .current_dir(cwd)
+        // Per-launch authentication token (Phase 77, see docs/engineering/SIDECAR_AUTH.md).
+        // We set it on the spawned child ONLY — `Command::env`, never `std::env::set_var`,
+        // which would leak the token to every other child of the GUI process. Both
+        // sidecars require the token (`SPINOML_REQUIRE_TOKEN=1`); without it they
+        // refuse to start. The eprintln! lines below deliberately print the label
+        // + program path, never env.
+        .env("SPINOML_SIDECAR_TOKEN", &token)
+        .env("SPINOML_REQUIRE_TOKEN", "1")
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
     set_pdeathsig(&mut cmd);
+    // Drop our copy of the token before spawn — the child has its own copy in
+    // its environment block. We don't store it anywhere; `SidecarTokens.local`
+    // is the only remaining reference.
+    drop(token);
     match cmd.spawn() {
         Ok(child) => {
             eprintln!("[spinoml] {label}: spawned pid={} ({prog} {})", child.id(), arg.display());
@@ -716,6 +751,19 @@ pub fn run() {
         .manage(ssh::RemoteWorkspaceState::default())
         .manage(pty::PtyState::default())
         .manage(remote_sidecar::RemoteSidecarState::default())
+        // Per-launch sidecar authentication token (Phase 77). Generated once at
+        // startup from the OS RNG. If the RNG fails the app refuses to start —
+        // silently downgrading to "no token" would defeat the whole point.
+        .manage({
+            match sidecar_auth::SidecarTokens::new() {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("[spinoml] failed to initialize sidecar authentication: {e}");
+                    eprintln!("[spinoml] refusing to start — see docs/engineering/SIDECAR_AUTH.md");
+                    std::process::exit(2);
+                }
+            }
+        })
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -727,12 +775,14 @@ pub fn run() {
 
             let root = sidecar_root(app);
             let sc: State<Sidecars> = app.state();
+            let tokens: State<sidecar_auth::SidecarTokens> = app.state();
             if let Ok(mut t) = sc.torch.lock() {
                 *t = spawn_managed(
                     "sidecar-torch",
                     "python",
                     root.join("sidecar-torch").join("main.py"),
                     &root,
+                    &tokens,
                 );
             }
             if let Ok(mut l) = sc.llm.lock() {
@@ -741,6 +791,7 @@ pub fn run() {
                     "node",
                     root.join("sidecar-llm").join("main.mjs"),
                     &root,
+                    &tokens,
                 );
             }
             Ok(())
@@ -751,8 +802,11 @@ pub fn run() {
                 shutdown_sidecars(&sc);
                 let pty_state: State<pty::PtyState> = window.state();
                 pty::kill_all(&pty_state);
-                let rs_state: State<remote_sidecar::RemoteSidecarState> = window.state();
-                remote_sidecar::kill_all(&rs_state);
+                // Use `stop_remote_sidecar` (AppHandle in scope) so the
+                // remote sidecar token is cleared on window close — kill_all
+                // can't reach SidecarTokens without an AppHandle, and we
+                // don't want a stale token outliving the tunnel.
+                let _ = remote_sidecar::stop_remote_sidecar(window.app_handle().clone());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -814,6 +868,7 @@ pub fn run() {
             remote_sidecar::ensure_remote_sidecar,
             remote_sidecar::stop_remote_sidecar,
             remote_sidecar::remote_sidecar_status,
+            sidecar_auth::sidecar_token,
             training::list_training_runs,
             training::training_run_status,
             training::read_training_run_file,
