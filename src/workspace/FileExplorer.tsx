@@ -30,7 +30,11 @@ async function openGraphOnCanvas(kind: 'training' | 'data', relpath: string, loa
     markCanvasHydrated(kind, relpath)
     useCanvasDocStore.getState().setBound(kind, relpath)
     useViewModeStore.getState().setMode(kind)
-  } catch { /* malformed / not on disk — ignore */ }
+  } catch (e) {
+    // Opening a graph file is a user-initiated action: a read/parse failure must
+    // be surfaced, not silently dropped (the canvas would just stay unchanged).
+    alert(`${kind === 'training' ? 'Trainings' : 'Daten'}-Graph ${relpath} konnte nicht geöffnet werden:\n${(e as Error).message}`)
+  }
 }
 
 // Shared props threaded down to every row.
@@ -53,6 +57,7 @@ export default function FileExplorer() {
   const createFolder = useWorkspaceStore((s) => s.createFolder)
   const importFromText = useWorkspaceStore((s) => s.importFromText)
   const refreshFromDisk = useWorkspaceStore((s) => s.refreshFromDisk)
+  const pyTwinError = useWorkspaceStore((s) => s.pyTwinError)
   const [rename, setRename] = useState<string | null>(null)
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [dragOver, setDragOver] = useState<string | null>(null)
@@ -144,6 +149,12 @@ export default function FileExplorer() {
           }}>⇪</IconButton>
         </div>
       </div>
+
+      {pyTwinError && (
+        <div className="shrink-0 border-b border-rose-900/40 bg-rose-950/30 px-2 py-1 text-[10px] text-rose-300">
+          {pyTwinError}
+        </div>
+      )}
 
       <div
         className={`min-h-0 flex-1 overflow-y-auto py-1 ${dragOver === ROOT_ID ? 'bg-[#1f2429]/40' : ''}`}

@@ -39,12 +39,31 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   const [trainSbatch, setTrainSbatch] = useState('')
   const [slurmJobId, setSlurmJobId] = useState<string | null>(null)
   const [gpu, setGpu] = useState<GpuStat[] | null>(null)
+  const [gpuError, setGpuError] = useState<string | null>(null)
   const [promoteName, setPromoteName] = useState('')
   const [promoted, setPromoted] = useState<string | null>(null)
   const [promoteErr, setPromoteErr] = useState<string | null>(null)
+  /** readFile failures (ssh drop, permission) — distinct from a missing file,
+   *  which the backend returns as "". Surfaced so stale content isn't trusted. */
+  const [readError, setReadError] = useState<string | null>(null)
+  const [eventsError, setEventsError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const status = summary?.status ?? 'unknown'
   const active = RUNNING_STATES.has(status) || (summary?.alive ?? false)
+
+  // Frozen run.json (backend, eval-validation metadata). A non-empty body that
+  // fails to parse is reported, never silently treated as "no config".
+  const parsed = useMemo(() => {
+    if (!runJson) return { cfg: null as RunConfig | null, error: null as string | null }
+    try { return { cfg: JSON.parse(runJson) as RunConfig, error: null } }
+    catch (e) { return { cfg: null, error: e instanceof Error ? e.message : String(e) } }
+  }, [runJson])
+  const cfgError = parsed.error
+  const backend = parsed.cfg?.backend ?? null
+  const isSlurm = backend?.kind === 'slurm'
+  const isEvalRun = (summary?.eval_only ?? false) || (parsed.cfg?.eval_only ?? false)
+  const validate = parsed.cfg?.validate ?? null
 
   // Phase 31 — events JSONL is whole-file read + snapshotted. Two concurrent
   // reads can land out of order (esp. over ssh): the newest-STARTED read always
@@ -58,13 +77,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   )
 
   // Frozen run.json (backend, eval-validation metadata).
-  const parsedCfg = (() => {
-    try { return JSON.parse(runJson) as RunConfig } catch { return null }
-  })()
-  const backend = parsedCfg?.backend ?? null
-  const isSlurm = backend?.kind === 'slurm'
-  const isEvalRun = (summary?.eval_only ?? false) || (parsedCfg?.eval_only ?? false)
-  const validate = parsedCfg?.validate ?? null
+  // (parsed above — cfgError carries a corruption message.)
 
   // Rebuild this run's training graph onto the canvas, even if its .spinotrain was
   // never saved — run.json carries the full frozen config.
@@ -76,7 +89,10 @@ export default function RunDetailModal({ runId }: { runId: string }) {
       useTrainingGraphStore.getState().loadSnapshot(snapshot)
       useViewModeStore.getState().setMode('training')
       close(null)
-    } catch { /* run.json not ready / malformed */ }
+    } catch (e) {
+      // A corrupt/frozen config must not make the button appear to do nothing.
+      setActionError(`run.json konnte nicht geöffnet werden: ${e instanceof Error ? e.message : String(e)}`)
+    }
   }
 
   // A SLURM run's stdout/stderr land in slurm-<jobid>.out/.err (the #SBATCH
@@ -89,30 +105,37 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   // Full read — used on open + on status change. Includes the immutable files
   // (run.json, train.py) which never change after the run is created.
   const reload = useCallback(async () => {
-    try {
-      // Resolve the log target first: read the pid file to learn whether this is
-      // a SLURM run (`slurm:<jobid>`) so we tail the right files below.
-      const pidRaw = (await training.readFile(runId, 'pid').catch(() => '')).trim()
-      const jobId = pidRaw.startsWith('slurm:') ? pidRaw.slice('slurm:'.length).trim() || null : null
-      setSlurmJobId(jobId)
-      const [outName, errName] = logFileNames(jobId)
-      // Events go through the stale-read guard (never blocks the rest of the
-      // load): an older read landing late is discarded, a terminal run's final
-      // snapshot stays final.
-      eventsApply(() => training.readFile(runId, 'events.jsonl')).catch(() => {})
-      const [rj, tp, sb, so, se] = await Promise.all([
-        training.readFile(runId, 'run.json'),
-        training.readFile(runId, 'train.py'),
-        training.readFile(runId, 'train.sbatch'),
-        training.readFile(runId, outName),
-        training.readFile(runId, errName),
-      ])
-      setRunJson(rj)
-      setTrainPy(tp)
-      setTrainSbatch(sb)
-      setStdout(so)
-      setStderr(se)
-    } catch { /* file may not exist yet */ }
+    const errs: string[] = []
+    // Resolve the log target first: read the pid file to learn whether this is
+    // a SLURM run (`slurm:<jobid>`) so we tail the right files below. A missing
+    // pid (normal for a brand-new run) reads as "" — only a real read failure
+    // is recorded.
+    let pidRaw = ''
+    try { pidRaw = (await training.readFile(runId, 'pid')).trim() }
+    catch (e) { errs.push(`pid: ${e instanceof Error ? e.message : String(e)}`) }
+    const jobId = pidRaw.startsWith('slurm:') ? pidRaw.slice('slurm:'.length).trim() || null : null
+    setSlurmJobId(jobId)
+    const [outName, errName] = logFileNames(jobId)
+    // Events go through the stale-read guard (never blocks the rest of the
+    // load): an older read landing late is discarded, a terminal run's final
+    // snapshot stays final.
+    eventsApply(() => training.readFile(runId, 'events.jsonl'))
+      .then(() => setEventsError(null))
+      .catch((e) => setEventsError(`events.jsonl: ${e instanceof Error ? e.message : String(e)}`))
+    const results = await Promise.all([
+      readRunFile(runId, 'run.json'),
+      readRunFile(runId, 'train.py'),
+      readRunFile(runId, 'train.sbatch'),
+      readRunFile(runId, outName),
+      readRunFile(runId, errName),
+    ])
+    for (const r of results) if (r.error) errs.push(r.error)
+    setRunJson(results[0].text)
+    setTrainPy(results[1].text)
+    setTrainSbatch(results[2].text)
+    setStdout(results[3].text)
+    setStderr(results[4].text)
+    setReadError(errs.length ? errs.join(' · ') : null)
   }, [runId, eventsApply])
 
   // Lightweight tail — only the file(s) that actually grow. On a remote (ssh)
@@ -120,18 +143,20 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   // immutable run.json/train.py each tick, and only fetch the logs when the
   // logs tab is open. This is what keeps a remote run from saturating ssh.
   const tailReload = useCallback(async () => {
-    try {
-      eventsApply(() => training.readFile(runId, 'events.jsonl')).catch(() => {})
-      if (tab === 'logs') {
-        const [outName, errName] = logFileNames(slurmJobId)
-        const [so, se] = await Promise.all([
-          training.readFile(runId, outName),
-          training.readFile(runId, errName),
-        ])
-        setStdout(so)
-        setStderr(se)
-      }
-    } catch { /* file may not exist yet */ }
+    eventsApply(() => training.readFile(runId, 'events.jsonl'))
+      .then(() => setEventsError(null))
+      .catch((e) => setEventsError(`events.jsonl: ${e instanceof Error ? e.message : String(e)}`))
+    if (tab === 'logs') {
+      const [outName, errName] = logFileNames(slurmJobId)
+      const results = await Promise.all([
+        readRunFile(runId, outName),
+        readRunFile(runId, errName),
+      ])
+      setStdout(results[0].text)
+      setStderr(results[1].text)
+      const errs = results.map((r) => r.error).filter((x): x is string => !!x)
+      if (errs.length) setReadError(errs.join(' · '))
+    }
   }, [runId, tab, slurmJobId, eventsApply])
 
   // Reload on open AND whenever the status changes. The status-change reload is
@@ -165,7 +190,15 @@ export default function RunDetailModal({ runId }: { runId: string }) {
     let timer: ReturnType<typeof setTimeout>
     const delay = getCurrentConnection().kind === 'remote-ssh' ? 6000 : 3000
     const tick = async () => {
-      try { setGpu(await training.gpuStats(runId)) } catch { setGpu([]) }
+      try {
+        setGpu(await training.gpuStats(runId))
+        setGpuError(null)
+      } catch (e) {
+        // A failed probe must not render as "no GPU visible" (a false claim);
+        // show an explicit unknown/error state instead.
+        setGpu([])
+        setGpuError(e instanceof Error ? e.message : String(e))
+      }
       if (!stopped) timer = setTimeout(tick, delay)
     }
     void tick()
@@ -204,10 +237,10 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   // `multitask: true`), the new Head-node `training.heads`, OR namespaced
   // "<output>/<metric>" keys in epoch.end metrics.
   const isMultitask = (() => {
-    try {
-      const c = JSON.parse(runJson) as RunConfig & { multitask?: boolean }
-      if (c.multitask || (c.training?.heads?.length ?? 0) > 0) return true
-    } catch { /* run.json not ready */ }
+    // parsed.cfg is null both when run.json is absent and when it is corrupt
+    // (the latter is surfaced via cfgError); fall back to event heuristics.
+    const c = parsed.cfg as (RunConfig & { multitask?: boolean }) | null
+    if (c && (c.multitask || (c.training?.heads?.length ?? 0) > 0)) return true
     return epochEvents.some((e) => {
       const m = e.metrics as Record<string, unknown> | null | undefined
       return m && Object.keys(m).some((k) => k.includes('/'))
@@ -300,11 +333,21 @@ export default function RunDetailModal({ runId }: { runId: string }) {
           </div>
         </div>
 
+        {(cfgError || readError || eventsError || gpuError || actionError) && (
+          <div className="space-y-0.5 border-b border-rose-900/40 bg-rose-950/30 px-4 py-1.5 text-[10px] text-rose-300">
+            {cfgError && <div>run.json beschädigt: {cfgError}</div>}
+            {readError && <div>Dateien unvollständig gelesen: {readError}</div>}
+            {eventsError && <div>{eventsError}</div>}
+            {gpuError && <div>GPU-Status nicht abfragbar: {gpuError}</div>}
+            {actionError && <div>{actionError}</div>}
+          </div>
+        )}
+
         {isEvalRun && validate && (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-[#1f2429] bg-[var(--accent-sel)]/20 px-4 py-1.5 text-[10px] text-[#9aa1a8]">
             <span className="rounded bg-[var(--accent-sel)] px-1.5 py-0.5 font-semibold text-[var(--accent)]">EXTERNE VALIDIERUNG</span>
             <span>Modell aus <span className="font-mono text-[#cfd3d8]">{validate.source_run ?? '?'}</span></span>
-            <span>· Datensatz <span className="font-mono text-[#cfd3d8]">{parsedCfg?.dataset.relpath}</span></span>
+            <span>· Datensatz <span className="font-mono text-[#cfd3d8]">{parsed.cfg?.dataset.relpath}</span></span>
             {validate.adapter && Object.keys(validate.adapter.column_map).length > 0 && (
               <span className="text-[#5a6068]">· {Object.entries(validate.adapter.column_map).map(([role, col]) => `${role}→${col}`).join(', ')}</span>
             )}
@@ -587,6 +630,16 @@ export default function RunDetailModal({ runId }: { runId: string }) {
       </div>
     </div>
   )
+}
+
+// Read one file out of a run dir, distinguishing a real read failure from a
+// missing file (the backend returns "" for a missing file, never throws).
+async function readRunFile(runId: string, name: string): Promise<{ text: string; error: string | null }> {
+  try {
+    return { text: await training.readFile(runId, name), error: null }
+  } catch (e) {
+    return { text: '', error: `${name}: ${e instanceof Error ? e.message : String(e)}` }
+  }
 }
 
 function fmtDuration(sec: number): string {

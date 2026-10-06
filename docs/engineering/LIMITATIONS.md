@@ -120,8 +120,15 @@
 
 ## 6. Not yet audited
 
-Phases 45–82 of `TODO.md` that have no "implemented" note are not done. In
-particular Rust `unwrap`/`panic` audit (48), silent-exception audit (50), resource
-leak and long-run tests (51/52), reference experiments and hand-written PyTorch
-comparison (53/54), run manifest + git dirty state (59/60), CI (69), dependency
-audit (79) and the final reliability report (90).
+Phases of `TODO.md` that have no "implemented" note are not done. In particular:
+Rust `unwrap`/`panic` audit (48), the Python/Node/Rust half of the silent-exception
+audit (50; the TypeScript half is done), resource leak and long-run tests (51/52),
+run manifest + git dirty state (59/60), property/fuzz tests (64–66), CI (69),
+retries/timeouts (71/72), result integrity and resumable state (73/74), the
+sidecar token + localhost review (77/78), dependency audit (79) and the final
+reliability report (90).
+
+**CUDA is unverified.** `torch 2.12.0+cpu` is installed here: every CUDA branch of
+`verify:reference`/`verify:reference-train` prints `SKIPPED  CUDA` (Phase 56). The
+generated-model equivalence and the same-seed reproducibility were measured on CPU only;
+no GPU claim is made (R044).

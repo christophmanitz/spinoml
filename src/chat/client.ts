@@ -77,6 +77,8 @@ export async function llmHealth(): Promise<boolean> {
     const r = await fetch(`${SIDECAR_URL}/health`)
     return r.ok
   } catch {
+    // Health probe: an unreachable sidecar is reported as offline (explicit
+    // distinct UI state), not as a failed model or turn.
     return false
   }
 }
@@ -90,6 +92,8 @@ export async function fetchOpenCodeModels(): Promise<string[]> {
     const j = (await r.json()) as { ok?: boolean; models?: string[] }
     return Array.isArray(j.models) ? j.models : []
   } catch {
+    // Model-list probe: empty list means "no live list", and the settings UI
+    // explicitly falls back to its built-in suggestions.
     return []
   }
 }
@@ -106,7 +110,9 @@ export async function streamChat(
     signal,
   })
   if (!res.ok || !res.body) {
-    const text = await res.text().catch(() => '')
+    // Only used to enrich the error message; if the body itself can't be read we
+    // still throw the HTTP status, which is the actual failure.
+    const text = await res.text().catch(() => '') // body read is optional; status is the failure
     throw new Error(`sidecar HTTP ${res.status}: ${text || '(no body)'}`)
   }
 
@@ -126,11 +132,16 @@ export async function streamChat(
       if (!line) continue
       const json = line.slice(5).trim()
       if (!json) continue
+      let ev: ChatEvent
       try {
-        onEvent(JSON.parse(json) as ChatEvent)
+        ev = JSON.parse(json) as ChatEvent
       } catch (e) {
-        console.warn('bad SSE chunk', json, e)
+        // A frame that fails to parse means the stream is corrupt: abort the turn
+        // (surfaced as an error) instead of silently skipping content and later
+        // marking the assistant message "done".
+        throw new Error(`bad SSE chunk from sidecar: ${json.slice(0, 200)}`, { cause: e })
       }
+      onEvent(ev)
     }
   }
 }

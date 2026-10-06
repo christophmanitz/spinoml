@@ -26,6 +26,7 @@ export default function CanvasFileGate({ adapter, children }: { adapter: CanvasD
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot)
   const gated = isTauri() && !!workspaceRoot
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const relpath = doc.relpath
 
   useEffect(() => {
@@ -35,13 +36,35 @@ export default function CanvasFileGate({ adapter, children }: { adapter: CanvasD
     if (hydrated.has(key)) return
     let cancelled = false
     setLoading(true)
+    setLoadError(null)
     adapter.open(relpath)
       .then(() => { hydrated.add(key); if (!cancelled) setLoading(false) })
-      .catch(() => { if (!cancelled) { setLoading(false); setBound(adapter.kind, null) } })
+      .catch((e) => {
+        // A bound file that no longer parses must be reported, not silently
+        // dropped back to the chooser (which would imply "no file" rather than
+        // "this file is unreadable").
+        if (!cancelled) { setLoading(false); setLoadError(`${relpath}: ${e instanceof Error ? e.message : String(e)}`) }
+      })
     return () => { cancelled = true }
   }, [gated, relpath, adapter, setBound])
 
   if (!gated) return <div className="flex h-full w-full flex-col">{children}</div>
+  if (loadError) {
+    return (
+      <div className="flex h-full w-full flex-col">
+        <div className="flex items-center gap-2 border-b border-rose-900/40 bg-rose-950/30 px-3 py-2 text-[11px] text-rose-300">
+          <span>Datei konnte nicht geladen werden — {loadError}</span>
+          <button
+            className="ml-auto rounded border border-rose-900/60 px-1.5 py-0.5 text-[10px] hover:bg-rose-900/30"
+            onClick={() => { setLoadError(null); setBound(adapter.kind, null) }}
+          >Andere Datei wählen</button>
+        </div>
+        <div className="flex min-h-0 flex-1 items-center justify-center text-[12px] text-[#6f767e]">
+          Der {adapter.label}-Graph wird nicht angezeigt, weil die Datei unlesbar ist.
+        </div>
+      </div>
+    )
+  }
   if (!relpath) return <FileChooser adapter={adapter} />
   if (loading) {
     return (
@@ -96,11 +119,24 @@ function FileHeader({
 function FileChooser({ adapter }: { adapter: CanvasDocAdapter }) {
   const setBound = useCanvasDocStore((s) => s.setBound)
   const [list, setList] = useState<{ relpath: string; name: string }[]>([])
+  const [listErr, setListErr] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
-  useEffect(() => { void adapter.list().then(setList).catch(() => setList([])) }, [adapter])
+  useEffect(() => {
+    let cancelled = false
+    void adapter.list()
+      .then((l) => { if (!cancelled) { setList(l); setListErr(null) } })
+      .catch((e) => {
+        // Listing failed (unlike a genuinely empty directory): say so instead of
+        // rendering "no files", which the user would read as "nothing exists".
+        if (cancelled) return
+        setList([])
+        setListErr(e instanceof Error ? e.message : String(e))
+      })
+    return () => { cancelled = true }
+  }, [adapter])
 
   const open = async (relpath: string) => {
     setBusy(true); setErr(null)
@@ -134,7 +170,8 @@ function FileChooser({ adapter }: { adapter: CanvasDocAdapter }) {
 
         <div className="mb-2 text-[10px] uppercase tracking-wide text-[#6f767e]">Vorhandene</div>
         <div className="mb-4 max-h-44 space-y-1 overflow-auto">
-          {list.length === 0 && <div className="text-[11px] text-[#5a6068]">— keine {adapter.ext}-Dateien —</div>}
+          {list.length === 0 && !listErr && <div className="text-[11px] text-[#5a6068]">— keine {adapter.ext}-Dateien —</div>}
+          {listErr && <div className="text-[11px] text-rose-400">Liste konnte nicht geladen werden: {listErr}</div>}
           {list.map((file) => (
             <button
               key={file.relpath}

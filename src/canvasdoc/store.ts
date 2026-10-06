@@ -39,7 +39,12 @@ export type CanvasDocAdapter = {
 const KEY = 'spinoml.canvasdoc.bound.v1'
 
 function loadBound(): Partial<Record<CanvasKind, string>> {
-  try { return JSON.parse(localStorage.getItem(KEY) || '{}') } catch { return {} }
+  try { return JSON.parse(localStorage.getItem(KEY) || '{}') }
+  catch {
+    // localStorage unavailable/corrupt: no persisted bindings, so each canvas
+    // simply starts on its chooser (no false claim about a bound file).
+    return {}
+  }
 }
 function persistBound(docs: Record<CanvasKind, Doc>) {
   try {
@@ -48,7 +53,10 @@ function persistBound(docs: Record<CanvasKind, Doc>) {
       training: docs.training.relpath,
       data: docs.data.relpath,
     }))
-  } catch { /* quota — ignore */ }
+  } catch {
+    // Quota/private mode: only cross-reload persistence of the binding is lost;
+    // the in-memory binding for this session is unaffected.
+  }
 }
 
 const mk = (relpath: string | null): Doc => ({ relpath, status: 'idle', error: null })

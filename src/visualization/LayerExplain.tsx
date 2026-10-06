@@ -196,12 +196,18 @@ function WeightsBar() {
   const weightsNote = useVizStore((s) => s.weightsNote)
   const setWeightsRun = useVizStore((s) => s.setWeightsRun)
   const [runs, setRuns] = useState<RunSummary[]>([])
+  const [runsErr, setRunsErr] = useState<string | null>(null)
 
   const local = isTauri() && getCurrentConnection().kind === 'local'
   useEffect(() => {
     if (!local) return
     let alive = true
-    training.list().then((list) => { if (alive) setRuns(list.filter((r) => r.has_checkpoint)) }).catch(() => {})
+    training.list()
+      .then((list) => { if (alive) setRuns(list.filter((r) => r.has_checkpoint)) })
+      .catch((e) => {
+        // A failed run listing must not be presented as "no trained run exists".
+        if (alive) { setRuns([]); setRunsErr(e instanceof Error ? e.message : String(e)) }
+      })
     return () => { alive = false }
   }, [local])
 
@@ -210,7 +216,9 @@ function WeightsBar() {
   return (
     <div className="mb-2 flex flex-wrap items-center gap-2 rounded border border-[#1f2429] bg-[#0e1216] px-2 py-1.5">
       <span className="text-[10px] uppercase tracking-wide text-[#5b6168]">Gewichte</span>
-      {runs.length === 0 ? (
+      {runsErr ? (
+        <span className="text-[10px] text-rose-400">Runs konnten nicht gelistet werden: {runsErr} — Gewichte bleiben zufällig</span>
+      ) : runs.length === 0 ? (
         <span className="text-[10px] text-[#6f767e]">zufällig — noch kein trainierter Run mit Checkpoint</span>
       ) : (
         <select

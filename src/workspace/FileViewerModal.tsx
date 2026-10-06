@@ -63,7 +63,11 @@ export default function FileViewerModal({ fileId, onClose }: { fileId: string; o
 
   const copy = async () => {
     if (text == null) return
-    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1200) } catch { /* ignore */ }
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1200) }
+    catch {
+      // Clipboard unavailable (permissions/insecure context): the button just
+      // doesn't flip to "copied"; the file content itself is unaffected.
+    }
   }
 
   return (

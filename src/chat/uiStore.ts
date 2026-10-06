@@ -24,17 +24,26 @@ function load(): number {
     const v = Number(localStorage.getItem(KEY))
     return v ? clamp(v) : 1
   } catch {
+    // localStorage unavailable (private mode): use the default font scale.
     return 1
   }
 }
 function loadAuto(): boolean {
-  try { return localStorage.getItem(AUTO_KEY) === '1' } catch { return false }
+  try { return localStorage.getItem(AUTO_KEY) === '1' }
+  catch {
+    // localStorage unavailable: default auto-approve mode is off (the safer
+    // choice) and is a UI preference, not a claim about stored data.
+    return false
+  }
 }
 function loadDoc(): DocMode {
   try {
     const v = localStorage.getItem(DOC_KEY)
     return v === 'off' || v === 'compact' ? v : 'verbose'
-  } catch { return 'verbose' }
+  } catch {
+    // localStorage unavailable: default documentation verbosity.
+    return 'verbose'
+  }
 }
 
 type ChatUiState = {
@@ -56,18 +65,30 @@ export const useChatUi = create<ChatUiState>((set, get) => ({
   basePx: BASE_PX * load(),
   setFontScale: (f) => {
     const c = clamp(f)
-    try { localStorage.setItem(KEY, String(c)) } catch { /* private mode */ }
+    try { localStorage.setItem(KEY, String(c)) }
+    catch {
+      // Private mode/quota: only cross-reload persistence of the scale is lost;
+      // the live font scale is applied below.
+    }
     set({ fontScale: c, basePx: BASE_PX * c })
   },
   bumpFontScale: (delta) => get().setFontScale(get().fontScale + delta),
   autoMode: loadAuto(),
   setAutoMode: (v) => {
-    try { localStorage.setItem(AUTO_KEY, v ? '1' : '0') } catch { /* private mode */ }
+    try { localStorage.setItem(AUTO_KEY, v ? '1' : '0') }
+    catch {
+      // Private mode/quota: the live auto-mode flag is still set below; only
+      // its persistence across reloads is skipped.
+    }
     set({ autoMode: v })
   },
   docMode: loadDoc(),
   setDocMode: (m) => {
-    try { localStorage.setItem(DOC_KEY, m) } catch { /* private mode */ }
+    try { localStorage.setItem(DOC_KEY, m) }
+    catch {
+      // Private mode/quota: the live doc-mode value is still set below; only
+      // its persistence across reloads is skipped.
+    }
     set({ docMode: m })
   },
 }))

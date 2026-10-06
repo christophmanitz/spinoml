@@ -47,6 +47,8 @@ export async function sidecarHealth(): Promise<boolean> {
     const res = await fetch(`${currentTorchUrl()}/health`)
     return res.ok
   } catch {
+    // Health probe: an unreachable sidecar is reported as offline (a distinct
+    // UI state), not as "model verified".
     return false
   }
 }

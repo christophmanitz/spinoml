@@ -382,6 +382,9 @@ canvas) and the blocked training launch open the dialog via
 
 ## Changelog (append one dated line per feature; newest first)
 
+- 2026-10-06 — **Silent-exception audit, frontend (Phase 50)**: 24 hidden failures made visible (`.py`-twin write/rename/remove errors banner `pyTwinError`, malformed run.json/events in run detail/compare, canvas bind failures, a failed remote capability probe no longer shows the local backend and blocks the training start); the other 56 swallows are documented in `docs/engineering/SILENT_EXCEPTIONS.md`. `npm run verify:silent-catch`, `npm run verify:silent-fixes` (33).
+- 2026-10-06 — **Reference experiments + generated-vs-hand-written equivalence (Phase 53–57)**: `examples/reference-experiments/{mlp,cnn,multi-input}/` (graph fixtures + README: how to run). `npm run verify:reference` (generated model == hand-written PyTorch: params, forward f32/f64, loss, gradients, negative control), `npm run verify:reference-train` (real trainer: complete artifact set, checkpoint↔model, same-seed rerun identical). CUDA is reported as SKIPPED where unavailable.
+
 - 2026-10-06 — **Unsafe deserialization closed (Phase 47)**: every `torch.load` goes through `safe_load.py` (`weights_only=True` + PyG/numpy allow-list, `UNSAFE_PICKLE` errors, `SPINOML_ALLOW_UNSAFE_PICKLE` escape hatch recorded per run); trainer carries a byte-identical embedded copy. `npm run test:safe-load` (85, real RCE attempts).
 - 2026-10-06 — **Filesystem scope (Phase 45/46)**: symlink-aware realpath containment for the torch sidecar (`scope.py`: roots, symlink targets, scope.json, `/health.scope`, explicit 403 codes; manifest/table-derived paths included) and the Node sidecar (`path-scope.mjs`); remote HPC sidecar launched with `SPINOML_ALLOWED_ROOTS`. Local default is the visible `unconfigured-open` mode until Rust writes `scope.json`. `npm run test:scope` (88), `npm run verify:paths` (48).
 

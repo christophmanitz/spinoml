@@ -39,6 +39,8 @@
     "verify:opencode": "tsx scripts/verify-opencode.ts",
     "verify:command-injection": "tsx scripts/verify-command-injection.ts",
     "verify:paths": "tsx scripts/verify-paths.ts",
+    "verify:silent-catch": "tsx scripts/verify-silent-catch.ts",
+    "verify:silent-fixes": "tsx scripts/verify-silent-fixes.ts",
     "test:graphstore": "tsx scripts/test-graphstore.ts",
     "test:persistence": "tsx scripts/test-persistence.ts",
     "test:determinism": "tsx scripts/test-determinism.ts",

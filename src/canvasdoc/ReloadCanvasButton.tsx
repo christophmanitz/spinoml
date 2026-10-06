@@ -22,7 +22,11 @@ export default function ReloadCanvasButton({ adapter }: { adapter: CanvasDocAdap
         try {
           await adapter.open(rel)
           setTimeout(() => fitView({ duration: 200, padding: 0.15 }), 0)
-        } catch { /* open() surfaces its own error/dialog */ }
+        } catch (e) {
+          // adapter.open() re-reads the bound file; a read/parse failure must be
+          // reported or the canvas silently keeps showing stale content.
+          alert(`Neu laden fehlgeschlagen (${rel}):\n${e instanceof Error ? e.message : String(e)}`)
+        }
         finally { setBusy(false) }
       }}
       className="rounded border border-[#1f2429] bg-[#13171b] px-2 py-1 text-[11px] text-[#9aa1a8] hover:border-[#3a4148] hover:bg-[#1a1f24] hover:text-[#e6e8eb] disabled:cursor-not-allowed disabled:opacity-40"

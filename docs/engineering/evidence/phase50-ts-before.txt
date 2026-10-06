@@ -1,0 +1,84 @@
+phase 50: silent-exception guard
+  scanned 132 source files, 80 swallowing site(s)
+  · src/canvas/layoutStore.ts:10  [catch { return 'TB' }]  NO-COMMENT  || catch { return 'TB' }
+  · src/canvas/layoutStore.ts:22  [catch {}]  NO-COMMENT  || catch { /* quota */ }
+  · src/canvasdoc/ReloadCanvasButton.tsx:25  [catch {}]  commented  || catch { /* open() surfaces its own error/dialog */ }
+  · src/canvasdoc/store.ts:42  [catch { return {} }]  NO-COMMENT  || catch { return {} }
+  · src/canvasdoc/store.ts:51  [catch {}]  NO-COMMENT  || catch { /* quota — ignore */ }
+  · src/chat/client.ts:70  [catch {}]  commented  || catch { /* sidecar gone — the turn will time out on its side */ }
+  · src/chat/client.ts:79  [catch { return false }]  NO-COMMENT  || catch { return false }
+  · src/chat/client.ts:92  [catch { return [] }]  NO-COMMENT  || catch { return [] }
+  · src/chat/client.ts:109  [.catch(() => '')]  NO-COMMENT  || res.text().catch(() => '')
+  · src/chat/providerStore.ts:126  [catch {}]  commented  || catch { /* quota / private-mode — best effort */ }
+  · src/chat/store.ts:95  [catch { return [] }]  NO-COMMENT  || catch { return [] }
+  · src/chat/store.ts:101  [catch {}]  NO-COMMENT  || catch { /* quota — ignore */ }
+  · src/chat/store.ts:106  [catch {}]  NO-COMMENT  || catch { /* ignore */ }
+  · src/chat/store.ts:364  [catch {}]  commented  || catch { /* skip individual failures */ }
+  · src/chat/store.ts:366  [catch {}]  NO-COMMENT  || catch { /* notes optional */ }
+  · src/chat/uiStore.ts:26  [catch { return 1 }]  NO-COMMENT  || catch { return 1 }
+  · src/chat/uiStore.ts:31  [catch { return false }]  NO-COMMENT  || catch { return false }
+  · src/chat/uiStore.ts:37  [catch { return 'verbose' }]  NO-COMMENT  || catch { return 'verbose' }
+  · src/chat/uiStore.ts:59  [catch {}]  NO-COMMENT  || catch { /* private mode */ }
+  · src/chat/uiStore.ts:65  [catch {}]  NO-COMMENT  || catch { /* private mode */ }
+  · src/chat/uiStore.ts:70  [catch {}]  NO-COMMENT  || catch { /* private mode */ }
+  · src/codegen/explain.ts:37  [catch { return '' }]  NO-COMMENT  || catch { return '' }
+  · src/connections/store.ts:98  [catch {}]  commented  || catch { /* quota / private-mode — best effort */ }
+  · src/data/graph/doc.ts:63  [catch {}]  commented  || catch { /* leave unbound — the chooser will handle it */ }
+  · src/datasets/store.ts:255  [catch {}]  commented  || catch { /* logging is best-effort */ }
+  · src/datasets/store.ts:266  [catch {}]  NO-COMMENT  || catch { /* skip bad lines */ }
+  · src/datasets/store.ts:269  [catch {}]  commented  || catch { /* file may not exist yet */ }
+  · src/inference/client.ts:49  [catch { return false }]  NO-COMMENT  || catch { return false }
+  · src/palette/Palette.tsx:25  [catch {}]  NO-COMMENT  || catch { /* quota */ }
+  · src/persistence/file.ts:104  [catch {}]  commented  || catch { /* quota / private mode — ignore */ }
+  · src/persistence/file.ts:122  [catch { return null }]  NO-COMMENT  || catch { return null }
+  · src/persistence/file.ts:128  [catch {}]  NO-COMMENT  || catch { /* ignore */ }
+  · src/project/store.ts:162  [catch {}]  NO-COMMENT  || catch { /* ignore */ }
+  · src/project/store.ts:163  [catch {}]  NO-COMMENT  || catch { /* ignore */ }
+  · src/project/store.ts:165  [catch {}]  NO-COMMENT  || catch { /* ignore */ }
+  · src/sidecars/remoteSidecar.ts:44  [catch {}]  NO-COMMENT  || catch { /* ignore */ }
+  · src/sidecars/remoteSidecar.ts:53  [catch {}]  NO-COMMENT  || catch { /* leave as-is */ }
+  · src/terminal/Terminal.tsx:66  [catch {}]  commented  || catch { /* ignore zero-size */ }
+  · src/terminal/Terminal.tsx:87  [.catch(() => {})]  commented  || invoke('pty_kill', { id: res.id }).catch(() => {})
+  · src/terminal/Terminal.tsx:110  [.catch(() => {})]  NO-COMMENT  || invoke('pty_write', { id: sessionId, data }).catch(() => {})
+  · src/terminal/Terminal.tsx:122  [catch {}]  commented  || catch { /* element may be hidden */ }
+  · src/terminal/Terminal.tsx:126  [.catch(() => {})]  NO-COMMENT  || invoke('pty_resize', { id: sessionId, cols, rows }).catch(() => {})
+  · src/terminal/Terminal.tsx:137  [catch {}]  NO-COMMENT  || catch { /* ignore */ }
+  · src/terminal/Terminal.tsx:139  [.catch(() => {})]  NO-COMMENT  || invoke('pty_resize', { id: sessionId, cols: term.cols, rows: term.rows }) .catch(() => {})
+  · src/terminal/Terminal.tsx:156  [.catch(() => {})]  NO-COMMENT  || invoke('pty_kill', { id: sessionId }).catch(() => {})
+  · src/training/charts/series.ts:15  [catch {}]  commented  || catch { /* skip partial trailing line */ }
+  · src/training/CompareModal.tsx:52  [catch {}]  NO-COMMENT  || catch { /* none yet */ }
+  · src/training/CompareModal.tsx:53  [catch {}]  NO-COMMENT  || catch { /* none */ }
+  · src/training/EvalRunModal.tsx:93  [catch {}]  commented  || catch { /* source dataset may be gone */ }
+  · src/training/graph/autosave.ts:16  [catch {}]  commented  || catch { /* quota / private mode — ignore */ }
+  · src/training/graph/autosave.ts:36  [catch { return null }]  NO-COMMENT  || catch { return null }
+  · src/training/graph/doc.ts:59  [catch {}]  commented  || catch { /* leave unbound — the chooser will handle it */ }
+  · src/training/graph/TrainingInspector.tsx:169  [.catch(() => {})]  NO-COMMENT  || fs.list().then((entries) => setModels(entries.filter((e) => !e.is_dir && e.relpath.toLowerCase().end
+  · src/training/RunDetailModal.tsx:62  [catch { return null }]  NO-COMMENT  || catch { return null }
+  · src/training/RunDetailModal.tsx:79  [catch {}]  commented  || catch { /* run.json not ready / malformed */ }
+  · src/training/RunDetailModal.tsx:95  [.catch(() => '')]  NO-COMMENT  || training.readFile(runId, 'pid').catch(() => '')
+  · src/training/RunDetailModal.tsx:102  [.catch(() => {})]  commented  || eventsApply(() => training.readFile(runId, 'events.jsonl')).catch(() => {})
+  · src/training/RunDetailModal.tsx:115  [catch {}]  commented  || catch { /* file may not exist yet */ }
+  · src/training/RunDetailModal.tsx:124  [.catch(() => {})]  NO-COMMENT  || eventsApply(() => training.readFile(runId, 'events.jsonl')).catch(() => {})
+  · src/training/RunDetailModal.tsx:134  [catch {}]  commented  || catch { /* file may not exist yet */ }
+  · src/training/RunDetailModal.tsx:210  [catch {}]  commented  || catch { /* run.json not ready */ }
+  · src/visualization/LayerExplain.tsx:204  [.catch(() => {})]  NO-COMMENT  || training.list().then((list) => { if (alive) setRuns(list.filter((r) => r.has_checkpoint)) }).catch((
+  · src/workspace/FileExplorer.tsx:33  [catch {}]  commented  || catch { /* malformed / not on disk — ignore */ }
+  · src/workspace/FileViewerModal.tsx:66  [catch {}]  NO-COMMENT  || catch { /* ignore */ }
+  · src/workspace/PyCodeModal.tsx:38  [catch {}]  NO-COMMENT  || catch { /* ignore */ }
+  · src/workspace/recentWorkspaces.ts:24  [catch { return [] }]  NO-COMMENT  || catch { return [] }
+  · src/workspace/recentWorkspaces.ts:31  [catch {}]  NO-COMMENT  || catch { /* quota */ }
+  · src/workspace/recentWorkspaces.ts:57  [catch { return null }]  NO-COMMENT  || catch { return null }
+  · src/workspace/recentWorkspaces.ts:65  [catch {}]  NO-COMMENT  || catch { /* quota */ }
+  · src/workspace/recentWorkspaces.ts:84  [catch { return null }]  NO-COMMENT  || catch { return null }
+  · src/workspace/recentWorkspaces.ts:92  [catch {}]  NO-COMMENT  || catch { /* quota */ }
+  · src/workspace/store.ts:146  [catch {}]  NO-COMMENT  || catch { /* quota — ignore */ }
+  · src/workspace/store.ts:174  [catch {}]  commented  || catch { /* ignore .py write errors */ }
+  · src/workspace/store.ts:241  [catch {}]  NO-COMMENT  || catch { /* maybe absent */ }
+  · src/workspace/store.ts:263  [catch {}]  NO-COMMENT  || catch { /* maybe absent */ }
+  · src/workspace/store.ts:308  [catch {}]  NO-COMMENT  || catch { /* maybe absent */ }
+  · src/workspace/store.ts:390  [catch {}]  commented  || catch { /* skip .py if codegen fails */ }
+  · src/workspace/store.ts:444  [catch {}]  NO-COMMENT  || catch { /* ignore */ }
+  · src/workspace/store.ts:493  [catch {}]  NO-COMMENT  || catch { /* ignore */ }
+  · src/workspace/store.ts:573  [catch { return null }]  NO-COMMENT  || catch { return null }
+
+80 swallowing site(s) total

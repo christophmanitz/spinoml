@@ -35,7 +35,10 @@ export default function PyCodeModal({
       await navigator.clipboard.writeText(code)
       setCopied(true)
       setTimeout(() => setCopied(false), 1200)
-    } catch { /* ignore */ }
+    } catch {
+      // Clipboard unavailable (permissions/insecure context): the button just
+      // doesn't flip to "copied"; the generated code shown is unaffected.
+    }
   }
 
   const download = () => {

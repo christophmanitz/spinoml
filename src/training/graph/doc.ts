@@ -56,5 +56,9 @@ export async function ensureTrainingBound(): Promise<void> {
     const rel = await bindNewTrainingGraphFromCurrent()
     markCanvasHydrated('training', rel)
     useCanvasDocStore.getState().setBound('training', rel)
-  } catch { /* leave unbound — the chooser will handle it */ }
+  } catch (e) {
+    // The chatbot just built a training graph but persisting it failed. Surface
+    // it as an explicit canvas error instead of leaving work unbound/unsaved.
+    useCanvasDocStore.getState().setStatus('training', 'error', `Training-Graph konnte nicht gespeichert werden: ${e instanceof Error ? e.message : String(e)}`)
+  }
 }

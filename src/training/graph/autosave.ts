@@ -34,6 +34,8 @@ export function readTrainingAutosave(): TrainingGraphSnapshot | null {
     if (!snap || !Array.isArray(snap.nodes) || !Array.isArray(snap.edges)) return null
     return snap
   } catch {
+    // Training-graph autosave is best-effort recovery: missing and corrupt both
+    // mean "nothing to restore", and the canvas makes no restored-state claim.
     return null
   }
 }

@@ -60,5 +60,9 @@ export async function ensureDataBound(): Promise<void> {
     const rel = await bindNewDataGraphFromCurrent()
     markCanvasHydrated('data', rel)
     useCanvasDocStore.getState().setBound('data', rel)
-  } catch { /* leave unbound — the chooser will handle it */ }
+  } catch (e) {
+    // The chatbot just built a data graph but persisting it failed. Surface it
+    // as an explicit canvas error instead of leaving the work unbound/unsaved.
+    useCanvasDocStore.getState().setStatus('data', 'error', `Daten-Graph konnte nicht gespeichert werden: ${e instanceof Error ? e.message : String(e)}`)
+  }
 }

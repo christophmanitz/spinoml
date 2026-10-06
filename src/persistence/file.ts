@@ -120,10 +120,15 @@ export function readAutosave(): GraphSnapshot | null {
     if (!text) return null
     return parseFile(text)
   } catch {
+    // Autosave is best-effort recovery: a missing or corrupt entry both mean
+    // "nothing recoverable", and the canvas reports no restored state either way.
     return null
   }
 }
 
 export function clearAutosave(): void {
-  try { localStorage.removeItem(AUTOSAVE_KEY) } catch { /* ignore */ }
+  try { localStorage.removeItem(AUTOSAVE_KEY) }
+  catch {
+    // Best-effort cleanup; failing to remove the key cannot create a false state.
+  }
 }

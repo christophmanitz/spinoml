@@ -38,6 +38,7 @@ type DatasetsState = {
   stats: Record<string, Cached<StatsResult>>
   smoke: Record<string, Cached<SmokeResult>>
   history: SmokeHistoryEntry[]
+  historyError: string | null
 
   refresh: () => Promise<void>
   select: (relpath: string | null) => void
@@ -71,6 +72,7 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
   stats: {},
   smoke: {},
   history: [],
+  historyError: null,
 
   refresh: async () => {
     if (!isTauri()) {
@@ -252,7 +254,10 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
       try {
         await experimentsBackend.append('smoke-results.jsonl', JSON.stringify(histEntry))
         set({ history: [histEntry, ...get().history].slice(0, 50) })
-      } catch { /* logging is best-effort */ }
+      } catch {
+        // History logging is secondary: the smoke result itself is already shown
+        // above, so a failed log append does not turn a real result into a lie.
+      }
     }
   },
 
@@ -263,10 +268,14 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
       const lines = text.split('\n').filter((l) => l.trim())
       const items: SmokeHistoryEntry[] = []
       for (const line of lines) {
-        try { items.push(JSON.parse(line)) } catch { /* skip bad lines */ }
+        try { items.push(JSON.parse(line)) } catch { /* skip a corrupt line in the append-only smoke log (a partial/torn last line is expected) */ }
       }
-      set({ history: items.reverse().slice(0, 50) })
-    } catch { /* file may not exist yet */ }
+      set({ history: items.reverse().slice(0, 50), historyError: null })
+    } catch (e) {
+      // Missing file reads as "" (not an error); reaching here means the log
+      // exists but is unreadable — say so instead of showing an empty history.
+      set({ historyError: `Smoke-Verlauf konnte nicht gelesen werden: ${e instanceof Error ? e.message : String(e)}` })
+    }
   },
 }))
 

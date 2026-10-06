@@ -22,13 +22,18 @@ export function getRecentWorkspaces(): RecentWorkspace[] {
       .filter((r): r is RecentWorkspace => !!r && typeof r.path === 'string')
       .map((r) => ({ path: r.path, name: r.name || nameOf(r.path), openedAt: Number(r.openedAt) || 0 }))
   } catch {
+    // localStorage unavailable/corrupt: the Recent list is empty. It is a
+    // convenience list, not a claim that no workspace exists.
     return []
   }
 }
 
 function write(list: RecentWorkspace[]): void {
   if (typeof window === 'undefined') return
-  try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(list.slice(0, MAX))) } catch { /* quota */ }
+  try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(list.slice(0, MAX))) }
+  catch {
+    // Quota/private mode: only persistence of the convenience list is skipped.
+  }
 }
 
 /** Record (or bump to top) a freshly-opened local workspace. */
@@ -54,7 +59,12 @@ const ACTIVE_KEY = 'spinoml.active-workspace.v1'
 
 export function getActiveWorkspace(): string | null {
   if (typeof window === 'undefined') return null
-  try { return window.localStorage.getItem(ACTIVE_KEY) || null } catch { return null }
+  try { return window.localStorage.getItem(ACTIVE_KEY) || null }
+  catch {
+    // localStorage unavailable: no remembered workspace; startup falls back to
+    // the Welcome screen, which is an accurate "nothing is open" state.
+    return null
+  }
 }
 
 export function setActiveWorkspace(path: string | null): void {
@@ -62,7 +72,9 @@ export function setActiveWorkspace(path: string | null): void {
   try {
     if (path) window.localStorage.setItem(ACTIVE_KEY, path)
     else window.localStorage.removeItem(ACTIVE_KEY)
-  } catch { /* quota */ }
+  } catch {
+    // Quota/private mode: only auto-reopen of the last local workspace is lost.
+  }
 }
 
 // The open .spinoml RELPATH, keyed by workspace root. In Tauri mode the workspace
@@ -81,7 +93,11 @@ export function getActiveFile(root: string): string | null {
     if (!raw) return null
     const v = JSON.parse(raw) as { root?: string; relpath?: string }
     return v && v.root === root && typeof v.relpath === 'string' ? v.relpath : null
-  } catch { return null }
+  } catch {
+    // localStorage unavailable/corrupt: no remembered open file; the canvas
+    // falls back to its chooser rather than reopening the wrong file.
+    return null
+  }
 }
 
 export function setActiveFile(root: string | null, relpath: string | null): void {
@@ -89,5 +105,7 @@ export function setActiveFile(root: string | null, relpath: string | null): void
   try {
     if (root && relpath) window.localStorage.setItem(ACTIVE_FILE_KEY, JSON.stringify({ root, relpath }))
     else window.localStorage.removeItem(ACTIVE_FILE_KEY)
-  } catch { /* quota */ }
+  } catch {
+    // Quota/private mode: only the remembered file binding across reloads is lost.
+  }
 }

@@ -164,17 +164,25 @@ function DatasetRef({ value, onChange }: { value: string; onChange: (v: unknown)
 
 function ModelRef({ value, onChange }: { value: string; onChange: (v: unknown) => void }) {
   const [models, setModels] = useState<string[]>([])
+  const [listErr, setListErr] = useState<string | null>(null)
   useEffect(() => {
     if (!isTauri()) return
     void fs.list().then((entries) =>
       setModels(entries.filter((e) => !e.is_dir && e.relpath.toLowerCase().endsWith('.spinoml')).map((e) => e.relpath).sort()),
-    ).catch(() => {})
+    ).catch((e) => {
+      // A failed workspace listing must not present itself as "no models exist".
+      setModels([])
+      setListErr(e instanceof Error ? e.message : String(e))
+    })
   }, [])
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className={INPUT}>
-      <option value="">— Modell —</option>
-      {models.map((m) => <option key={m} value={m}>{m}</option>)}
-    </select>
+    <div className="space-y-1">
+      <select value={value} onChange={(e) => onChange(e.target.value)} className={INPUT}>
+        <option value="">— Modell —</option>
+        {models.map((m) => <option key={m} value={m}>{m}</option>)}
+      </select>
+      {listErr && <span className="block text-[10px] text-rose-400">Modelle konnten nicht gelistet werden: {listErr}</span>}
+    </div>
   )
 }
 

@@ -859,6 +859,7 @@ function SmokeBody({
   })
   const hasModel = useGraphStore((s) => s.nodes.length > 0)
   const history = useDatasetsStore((s) => s.history)
+  const historyError = useDatasetsStore((s) => s.historyError)
   const loadHistory = useDatasetsStore((s) => s.loadHistory)
 
   useEffect(() => { void loadHistory() }, [loadHistory])
@@ -899,6 +900,7 @@ function SmokeBody({
         <SmokeError result={data} requestedShape={inputShape} relpath={relpath} />
       )}
       {datasetHistory.length > 0 && <SmokeHistory entries={datasetHistory} />}
+      {historyError && <div className="text-[10px] text-rose-400">{historyError}</div>}
     </div>
   )
 }

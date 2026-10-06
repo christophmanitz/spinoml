@@ -41,7 +41,11 @@ export const useRemoteSidecarStore = create<State>((set) => ({
 
   stop: async () => {
     if (!isTauri()) return
-    try { await invoke('stop_remote_sidecar') } catch { /* ignore */ }
+    try { await invoke('stop_remote_sidecar') }
+    catch {
+      // Best-effort teardown: we still mark the sidecar stopped so no stale
+      // running tunnel is shown as current.
+    }
     set({ status: { kind: 'stopped' } })
   },
 
@@ -50,7 +54,11 @@ export const useRemoteSidecarStore = create<State>((set) => ({
     try {
       const s = await invoke<RemoteSidecarStatus>('remote_sidecar_status')
       set({ status: s })
-    } catch { /* leave as-is */ }
+    } catch (e) {
+      // Can't confirm the sidecar state → do not keep displaying the previous
+      // status as if it were current; show an explicit unknown/error instead.
+      set({ status: { kind: 'error', message: `Sidecar-Status unbekannt: ${e instanceof Error ? e.message : String(e)}` } })
+    }
   },
 }))
 

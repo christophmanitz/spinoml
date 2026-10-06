@@ -159,10 +159,22 @@ export const useProjectStore = create<State>((set, get) => ({
   closeProject: async () => {
     const conn = getCurrentConnection()
     if (conn.kind === 'remote-ssh') {
-      try { await tauriSsh.close() } catch { /* ignore */ }
-      try { await useRemoteSidecarStore.getState().stop() } catch { /* ignore */ }
+      try { await tauriSsh.close() }
+      catch {
+        // Best-effort cleanup while closing the project; the connection target
+        // is being dropped anyway, so a failure cannot make the UI lie.
+      }
+      try { await useRemoteSidecarStore.getState().stop() }
+      catch {
+        // Best-effort sidecar teardown on close; the store flips to 'stopped'
+        // regardless and no stale "running" status is presented.
+      }
     } else {
-      try { await tauriFs.closeDir() } catch { /* ignore */ }
+      try { await tauriFs.closeDir() }
+      catch {
+        // Best-effort local directory cleanup on close; the workspace binding is
+        // cleared below so no directory is falsely reported as open.
+      }
     }
     set({ status: { kind: 'none' } })
     // An explicit close must NOT auto-reopen on the next launch.

@@ -107,6 +107,8 @@ export default function Terminal() {
 
     const onData = term.onData((data) => {
       if (sessionId) {
+        // Best-effort keystroke delivery to the PTY; a failure means the child
+        // already exited, which the pty:exit listener surfaces in the terminal.
         invoke('pty_write', { id: sessionId, data }).catch(() => {})
       } else if (data.includes('\r')) {
         // Session is dead — Enter respawns it (re-reads the current connection,
@@ -123,6 +125,8 @@ export default function Terminal() {
       if (sessionId) {
         const cols = Math.max(20, term.cols)
         const rows = Math.max(5, term.rows)
+        // Best-effort PTY resize; if it fails the terminal still works and the
+        // next resize/refit will retry.
         invoke('pty_resize', { id: sessionId, cols, rows }).catch(() => {})
       }
     })
@@ -134,8 +138,13 @@ export default function Terminal() {
     const io = new IntersectionObserver((entries) => {
       for (const entry of entries) {
         if (entry.isIntersecting) {
-          try { fit.fit() } catch { /* ignore */ }
+          try { fit.fit() }
+          catch {
+            // Refit can fail while the element is still hidden (zero size);
+            // the terminal is simply not refit this tick.
+          }
           if (sessionId) {
+            // Best-effort PTY resize from the IntersectionObserver path.
             invoke('pty_resize', { id: sessionId, cols: term.cols, rows: term.rows })
               .catch(() => {})
           }
@@ -153,6 +162,8 @@ export default function Terminal() {
       unlistenData?.()
       unlistenExit?.()
       if (sessionId) {
+        // Best-effort PTY teardown on unmount; the component is going away, so
+        // a failure leaves nothing observable.
         invoke('pty_kill', { id: sessionId }).catch(() => {})
       }
       term.dispose()

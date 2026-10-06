@@ -22,7 +22,11 @@ export default function Palette() {
       const next = new Set(prev)
       if (next.has(name)) next.delete(name)
       else next.add(name)
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...next])) } catch { /* quota */ }
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...next])) }
+      catch {
+        // Private mode/quota: only cross-reload persistence of the collapse
+        // state is lost; the live collapsed groups are still applied.
+      }
       return next
     })
   }

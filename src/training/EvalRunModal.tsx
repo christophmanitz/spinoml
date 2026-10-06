@@ -71,8 +71,10 @@ export default function EvalRunModal() {
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [caps, setCaps] = useState<RemoteTrainingCapabilities | null>(null)
+  const [capsError, setCapsError] = useState<string | null>(null)
   const [backendKind, setBackendKind] = useState<'local' | 'slurm'>('local')
   const [slurm, setSlurm] = useState<SlurmConfig>(remoteConn?.slurm ?? defaultSlurmConfig())
+  const [srcWarn, setSrcWarn] = useState<string | null>(null)
 
   const externalInspect = useDatasetsStore((s) => (datasetRel ? s.inspects[datasetRel]?.data : undefined))
   const res = useMemo(() => dirResources(externalInspect ?? undefined), [externalInspect])
@@ -89,12 +91,22 @@ export default function EvalRunModal() {
         setHeads(hs); setSelected(new Set(hs.map((h) => h.output)))
         setLabel(`${cfg.run_label || sourceRunId} extern`)
         let srcInspect: InspectResult | null = null
-        try { await inspectDataset(cfg.dataset.relpath); srcInspect = useDatasetsStore.getState().inspects[cfg.dataset.relpath]?.data ?? null }
-        catch { /* source dataset may be gone */ }
+        try {
+          await inspectDataset(cfg.dataset.relpath)
+          srcInspect = useDatasetsStore.getState().inspects[cfg.dataset.relpath]?.data ?? null
+          setSrcWarn(null)
+        } catch (e) {
+          // The source dataset is optional enrichment; if it can't be read the
+          // contract is derived from run.json alone, but the user must be told.
+          setSrcWarn(`Quell-Datensatz ${cfg.dataset.relpath} nicht ladbar: ${e instanceof Error ? e.message : String(e)}`)
+        }
         setContract(modelContract(cfg, srcInspect))
         if (cfg.dataset.kind === 'manifest') {
-          try { setSrcManifest(JSON.parse(await fs.read(cfg.dataset.relpath))) }
-          catch { setSrcManifest({ pairs: {}, target: {} }) }
+          const raw = await fs.read(cfg.dataset.relpath)
+          try { setSrcManifest(raw ? JSON.parse(raw) : null) }
+          catch (e) {
+            throw new Error(`Manifest ${cfg.dataset.relpath} ist beschädigt: ${e instanceof Error ? e.message : String(e)}`, { cause: e })
+          }
         }
         await useDatasetsStore.getState().refresh()
         setDsList(useDatasetsStore.getState().entries.filter((d) => !d.name.startsWith('.'))
@@ -106,7 +118,13 @@ export default function EvalRunModal() {
   useEffect(() => {
     if (!remoteConn) return
     let cancelled = false
-    void training.capabilities().then((c) => { if (!cancelled) { setCaps(c); setBackendKind(c.has_slurm ? 'slurm' : 'local') } }).catch(() => { if (!cancelled) setCaps(null) })
+    void training.capabilities()
+      .then((c) => { if (!cancelled) { setCaps(c); setCapsError(null); setBackendKind(c.has_slurm ? 'slurm' : 'local') } })
+      .catch((e) => {
+        // A failed remote probe is NOT "no SLURM / local host" — keep caps null
+        // and surface an explicit unknown state so the backend isn't guessed.
+        if (!cancelled) { setCaps(null); setCapsError(e instanceof Error ? e.message : String(e)) }
+      })
     return () => { cancelled = true }
   }, [remoteConn])
 
@@ -188,6 +206,8 @@ export default function EvalRunModal() {
 
         <div className="flex-1 space-y-3 overflow-y-auto p-4 text-[12px]">
           {error && <div className="rounded border border-rose-900/60 bg-rose-950/30 p-2 text-[11px] text-rose-300">{error}</div>}
+          {capsError && <div className="rounded border border-amber-900/60 bg-amber-950/30 p-2 text-[11px] text-amber-200">Fähigkeiten des Remote-Hosts unbekannt (SLURM/GPU nicht geprüft): {capsError}. Backend wird nicht automatisch gewählt.</div>}
+          {srcWarn && <div className="rounded border border-amber-900/60 bg-amber-950/30 p-2 text-[11px] text-amber-200">{srcWarn}</div>}
 
           <label className="block"><span className="mb-1 block text-[11px] text-[#6f767e]">Label</span>
             <input value={label} onChange={(e) => setLabel(e.target.value)} className={SELECT} /></label>

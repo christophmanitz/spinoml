@@ -35,6 +35,8 @@ function safeSummary(spec: LayerSpec, params: Record<string, unknown>): string {
   try {
     return spec.summary(params) ?? ''
   } catch {
+    // A registry summary is decorative prose for the Explain view; if a broken
+    // param makes it throw, omitting the summary is safer than inventing one.
     return ''
   }
 }

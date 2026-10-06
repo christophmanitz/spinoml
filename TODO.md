@@ -2794,6 +2794,20 @@ Hidden real failure?
 
 Fix hidden failures.
 
+> **2026-10-06 — implemented for the TypeScript frontend (Python/Node/Rust still open).** An AST scan
+> (not grep) found 80 swallowing handlers in `src/`; 56 are EXPECTED with a written one-sentence
+> reason each (`docs/engineering/SILENT_EXCEPTIONS.md` is the allow-list), 24 were HIDDEN failures
+> and are fixed so the failure becomes a visible, truthful state: `.py`-twin write/rename/remove/move
+> errors (a save no longer reports clean while the generated script is missing; banner via
+> `pyTwinError`), malformed `run.json`/events/per-file reads in run detail and compare, canvas bind
+> failures, dataset history read errors, a failed remote capability probe (was silently shown as the
+> local backend; the start is now BLOCKED until the probe works — found in review, the worker had
+> only added a banner), remote-sidecar refresh, malformed SSE abort. `npm run verify:silent-catch`
+> fails any new swallow without a ≥15-char prose reason or without an allow-list row;
+> `npm run verify:silent-fixes` (33) asserts each fixed site. Lint unchanged at the 82-problem
+> baseline. **Still open:** Python sidecars (`except …: pass`, broad `except Exception: return …`),
+> the Node sidecar (16 empty catches) and 39 Rust `let _ =`/`.ok()`/`unwrap` sites (no toolchain).
+
 ---
 
 # 52. PHASE 51 – RESOURCE LEAK TESTING
@@ -2863,20 +2877,6 @@ ReLU
 Linear
 ```
 
----
-
-## Experiment B – CNN
-
-Small image/synthetic image task.
-
-```text
-Input
- ↓
-Conv
- ↓
-Activation
- ↓
-Pooling
 > **2026-10-06 — implemented.** Three reference experiments with committed graph fixtures
 > (`examples/reference-experiments/{mlp,cnn,multi-input}/model.spinoml`; the harness asserts the
 > committed bytes equal a fresh serialization): A MLP (Linear-ReLU-Linear), B CNN (Reshape-Conv2d-
@@ -2893,6 +2893,20 @@ Pooling
 > differs. A first delegated attempt returned stub files that printed SKIPPED and exited 0; it was
 > rejected and the work redone in two smaller blocks.
 
+---
+
+## Experiment B – CNN
+
+Small image/synthetic image task.
+
+```text
+Input
+ ↓
+Conv
+ ↓
+Activation
+ ↓
+Pooling
  ↓
 Linear
 ```
@@ -2940,6 +2954,15 @@ Gradient behavior
 
 Where operations are mathematically equivalent, compare outputs using appropriate PyTorch numerical assertions.
 
+> **2026-10-06 — implemented, no generator defect found.** `scripts/lib/reference_models.py` holds
+> hand-written `RefMLP`/`RefCNN`/`RefMultiInput` (written as a person would, not derived from the
+> generated code). `npm run verify:reference` copies the generated parameters pairwise (count and
+> shapes asserted first) and compares, in `eval()` mode: parameter counts, forward outputs
+> (float64 rtol 1e-10 / float32 rtol 1e-5), CrossEntropy loss (1e-12) and EVERY parameter gradient
+> (float64) — all equal for the three graphs. A negative control perturbs one reference weight and
+> must be detected; a mutation test (ReLU→Tanh in the reference) made MLP and CNN fail in forward,
+> loss and gradients with exit 1, so the harness can see a real difference.
+
 ---
 
 # 56. PHASE 55 – PARAMETER COUNT
@@ -2954,15 +2977,11 @@ Trainable parameters
 must be calculable.
 
 Compare against known/reference implementations for test models.
-> **2026-10-06 — implemented, no generator defect found.** `scripts/lib/reference_models.py` holds
-> hand-written `RefMLP`/`RefCNN`/`RefMultiInput` (written as a person would, not derived from the
-> generated code). `npm run verify:reference` copies the generated parameters pairwise (count and
-> shapes asserted first) and compares, in `eval()` mode: parameter counts, forward outputs
-> (float64 rtol 1e-10 / float32 rtol 1e-5), CrossEntropy loss (1e-12) and EVERY parameter gradient
-> (float64) — all equal for the three graphs. A negative control perturbs one reference weight and
-> must be detected; a mutation test (ReLU→Tanh in the reference) made MLP and CNN fail in forward,
-> loss and gradients with exit 1, so the harness can see a real difference.
 
+> **2026-10-06 — implemented.** Total and trainable counts are asserted for generated AND
+> hand-written models against analytic formulas (MLP 210 = 176+34, CNN 170 = 40+130,
+> multi-input 130 = 56+40+34), and the trainer's `metrics.json` `n_params` must equal them
+> (`verify:reference`, `verify:reference-train`).
 
 ---
 
@@ -2978,12 +2997,13 @@ If unavailable:
 SKIPPED – CUDA unavailable
 ```
 
-> **2026-10-06 — implemented.** Total and trainable counts are asserted for generated AND
-> hand-written models against analytic formulas (MLP 210 = 176+34, CNN 170 = 40+130,
-> multi-input 130 = 56+40+34), and the trainer's `metrics.json` `n_params` must equal them
-> (`verify:reference`, `verify:reference-train`).
-
 Do not claim CUDA compatibility merely because the code contains a CUDA option.
+
+> **2026-10-06 — CPU PASS, CUDA SKIPPED.** CPU: every comparison and training run above;
+> `config.env.device == "cpu"` is asserted. CUDA: `SKIPPED  CUDA — torch.cuda.is_available() is
+> False` is printed explicitly by both harnesses (this machine has the CPU build `torch 2.12.0+cpu`);
+> the CUDA branches (forward comparison, a CPU-vs-CUDA best-val-loss check within 1e-3) are
+> implemented and run automatically where a GPU exists. No CUDA claim is made.
 
 ---
 
@@ -2999,12 +3019,11 @@ float64
 Add other dtypes only where the existing project intends to support them.
 
 Do not promise unsupported dtype combinations.
-> **2026-10-06 — CPU PASS, CUDA SKIPPED.** CPU: every comparison and training run above;
-> `config.env.device == "cpu"` is asserted. CUDA: `SKIPPED  CUDA — torch.cuda.is_available() is
-> False` is printed explicitly by both harnesses (this machine has the CPU build `torch 2.12.0+cpu`);
-> the CUDA branches (forward comparison, a CPU-vs-CUDA best-val-loss check within 1e-3) are
-> implemented and run automatically where a GPU exists. No CUDA claim is made.
 
+> **2026-10-06 — implemented for float32 and float64.** The model-level comparison runs both
+> dtypes with separate tolerances; the trainer run asserts `config.env.dtype` equals the dtype of
+> the checkpointed floating-point parameters. No other dtype is claimed (the project does not
+> intend to support them).
 
 ---
 

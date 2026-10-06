@@ -13,6 +13,10 @@ type Loaded = {
   color: string
   events: TrainingEvent[]
   config: Record<string, unknown> | null
+  /** A non-empty string means the frozen config file exists but is unreadable
+   *  or corrupt — distinct from a run that simply has no events yet. */
+  configError: string | null
+  eventsError: string | null
   /** final/best metrics pulled from events */
   final: { val_loss: number | null; val_acc: number | null; train_loss: number | null; n_params: number | null; seconds: number | null }
 }
@@ -49,14 +53,24 @@ export default function CompareModal() {
         const summary = runs.find((r) => r.run_id === runId)
         let events: TrainingEvent[] = []
         let config: Record<string, unknown> | null = null
-        try { events = parseFinalEvents(await training.readFile(runId, 'events.jsonl')) } catch { /* none yet */ }
-        try { config = JSON.parse(await training.readFile(runId, 'run.json')) } catch { /* none */ }
+        let eventsError: string | null = null
+        let configError: string | null = null
+        // readFile returns "" for a missing file; a throw means the file exists
+        // but is unreadable/corrupt, which the compare view must disclose.
+        try { events = parseFinalEvents(await training.readFile(runId, 'events.jsonl')) }
+        catch (e) { eventsError = e instanceof Error ? e.message : String(e) }
+        try {
+          const raw = await training.readFile(runId, 'run.json')
+          if (raw) config = JSON.parse(raw)
+        } catch (e) { configError = e instanceof Error ? e.message : String(e) }
         return {
           runId,
           label: summary?.run_label || runId,
           color: CHART_COLORS[i % CHART_COLORS.length],
           events,
           config,
+          eventsError,
+          configError,
           final: pickFinal(events),
         }
       }))
@@ -141,6 +155,8 @@ export default function CompareModal() {
                     <td className="py-0.5 pr-3">
                       <span className="mr-1.5 inline-block h-2 w-2 rounded-sm align-middle" style={{ background: l.color }} />
                       <span className="font-sans text-[#e6e8eb]">{l.label}</span>
+                      {l.configError && <span className="ml-1 text-rose-400" title={l.configError}>⚠ run.json</span>}
+                      {l.eventsError && <span className="ml-1 text-rose-400" title={l.eventsError}>⚠ events</span>}
                     </td>
                     <td className="pr-3 text-[#5fd39a]">{fmtNum(l.final.val_loss, 4)}</td>
                     <td className="pr-3">{fmtNum(l.final.val_acc, 4)}</td>

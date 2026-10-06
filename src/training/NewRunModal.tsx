@@ -86,6 +86,7 @@ export default function NewRunModal() {
   const updateRemote = useConnectionsStore((s) => s.updateRemote)
 
   const [caps, setCaps] = useState<RemoteTrainingCapabilities | null>(null)
+  const [capsError, setCapsError] = useState<string | null>(null)
   const [backendKind, setBackendKind] = useState<'local' | 'slurm'>('local')
   const [slurm, setSlurm] = useState<SlurmConfig>(remoteConn?.slurm ?? defaultSlurmConfig())
 
@@ -160,14 +161,21 @@ export default function NewRunModal() {
   useEffect(() => {
     let cancelled = false
     setCaps(null)
+    setCapsError(null)
     void training.capabilities().then((c) => {
       if (cancelled) return
       setCaps(c)
+      setCapsError(null)
       // No SLURM on this host (or it's not a cluster) → force direct backend so a
       // stale 'slurm' choice from a previous connection can't leak across hosts.
       if (!c.has_slurm) setBackendKind('local')
       setSlurm((prev) => (prev.partition || !c.partitions.length ? prev : { ...prev, partition: c.partitions[0] }))
-    }).catch(() => { if (!cancelled) { setCaps(null); setBackendKind('local') } })
+    }).catch((e) => {
+      // A failed REC probe is not "this host has no SLURM": keep caps null and
+      // report unknown. Do NOT silently fall back to the local/direct backend,
+      // which would present a wrong execution mode for a remote connection.
+      if (!cancelled) { setCaps(null); setCapsError(e instanceof Error ? e.message : String(e)) }
+    })
     return () => { cancelled = true }
   }, [currentId])
 
@@ -191,8 +199,11 @@ export default function NewRunModal() {
   // Multitask runs (prefilled from a graph with Head nodes) carry their targets
   // in cfg.heads, so no single target column is needed.
   const isMultitask = (cfg.heads?.length ?? 0) > 0
+  // A failed capability probe means the execution environment is UNKNOWN (is
+  // there SLURM? is the host even reachable?) — launching anyway would silently
+  // pick the default backend, so the start stays blocked until the probe works.
   const canSubmit =
-    !!modelRelpath && !!datasetRelpath && (isManifest || isMultitask || !!targetColumn) && !submitting && sweepCount <= 64
+    !!modelRelpath && !!datasetRelpath && (isManifest || isMultitask || !!targetColumn) && !submitting && sweepCount <= 64 && !capsError
 
   async function submit() {
     setError(null)
@@ -471,6 +482,7 @@ export default function NewRunModal() {
             <BackendSection
               conn={remoteConn}
               caps={caps}
+              capsError={capsError}
               backendKind={backendKind}
               setBackendKind={setBackendKind}
               slurm={slurm}
@@ -512,10 +524,11 @@ export default function NewRunModal() {
 // being probed. Partitions are always whatever THIS host's `sinfo` reported —
 // never a hardcoded list (cluster naming differs everywhere).
 function BackendSection({
-  conn, caps, backendKind, setBackendKind, slurm, setSlurm,
+  conn, caps, capsError, backendKind, setBackendKind, slurm, setSlurm,
 }: {
   conn: RemoteSshConnection
   caps: RemoteTrainingCapabilities | null
+  capsError: string | null
   backendKind: 'local' | 'slurm'
   setBackendKind: (k: 'local' | 'slurm') => void
   slurm: SlurmConfig
@@ -534,7 +547,12 @@ function BackendSection({
         <span className="rounded bg-[#14181c] px-1.5 py-0.5 font-mono text-[10px] text-[#6f767e]">{host}</span>
       </div>
 
-      {caps === null ? (
+      {capsError ? (
+        <div className="rounded border border-amber-900/60 bg-amber-950/30 px-2 py-1.5 text-[11px] text-amber-200">
+          Fähigkeiten von <code className="text-amber-100">{host}</code> unbekannt — die Probe ist fehlgeschlagen: {capsError}.
+          Der Start ist gesperrt, bis die Probe gelingt; bitte Host prüfen und das Fenster erneut öffnen.
+        </div>
+      ) : caps === null ? (
         <div className="text-[11px] text-[#6f767e]">Prüfe Fähigkeiten von <code className="text-[#9aa1a8]">{host}</code> (sbatch? GPUs?)…</div>
       ) : !caps.has_slurm ? (
         // Plain SSH host — no scheduler. Be explicit that this isn't a cluster.

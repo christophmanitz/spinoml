@@ -92,18 +92,29 @@ function loadPersistedMessages(): ChatMessage[] {
     )
     bumpSeqFrom(msgs)
     return msgs
-  } catch { return [] }
+  } catch {
+    // localStorage unavailable/corrupt: start with an empty chat. This is
+    // browser-session history only; it is not a claim about the model or runs.
+    return []
+  }
 }
 
 function persistMessages(messages: ChatMessage[]): void {
   if (typeof window === 'undefined') return
   try { window.localStorage.setItem(CHAT_KEY, JSON.stringify(messages.slice(-100))) }
-  catch { /* quota — ignore */ }
+  catch {
+    // Quota/private mode: only cross-reload persistence of the chat is skipped;
+    // the live conversation for this session is unaffected.
+  }
 }
 
 export function clearPersistedChat(): void {
   if (typeof window === 'undefined') return
-  try { window.localStorage.removeItem(CHAT_KEY) } catch { /* ignore */ }
+  try { window.localStorage.removeItem(CHAT_KEY) }
+  catch {
+    // Best-effort cleanup on explicit project close; if it fails the worst case
+    // is the previous project's chat is restored next launch, not a false state.
+  }
   useChatStore.getState().reset()
 }
 
@@ -361,9 +372,15 @@ async function snapshotProject() {
       try {
         const full = await notesBackend.read(n.name)
         recent_notes.push({ name: n.name, excerpt: full.slice(0, 1500) })
-      } catch { /* skip individual failures */ }
+      } catch {
+        // A single unreadable note is skipped; recent_notes is optional context
+        // for the LLM, not a claim shown to the user.
+      }
     }
-  } catch { /* notes optional */ }
+  } catch {
+    // The whole notes listing is optional LLM context; its absence cannot make
+    // the UI or the model's answer claim anything untrue.
+  }
 
   // Tell the sidecar whether to use local fs or shell out to ssh for file
   // operations + dataset downloads. ssh_target is the same string Tauri

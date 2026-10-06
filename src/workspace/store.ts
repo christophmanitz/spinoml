@@ -43,6 +43,9 @@ type State = {
   activeFileId: string | null
   expanded: Set<string>
   dirty: boolean
+  /** Last failure writing/renaming/removing a generated `.py` twin. Surfaced as
+   *  a banner so a failed twin write is not silently reported as a clean save. */
+  pyTwinError: string | null
 
   createFile: (parentId: string, name?: string) => Promise<string>
   createFolder: (parentId: string, name?: string) => Promise<string>
@@ -75,6 +78,30 @@ function parentRelOf(relpath: string): string {
 
 function joinRel(parentRel: string, name: string): string {
   return parentRel ? `${parentRel}/${name}` : name
+}
+
+// Generate the `.py` twin for a `.spinoml` file. Returns a human-readable error
+// string on failure (never throws) so the caller can surface it instead of
+// reporting a clean save while the generated script is missing.
+async function writeTwin(relpath: string, content: string): Promise<string | null> {
+  try {
+    await fsBackend.write(pyTwinPath(relpath), generateFromSnapshot(parseFile(content)).code)
+    return null
+  } catch (e) {
+    return `Python-Zwilling ${pyTwinPath(relpath)} konnte nicht geschrieben werden: ${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
+// True only if the twin can actually be read. Used before rename/remove so a
+// legitimately absent twin is skipped quietly, while a twin that exists but
+// fails to move/delete is reported.
+async function twinPresent(relpath: string): Promise<boolean> {
+  try { await fsBackend.read(pyTwinPath(relpath)); return true }
+  catch {
+    // A .spinoml may legitimately have no generated .py twin; an unreadable
+    // twin is treated as absent so rename/remove skips it without a false error.
+    return false
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -131,6 +158,8 @@ function hydrate(): { entries: Record<string, Entry>; activeFileId: string | nul
       expanded: new Set(parsed.expanded ?? [ROOT_ID]),
     }
   } catch {
+    // localStorage unreadable/corrupt in browser dev: start from an empty
+    // virtual workspace (no disk to lose; Tauri mode never uses this path).
     return emptyWorkspace()
   }
 }
@@ -144,7 +173,8 @@ function persist(state: State) {
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
   } catch {
-    /* quota — ignore */
+    // localStorage quota/private-mode: the in-memory workspace stays valid for
+    // this session; only cross-reload persistence of browser mode is skipped.
   }
 }
 
@@ -159,6 +189,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
   activeFileId: initial.activeFileId,
   expanded: initial.expanded,
   dirty: false,
+  pyTwinError: null,
 
   createFile: async (parentId, name) => {
     if (get().mode === 'tauri') {
@@ -169,11 +200,9 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       const relpath = joinRel(parentRel, wantName)
       const content = serializeCurrent()
       await fsBackend.write(relpath, content)
-      try {
-        await fsBackend.write(pyTwinPath(relpath), generateFromSnapshot(parseFile(content)).code)
-      } catch { /* ignore .py write errors */ }
+      const twinErr = await writeTwin(relpath, content)
       await get().refreshFromDisk()
-      set({ activeFileId: relpath, dirty: false })
+      set({ activeFileId: relpath, dirty: false, pyTwinError: twinErr })
       return relpath
     }
     const parent = get().entries[parentId]
@@ -236,12 +265,16 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       const parentRel = (!e.parentId || e.parentId === ROOT_ID) ? '' : e.parentId
       const final = uniqueName(trimmed, siblingNames(get().entries, e.parentId ?? ROOT_ID))
       const newRel = joinRel(parentRel, final)
+      const hadTwin = e.kind === 'file' && id.toLowerCase().endsWith('.spinoml') && await twinPresent(id)
       await fsBackend.rename(id, newRel)
-      if (e.kind === 'file' && id.toLowerCase().endsWith('.spinoml')) {
-        try { await fsBackend.rename(pyTwinPath(id), pyTwinPath(newRel)) } catch { /* maybe absent */ }
+      let twinErr: string | null = null
+      if (hadTwin) {
+        try { await fsBackend.rename(pyTwinPath(id), pyTwinPath(newRel)) }
+        catch (err) { twinErr = `Python-Zwilling konnte nicht umbenannt werden: ${err instanceof Error ? err.message : String(err)}` }
       }
       const wasActive = get().activeFileId === id
       await get().refreshFromDisk()
+      set({ pyTwinError: twinErr })
       if (wasActive) set({ activeFileId: newRel })
       return
     }
@@ -258,11 +291,15 @@ export const useWorkspaceStore = create<State>((set, get) => ({
     if (get().mode === 'tauri') {
       const e = get().entries[id]
       if (!e) return
+      const hadTwin = e.kind === 'file' && id.toLowerCase().endsWith('.spinoml') && await twinPresent(id)
       await fsBackend.remove(id)
-      if (e.kind === 'file' && id.toLowerCase().endsWith('.spinoml')) {
-        try { await fsBackend.remove(pyTwinPath(id)) } catch { /* maybe absent */ }
+      let twinErr: string | null = null
+      if (hadTwin) {
+        try { await fsBackend.remove(pyTwinPath(id)) }
+        catch (err) { twinErr = `Python-Zwilling konnte nicht gelöscht werden: ${err instanceof Error ? err.message : String(err)}` }
       }
       await get().refreshFromDisk()
+      set({ pyTwinError: twinErr })
       if (get().activeFileId === id) set({ activeFileId: null, dirty: false })
       return
     }
@@ -303,12 +340,16 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       }
       const destRel = newParentId === ROOT_ID ? '' : newParentId
       const newRel = joinRel(destRel, node.name)
+      const hadTwin = node.kind === 'file' && id.toLowerCase().endsWith('.spinoml') && await twinPresent(id)
       await fsBackend.rename(id, newRel)
-      if (node.kind === 'file' && id.toLowerCase().endsWith('.spinoml')) {
-        try { await fsBackend.rename(pyTwinPath(id), pyTwinPath(newRel)) } catch { /* maybe absent */ }
+      let twinErr: string | null = null
+      if (hadTwin) {
+        try { await fsBackend.rename(pyTwinPath(id), pyTwinPath(newRel)) }
+        catch (err) { twinErr = `Python-Zwilling konnte nicht verschoben werden: ${err instanceof Error ? err.message : String(err)}` }
       }
       const wasActive = get().activeFileId === id
       await get().refreshFromDisk()
+      set({ pyTwinError: twinErr })
       if (wasActive) set({ activeFileId: newRel })
       return
     }
@@ -385,9 +426,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       // If a newer save started while we were awaiting, this one is stale —
       // don't clobber its result (last writer wins via seq).
       if (seq !== saveSeq) return
-      try {
-        await fsBackend.write(pyTwinPath(id), generateFromSnapshot(parseFile(content)).code)
-      } catch { /* skip .py if codegen fails */ }
+      const twinErr = await writeTwin(id, content)
       if (seq !== saveSeq) return
       set({
         entries: {
@@ -395,6 +434,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
           [id]: { ...e, content, savedAt: new Date().toISOString() },
         },
         dirty: false,
+        pyTwinError: twinErr,
       })
       // Phase 41 — an edit that landed while we were writing would have
       // set dirty=true via the GraphStore subscriber, but our unconditional
@@ -439,10 +479,9 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       )
       const relpath = joinRel(parentRel, wantName)
       await fsBackend.write(relpath, text)
-      try {
-        await fsBackend.write(pyTwinPath(relpath), generateFromSnapshot(parseFile(text)).code)
-      } catch { /* ignore */ }
+      const twinErr = await writeTwin(relpath, text)
       await get().refreshFromDisk()
+      set({ pyTwinError: twinErr })
       return relpath
     }
     const id = newId()
@@ -490,7 +529,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
   },
 
   closeDirectory: async () => {
-    if (isTauri()) { try { await tauriFs.closeDir() } catch { /* ignore */ } }
+    if (isTauri()) { try { await tauriFs.closeDir() } catch { /* best-effort cleanup: the directory pointer is dropped below regardless */ } }
     setActiveWorkspace(null) // explicit close → don't auto-reopen next launch
     const re = hydrate()
     set({
@@ -570,7 +609,11 @@ function fingerprintFile(file: File): string | null {
       nodes: snap.nodes.map((n) => ({ id: n.id, layerType: n.layerType, params: n.params })),
       edges: snap.edges.map((e) => ({ source: e.source, target: e.target })),
     })
-  } catch { return null }
+  } catch {
+    // Corrupt or unparseable file content: no usable baseline; dirty stays
+    // false conservatively so a broken on-disk file can't masquerade as clean.
+    return null
+  }
 }
 
 function refreshFingerprintForActive(): void {
