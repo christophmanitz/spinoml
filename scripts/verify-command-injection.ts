@@ -27,7 +27,6 @@ import {
 interface FetchOptions {
   redirect?: 'manual' | 'follow' | 'error'
   signal?: AbortSignal
-  [key: string]: unknown
 }
 
 interface FetchCall {
@@ -287,7 +286,7 @@ for (const ip of invalidIps) {
 
 // ── G. safeFetch ─────────────────────────────────────────────────────────────
 console.log('\n=== G. safeFetch SSRF-resolving fetch ===')
-function makeResp({ status = 200, location = null } = {}): FakeResp {
+function makeResp({ status = 200, location = null }: { status?: number; location?: string | null } = {}): FakeResp {
   return {
     status,
     ok: status >= 200 && status < 300,

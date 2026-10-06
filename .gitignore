@@ -49,3 +49,6 @@ sidecar-torch/.venv
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Test runner results (npm run ci)
+.test-results/

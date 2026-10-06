@@ -116,7 +116,7 @@ function makeRunJson(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function makeRunDir(name: string, opts: { runJson?: Record<string, unknown> } = {}): string {
+function makeRunDir(name: string, opts: { runJson?: ReturnType<typeof makeRunJson> } = {}): string {
   const dir = mkdtempSync(join(tmpdir(), `spinoml-vint-${name}-`))
   writeFileSync(join(dir, 'data.csv'), csv(80, 10, SEED))
   writeFileSync(join(dir, 'model.py'), MODEL_PY)

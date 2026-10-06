@@ -1,0 +1,36 @@
+# Phase 82 — pinned runtime deps for the torch sidecar and the trainer.
+#
+# Versions captured from the dev env via
+#   conda run -n mlforge-dev pip freeze
+# on 2026-10-06. Do not bump casually — every dep is imported by either
+# sidecar-torch/*.py (codegen + dataset handlers) or scripts/lib/*.py
+# (training template, integrity wrap, reference harness).
+#
+# torch itself is NOT pinned here on purpose: GPU/CPU ABI differs by
+# platform. CI installs the CPU build explicitly:
+#   pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/cpu
+# The dev env currently has `2.12.0+cpu` (pip freeze above).
+#
+# Anything NOT listed here is intentionally optional — the optional
+# dependencies (biopython for protein .pdb, datasets/huggingface for the
+# `huggingface` kind, opencv for image features) are lazy-imported inside
+# `dataset_handlers.py` and only needed if a user adds a dataset of that
+# kind. CI does not exercise those paths.
+
+# core numerics + data shapes
+numpy==2.5.3
+pandas==3.0.2
+pillow==12.2.0
+
+# chemistry (molecule / espf kinds)
+rdkit==2026.3.5
+
+# classical ML (sanity baseline + a few dataset handlers)
+scikit-learn==1.8.0
+networkx==3.6.1
+
+# GNN (pyg + datasets via torch_geometric.datasets)
+torch-geometric==2.8.0
+
+# progress bars / loops
+tqdm==4.68.2

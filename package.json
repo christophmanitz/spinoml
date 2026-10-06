@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "lint": "eslint .",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -60,7 +61,9 @@
     "test:llm-validation-parity": "tsx scripts/test-llm-validation-parity.ts",
     "gen:layer-catalog": "tsx scripts/gen-layer-catalog.ts",
     "sidecar:torch": "python sidecar-torch/main.py",
-    "sidecar:llm": "node sidecar-llm/main.mjs"
+    "sidecar:llm": "node sidecar-llm/main.mjs",
+    "ci": "tsx scripts/run-all.ts --ci",
+    "suites": "tsx scripts/run-all.ts --list"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

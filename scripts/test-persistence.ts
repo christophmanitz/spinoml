@@ -25,10 +25,10 @@ function snap(nodes: Record<string, unknown>[], edges: Record<string, unknown>[]
 function buildModel(): GraphSnapshot {
   const g = useGraphStore.getState()
   g.resetGraph()
-  g.addLayer('Conv2d', { in_channels: 1, out_channels: 8, kernel_size: 3, padding: 1 }, { x: 0, y: 100 })
-  g.addLayer('ReLU', { inplace: false }, { x: 0, y: 200 })
-  g.addLayer('Flatten', {}, { x: 0, y: 300 })
-  g.addLayer('Linear', { in_features: 8, out_features: 10 }, { x: 0, y: 400 })
+  g.addLayer('Conv2d', { x: 0, y: 100 }, { params: { in_channels: 1, out_channels: 8, kernel_size: 3, padding: 1 } })
+  g.addLayer('ReLU', { x: 0, y: 200 }, { params: { inplace: false } })
+  g.addLayer('Flatten', { x: 0, y: 300 }, { params: {} })
+  g.addLayer('Linear', { x: 0, y: 400 }, { params: { in_features: 8, out_features: 10 } })
   return serializeCurrentJson()
 }
 

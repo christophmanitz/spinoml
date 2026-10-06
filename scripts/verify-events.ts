@@ -120,7 +120,7 @@ console.log('  [parseFinalEvents end-to-end (raw text incl. garbage tail)]')
 console.log('  [stale-read guard: newest-STARTED read wins]')
 {
   const applied: string[] = []
-  const guard = latestWinsGuard<string, void>((v) => { applied.push(v) })
+  const guard = latestWinsGuard<string>((v) => { applied.push(v) })
 
   // Controllable fake reads: (name, latency) → returns name after latency ms.
   const makeRead = (name: string, ms: number): (() => Promise<string>) =>
@@ -134,7 +134,7 @@ console.log('  [stale-read guard: newest-STARTED read wins]')
   check('older (read-A) late response dropped', applied.length === 1)
 
   // Sequential reads (each awaited before the next begins) both apply in order.
-  const seq = latestWinsGuard<string, void>((v) => { applied.push(`seq:${v}`) })
+  const seq = latestWinsGuard<string>((v) => { applied.push(`seq:${v}`) })
   await seq(makeRead('first', 1))
   await seq(makeRead('second', 1))
   check('sequential reads apply in order', applied.length === 3 && applied[2] === 'seq:second')
@@ -148,7 +148,7 @@ console.log('  [modal flow: terminal run + late tail read is inert]')
   const snapshotA = () => Promise.resolve([JSON.stringify(ev('epoch.end', 5)), JSON.stringify(ev('run.done'))].join('\n'))
   const snapshotB_stale = () => new Promise<string>((res) => setTimeout(() => res(JSON.stringify(ev('epoch.end', 5))), 20))
   const applied: TrainingEvent[][] = []
-  const guard = latestWinsGuard<string, void>((t) => { applied.push(parseFinalEvents(t)) })
+  const guard = latestWinsGuard<string>((t) => { applied.push(parseFinalEvents(t)) })
 
   void guard(snapshotB_stale) // older read, in flight
   await guard(snapshotA)      // new read after status flip → applies

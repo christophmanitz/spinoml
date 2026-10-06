@@ -3344,6 +3344,14 @@ Hardware
 Prefer many fast unit tests.
 
 Use fewer expensive E2E tests.
+
+> **2026-10-06 — implemented.** `scripts/suites.ts` registers every suite (54) with a category, a hard timeout, the
+> capabilities it needs and a one-line reason; `npm run suites` lists them, `npm run ci -- --check` fails when
+> `package.json` and the registry drift apart (it did, mid-session, when a worker added a script). Categories: unit 12,
+> contract 12, integration 11, e2e 7 (real trainer), scientific 4 (reference equivalence, random graphs, fuzz),
+> infrastructure 6 (build, lint, typecheck, cargo ×2, opencode), plus `remote-live` and `hardware-cuda` which have NO suite and
+> are therefore reported BLOCKED instead of being absent.
+
 ---
 
 # 69. PHASE 68 – CONTRACT TESTS
@@ -3368,6 +3376,14 @@ Expected response
 Expected error
 Timeout
 ```
+
+> **2026-10-06 — partly implemented.** Boundaries with a contract suite: frontend ↔ torch sidecar (`verify:sidecar`,
+> `test:robustness`, `test:scope`, `test:safe-load`, `test:deps-policy`, `test:run-script`), frontend ↔ LLM sidecar
+> (`test:llm-safety`, `test:llm-validation-parity`, `verify:command-injection`, `verify:paths`), training ↔ generated
+> code (`verify:reference`, `verify:reference-train`, `test:property`), Rust ↔ ssh/slurm (`cargo test` via `verify:ssh`/
+> `verify:slurm`, string contracts). Gaps: no contract test for the Tauri `invoke` command surface itself, none for
+> Rust ↔ filesystem beyond unit tests, none for a live ssh host (BLOCKED).
+
 ---
 
 # 70. PHASE 69 – CI
@@ -3388,6 +3404,13 @@ Python tests
 ```
 
 CI must not require private credentials for ordinary tests.
+
+> **2026-10-06 — defined, NOT RUN.** `.github/workflows/ci.yml` (push to main + pull_request, `contents: read`, no
+> secrets anywhere): `node` job (build, script type-check, suites without Python), `python` job (CPU torch + pinned
+> `sidecar-torch/requirements.txt` from `pip freeze` of the dev env, Python suites, `.test-results` artifact), `rust` job
+> (Tauri apt dependencies, `cargo check`, `cargo test`), each with a timeout. It parses as YAML and uses the same runner
+> as local runs (`npm run ci`), but it has never executed on a GitHub runner.
+
 ---
 
 # 71. PHASE 70 – CI DETERMINISM
@@ -3406,6 +3429,13 @@ Private datasets
 ```
 
 Integration tests requiring these resources must be clearly separated.
+
+> **2026-10-06 — implemented in the runner.** Child processes get an allow-listed environment only (PATH, HOME, LANG,
+> TMPDIR, CONDA_*, XDG_*…): 89 variables incl. API keys, `SSH_AUTH_SOCK` and proxy settings are removed (names printed,
+> never values), so a suite that secretly needs credentials, ssh or the internet fails instead of passing by accident.
+> Live ssh/SLURM/LLM/CUDA suites are separate and BLOCKED unless explicitly enabled. All sidecar tests use 127.0.0.1;
+> randomised tests are seeded (`PROPERTY_SEED`). Not enforced: wall-clock independence (no test freezes time).
+
 ---
 
 # 72. PHASE 71 – TEST TIMEOUTS
@@ -3425,6 +3455,13 @@ Training processes
 ```
 
 No automated test should hang indefinitely.
+
+> **2026-10-06 — implemented for tests; product timeouts audited.** Every suite has a hard timeout; the runner kills
+> the whole process group (SIGTERM, then SIGKILL after 5 s) and reports TIMEOUT. Product side: ssh `ConnectTimeout=10` +
+> keepalives (Phase 34), `curl --max-time 300`, `git` 5 s, torch sidecar socket timeout, LLM upstream idle timeout
+> (new), `/deps/*` 240 s/1800 s. Known gaps: no overall timeout for `ssh_exec` in Rust (Phase 48), the frontend datasets
+> client has no `AbortSignal` (Phase 39), the Anthropic/subscription providers have no idle timeout.
+
 ---
 
 # 73. PHASE 72 – RETRY LOGIC
@@ -3439,6 +3476,12 @@ Final failure state
 ```
 
 Never implement infinite retry loops.
+
+> **2026-10-06 — audited; nothing to fix.** The only retry in the code base is the OpenAI SDK's own
+> (`maxRetries: 2`, now explicit with a comment). Every other loop is bounded by EOF, a closed queue, date arithmetic or a
+> user confirmation (`MAX_TOOL_TURNS` asks before continuing). Remote submission is idempotent through the atomic
+> run-directory claim (Phase 33), so a client-side retry cannot double-submit. No retry loop without a maximum exists.
+
 ---
 
 # 74. PHASE 73 – EXPERIMENT RESULT INTEGRITY
@@ -3535,6 +3578,14 @@ Local training
 ```
 
 should remain available where designed to be local.
+
+> **2026-10-06 — verified by construction and by test environment.** No core module imports the chat/LLM code:
+> `GraphStore`, validation, `generator.ts`/`pyLiteral.ts`, inference, persistence, the trust store, `training/store.ts`,
+> `snapshot.ts` and the datasets store are free of `src/chat/*` imports (only the optional "Modell erklären" feature,
+> `codegen/ExplainModal.tsx` + `modelIntent.ts`, uses the chat client). The passing suites (graph editing, validation,
+> shape inference, codegen, local training, checkpointing — all except the two that test the LLM sidecar itself) run with
+> NO LLM sidecar and with the API-key variables scrubbed out of the environment by the runner. Not tested: the UI itself with the LLM sidecar offline (no render tests).
+
 ---
 
 # 77. PHASE 76 – CLAUDE FAILURE

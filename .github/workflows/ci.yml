@@ -1,0 +1,174 @@
+# SpinoML — CI
+#
+# Runs the test pyramid via `npm run ci`, with the three environments that
+# the local developer box has:
+#
+#   1. `node`  — pure-JS suites: build + npm-only verify/test suites.
+#   2. `python`— node + the Python-backed suites (torch, rdkit, pyg, …).
+#                Uses the CPU-only torch build (no GPU in CI).
+#   3. `rust`  — `cargo check` + `cargo test` for the Tauri shell.
+#
+# What this CI does NOT cover (TODO §67 / §69 / §70):
+#   * No live SSH host or SLURM cluster. The `remote-live` suite is always
+#     BLOCKED with the exact reason (needs ssh-host + slurm). Adding a live
+#     suite requires a self-hosted runner with `~/.ssh/config` access and a
+#     SLURM alias.
+#   * No CUDA / GPU. The `hardware-cuda` suite is always BLOCKED (no CUDA
+#     device + no dedicated CUDA suite exists yet).
+#   * No LLM key. The `verify-opencode` suite is always BLOCKED unless the
+#     runner exports `SPINOML_LIVE_LLM=1`.
+#   * No network access for downloads. Private datasets, HuggingFace auth,
+#     etc. are out of scope.
+#
+# The `rust` job has never been run by the authors on GitHub Actions — the
+# toolchain is not installed on the development box. The matrix was assembled
+# from the official Tauri 2 Linux prerequisites
+# (https://v2.tauri.app/start/prerequisites/) and the dtolnay/rust-toolchain
+# defaults. Treat a green rust job as an "if it builds, fine" smoke until
+# someone with a working toolchain has reviewed it.
+#
+# Exit policy: every job uses `--allow-known`. That mode is exit 0 when the
+# only non-PASS results are documented known ones (lint-at-baseline, BLOCKED
+# by missing capability, SKIPPED lines in the log). `--allow-known` does NOT
+# excuse FAIL or TIMEOUT — those are always hard errors.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── 1. Node + pure-JS suites ────────────────────────────────────────
+  node:
+    name: node (build + non-python suites)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (tsc + vite)
+        run: npm run build
+
+      - name: Type-check scripts
+        run: npm run typecheck:scripts
+
+      - name: Run non-python suites
+        run: npm run ci -- --no-python --allow-known --json .test-results/node.json --markdown .test-results/node.md
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-node
+          path: .test-results/
+          retention-days: 14
+
+  # ── 2. Python-backed suites (CPU torch) ─────────────────────────────
+  python:
+    name: python (torch + rdkit + pyg)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install PyTorch (CPU build)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install Python deps
+        run: python -m pip install -r sidecar-torch/requirements.txt
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Build (tsc + vite)
+        run: npm run build
+
+      - name: Run python-backed suites
+        run: npm run ci -- --only-python --allow-known --json .test-results/python.json --markdown .test-results/python.md
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-python
+          path: .test-results/
+          retention-days: 14
+
+  # ── 3. Rust (Tauri shell) ───────────────────────────────────────────
+  rust:
+    name: rust (Tauri 2 shell)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps for Tauri 2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            libssl-dev \
+            pkg-config
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check --all-targets
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-rust
+          path: src-tauri/target/
+          retention-days: 7

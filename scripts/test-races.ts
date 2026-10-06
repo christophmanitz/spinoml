@@ -51,7 +51,7 @@ async function main() {
   const g = useGraphStore.getState()
   g.resetGraph()
   g.updateNodeParams('input', { shape: [1, 3] })
-  const flat = g.addLayer('Flatten', {}, { x: 100, y: 100 })
+  const flat = g.addLayer('Flatten', { x: 100, y: 100 }, { params: {} })
   g.connectNodes('input', flat)
 
   // wait for run A to fire into the mock
@@ -67,7 +67,7 @@ async function main() {
   // ── 2. switch to graph B while A's response is still in flight
   g.resetGraph()
   g.updateNodeParams('input', { shape: [1, 3] })
-  const lin = g.addLayer('Linear', { in_features: 3, out_features: 1 }, { x: 100, y: 100 })
+  const lin = g.addLayer('Linear', { x: 100, y: 100 }, { params: { in_features: 3, out_features: 1 } })
   g.connectNodes('input', lin)
   await sleep(350)
   const runB = held.find((h) => h.kind === 'linear')

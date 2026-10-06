@@ -274,6 +274,10 @@ npm run verify:manifest             # manifest.json + git state + config identit
 npm run test:property               # 200 random valid graphs vs an independent oracle (inside the conda env)
 npm run test:fuzz                   # 948 invalid mutants must be rejected cleanly (inside the conda env)
 npm run verify:silent-catch         # no undocumented swallowing catch in src/ or sidecar-llm/
+npm run test:llm-safety             # real LLM sidecar vs a fake OpenAI server (hostile tool calls, failures, secrets)
+npm run test:llm-validation-parity  # sidecar tool validation vs the frontend registry; run `npm run gen:layer-catalog` after registry changes
+npm run typecheck:scripts           # tsc over scripts/ — tsx does NOT type-check
+npm run ci                          # every suite with timeouts/clean env (`npm run suites` lists them; run it with no app/sidecar running)
 npm run test:scope                  # Python scope + hostile manifests + real HTTP (inside the conda env)
 npm run test:safe-load              # real malicious-pickle attempts (inside the conda env)
 npm run verify:opencode             # LLM sidecar must be up; asserts /opencode/models
@@ -497,6 +501,11 @@ not catch it cleanly. Fix path:
     `resolveInWorkspace` (Node), and never `torch.load` directly — `safe_torch_load` only. New
     dataset kinds must add their open sites to the audit list at the top of `dataset_handlers.py`
     and to `scripts/test-scope.py`.
+12. **LLM tool handlers validate first, mutate last.** Every provider funnels through `invokeTool` (schema + strict top-level
+    arguments); node params must pass `validateNodeParams` (catalog generated from the frontend registries). A handler may not push an action
+    or touch `ctx` before all checks passed, and a tool result must never say "added" for something the frontend will change or reject.
+    New registry fields/layers: `npm run gen:layer-catalog`, then `test:llm-validation-parity`. New scripts must be registered in
+    `scripts/suites.ts` (`npm run ci -- --check` fails otherwise).
 
 ## Patterns that work
 

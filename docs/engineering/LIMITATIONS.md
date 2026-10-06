@@ -137,3 +137,14 @@ other pooling and normalisation layers, Subgraph/Custom nodes. Shape agreement f
 **Run integrity (Phase 73/74).** Checkpoints larger than 256 MB are not load-verified by the gate (header + size check, a note)
 and are therefore reported as not resumable. A manifest that cannot be written fails the run (it is required metadata).
 `stdout.log`/`stderr.log` are only required when the executor launched the run (`pid` file present).
+
+**LLM sidecar (Phase 14–16/76).** Only the `openai-compat` provider is exercised end-to-end (fake server); the Anthropic API, the
+claude-agent-sdk subscription and the opencode CLI paths share the validation gate but have no fake-provider tests, and the
+opencode process failure modes (missing binary, invalid model, unexpected exit, cancellation) are untested. The idle timeout and abort
+propagation exist for `openai-compat` only. Deleting the Input/Output node through a tool call is allowed (with a warning). The layer
+catalog (`sidecar-llm/layer-catalog.generated.json`) must be regenerated (`npm run gen:layer-catalog`) when a registry changes; the parity test
+fails on drift. `AbortSignal.any` needs Node ≥ 20.3 (the dev machine has 22).
+
+**Test infrastructure (Phase 67–72, 82).** `.github/workflows/ci.yml` has never run on GitHub. `remote-live` and `hardware-cuda` have no
+suite (BLOCKED by design). `test:verifier` skips its e2e part when no torch sidecar is running (it reports SKIPPED). Lint is reported FAIL
+(81 known problems, baseline 82); the gate is "no regression". No test freezes the wall clock.

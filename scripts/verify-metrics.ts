@@ -6,7 +6,7 @@
 // batch-average would visibly disagree with the weighted ground truth.
 
 import { execSync, spawnSync } from 'node:child_process'
-import { writeFileSync, mkdtempSync, readFileSync, existsSync, copyFileSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, readFileSync, copyFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -155,7 +155,7 @@ check('val accuracy = reference', get('ACC_DIFF') < 1e-4, `diff=${get('ACC_DIFF'
 
 console.log('  [unweighted averaging WOULD have been wrong]')
 const sizes = refOut.split('\n').find((l) => l.startsWith('BATCH_SIZES'))
-check('last batch smaller than the rest (uneven)', sizes?.includes('1'), sizes ?? '')
+check('last batch smaller than the rest (uneven)', sizes?.includes('1') === true, sizes ?? '')
 check('naive batch-average differs from weighted', get('NAIVE_DIFF') > 1e-3, `diff=${get('NAIVE_DIFF')}`)
 
 // ── batch loss events match the reference batch mean for the FIRST batch ──

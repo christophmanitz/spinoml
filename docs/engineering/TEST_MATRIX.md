@@ -17,8 +17,8 @@ Training runs (local)  | `verify-traingen` e2e ✓ + `verify:states` ✓ + `veri
 Training runs (remote) | `verify:submission` ✓ + `verify:slurm` ✓ + `verify:recovery` ✓ (close→restart→reconnect re-queries live pid/status/squeue/sacct, not cache; detached survival; atomic claim) | — | §33/36/37
 Persistence            | `npm run test:persistence` ✓ (P001/P011: round-trip, malformed-file matrix, schema versions, fail-closed) | autosave (localStorage) browser smoke | §4.3, §5
 Torch sidecar          | `verify-sidecar` 6/6+activations ✓ + `test:robustness` ✓ (11-case matrix: startup, structured errors with `error_code` on every path, slow-client stall cap, abort resistance, kill→restart recovery) | auth/path-scope tests        | §77/78 security
-LLM sidecar            | `verify-opencode` ✓ (+manual ask/confirm) + `verify:command-injection` ✓ (args split/quote round-tripped through a real `sh`, SSRF blocklist + DNS-resolving `safeFetch` with fake lookup/fetch, ssh target policy, runScript `./` prefix)      | `/respond`/auto-approve auth | §14/15, §77 + `verify:silent-catch`/`verify:silent-fixes` ✓ (Node half of phase 50)
-MCP                    | `verify-opencode` (via opencode bridge) ✓      | spec-parity across providers | §16 MCP validation
+LLM sidecar            | `test:llm-safety` ✓ (124: real sidecar vs a fake OpenAI server — hostile tool calls, provider failures, secrets, runaway turn) + `test:llm-validation-parity` ✓ (8284 cases vs the frontend registry) + `verify:command-injection` ✓ + `verify:silent-*` ✓ + `verify-opencode` (BLOCKED unless `SPINOML_LIVE_LLM=1`) | Anthropic/subscription/opencode paths not driven end-to-end; opencode CLI failure modes untested | §14/15/16/76
+MCP                    | tool calls go through the shared `invokeTool` gate (covered by `test:llm-safety`); the stdio bridge and the real opencode CLI are not exercised | bridge route test | §15/16
 Tauri/Rust             | `cargo check` ✓ + `cargo test` (ssh failures + slurm 13 tests) ✓ + `alias_validation_tests` (Phase 44; 22 Rust tests pass, run via `conda run -n mlforge-dev cargo test`) | command integration tests    | §1.6 (env), §48 Rust errors
 Filesystem (local)     | `verify:paths` ✓ (48, Node resolver) + `test:scope` ✓ (88, Python scope: path matrix, modes/config, dataset_handlers incl. hostile manifests, real-HTTP) | Rust `resolve()` symlinks (lexical only, no toolchain) | §45/46
 Filesystem (remote)    | `verify:ssh` ✓                                | ssh mirror parity tests      | §34/35
@@ -67,7 +67,7 @@ Security (sidecars)   | `verify:command-injection` ✓ + `test:deps-policy` ✓ 
 
 Prereq for all `verify:*` that exec Python: conda env `mlforge-dev` active
 (`python` is not on the bare PATH). `verify:opencode` additionally needs the
-LLM sidecar on 127.0.0.1:7422 and the OpenCode CLI. + `verify:silent-catch`/`verify:silent-fixes` ✓ (Node half of phase 50)
+LLM sidecar            | `test:llm-safety` ✓ (124: real sidecar vs a fake OpenAI server — hostile tool calls, provider failures, secrets, runaway turn) + `test:llm-validation-parity` ✓ (8284 cases vs the frontend registry) + `verify:command-injection` ✓ + `verify:silent-*` ✓ + `verify-opencode` (BLOCKED unless `SPINOML_LIVE_LLM=1`) | Anthropic/subscription/opencode paths not driven end-to-end; opencode CLI failure modes untested | §14/15/16/76
 
 ## Test-ID cross-reference
 
@@ -94,3 +94,7 @@ Planned mutation/unit tests referenced by RISK_REGISTER.md:
 4. Workspace/persistence change: manual smoke per CLAUDE.md.
 5. Remote/SSH/SLURM change: `ssh zw93onug@login01.sc.uni-leipzig.de echo ok`
    first, then a real sbatch smoke on `paula` (never run training on the login node).
+
+## Runner and gates (Phase 67–72)
+
+`npm run suites` lists all 54 suites by category; `npm run ci` runs them with hard timeouts, a scrubbed environment, a port preflight and scoped leak detection (clean run 2026-10-06: PASS 47, SKIPPED 3, FAIL 1 = lint at baseline, BLOCKED 3 = remote-live, hardware-cuda, verify-opencode; 549 s). `npm run typecheck:scripts` type-checks `scripts/`.
