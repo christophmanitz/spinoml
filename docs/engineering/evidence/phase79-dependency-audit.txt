@@ -1,0 +1,35 @@
+Phase 79 dependency audit — evidence (2026-10-07)
+Tools: npm audit (npm registry advisories), cargo-audit 0.22.2 (RustSec DB, CARGO_HOME in a scratch dir), pip-audit (PyPI/OSV).
+Commands: npm audit [--package-lock-only --json] in repo root and sidecar-llm/; cargo audit --file src-tauri/Cargo.lock; pip-audit --path <site-packages>.
+Fixes: npm audit fix (lockfile-only, package.json untouched) in both manifests; Cargo.toml `time` un-pinned (=0.3.46 -> 0.3), `cargo update -p time -p plist`.
+
+npm root BEFORE (lockfile at HEAD): {'info': 0, 'low': 0, 'moderate': 3, 'high': 5, 'critical': 0, 'total': 8}
+    baseline-browser-mapping   moderate  direct=False via=['baseline-browser-mapping process termination on invalid input causes d']
+    brace-expansion            high      direct=False via=['brace-expansion: DoS via exponential-time expansion of consecutive non', 'brace-expansion: DoS via unbounded expansion length causing an out-of-']
+    browserslist               high      direct=False via=['Browserslist: Unbounded memory growth (no cache eviction) via distinct', 'Browserslist: Uncaught crash / prototype write via untrusted browsersl']
+    dompurify                  moderate  direct=False via=['DOMPurify contains a Cross-site Scripting vulnerability', 'DOMPurify: FORBID_TAGS bypassed by function-based ADD_TAGS predicate (']
+    monaco-editor              moderate  direct=False via=['dompurify']
+    nanoid                     high      direct=False via=['nanoid: non-secure generators can loop indefinitely with negative size', 'nanoid: custom generators can loop indefinitely when size is zero']
+    postcss                    high      direct=False via=['PostCSS: incomplete fix of GHSA-6g55-p6wh-862q — attacker-controlled s', 'PostCSS: Path Traversal in Previous Source Map Auto-Loading (sourceMap']
+    source-map-js              high      direct=False via=['source-map-js allows event-loop denial of service through indexed sour']
+npm root AFTER (npm audit fix): {'info': 0, 'low': 2, 'moderate': 0, 'high': 0, 'critical': 0, 'total': 2}
+    dompurify                  low       direct=False via=['DOMPurify: IN_PLACE: node-removing afterSanitize hook leaves detached ', 'DOMPurify: IN_PLACE returns a force-removed rawtext root whose text ca']
+    monaco-editor              low       direct=False via=['dompurify']
+npm sidecar-llm BEFORE (lockfile at HEAD): {'info': 0, 'low': 1, 'moderate': 3, 'high': 3, 'critical': 1, 'total': 8}
+    @hono/node-server          moderate  direct=False via=['Node.js Adapter for Hono: Path traversal in `serve-static` on Windows ']
+    @modelcontextprotocol/sdk  high      direct=False via=['MCP TypeScript SDK: OAuth client could send credentials to an authoriz']
+    body-parser                low       direct=False via=['body-parser vulnerable to denial of service when invalid limit value s']
+    fast-uri                   high      direct=False via=['fast-uri vulnerable to host confusion via literal backslash authority ', 'fast-uri vulnerable to host confusion via backslash authority introduc']
+    hono                       moderate  direct=False via=['Hono: API Gateway v1 adapter can drop a distinct repeated request head', 'hono/jsx does not isolate context per request, leading to cross-reques']
+    ip-address                 high      direct=False via=['ip-address: Address4 decodes leading-zero octets as decimal while reso', 'ip-address: a CIDR suffix on the parsed address suppresses special-use']
+    proxy-addr                 critical  direct=False via=['proxy-addr vulnerable to IP spoofing via IPv4-mapped IPv6 trust subnet']
+    qs                         moderate  direct=False via=['qs array-limit bypass via bracket-key comma parsing', 'qs: Denial of Service via Attacker Controlled isBuffer']
+npm sidecar-llm AFTER (npm audit fix): {'info': 0, 'low': 0, 'moderate': 0, 'high': 0, 'critical': 0, 'total': 0}
+cargo audit BEFORE (src-tauri/Cargo.lock at HEAD): 4 vulnerabilities, warnings {'unmaintained': 7, 'unsound': 2}
+    RUSTSEC-2026-0195 quick-xml 0.38.4 patched=['>=0.41.0'] :: Unbounded namespace-declaration allocation in `NsReader` enables memory-exhausti
+    RUSTSEC-2026-0194 quick-xml 0.38.4 patched=['>=0.41.0'] :: Quadratic run time when checking a start tag for duplicate attribute names
+    RUSTSEC-2026-0235 rkyv 0.7.46 patched=['>=0.8.17'] :: Insufficient archive validation can cause out-of-bounds reads in archives contai
+    RUSTSEC-2026-0009 time 0.3.46 patched=['>=0.3.47'] :: Denial of Service via Stack Exhaustion
+cargo audit AFTER (time un-pinned, plist 1.10.1 / quick-xml 0.42.0): 1 vulnerabilities, warnings {'unmaintained': 7, 'unsound': 2}
+    RUSTSEC-2026-0235 rkyv 0.7.46 :: Insufficient archive validation can cause out-of-bounds reads in archives contai  -- lock-only entry: `cargo tree --target all --all-features` shows no rkyv, so it is not compiled
+pip-audit (pip-audit installed in a throw-away venv, run with --path <conda env site-packages mlforge-dev>): No known vulnerabilities found

@@ -131,6 +131,13 @@ restart/crash — no GUI here). The descendant walk reads `/proc/<pid>/task/*/ch
 `CONFIG_PROC_CHILDREN`); elsewhere children of the LLM sidecar that are not in its process group can survive.
 A SIGKILL of a sidecar cannot be handled: its tracked children (torch: own sessions) can outlive it.
 
+**Dependencies (Phase 79).** Point-in-time audit only (evidence file in `docs/engineering/evidence/`); nothing runs
+it on a schedule and CI has never run. Residue: 2 low `dompurify` advisories (via `monaco-editor`, R052), the
+`rkyv` lock entry (never compiled), 7 unmaintained + 2 unsound transitive Rust crates that Tauri pulls in on
+Linux. The Claude subscription provider (OAuth) could not be driven after the MCP SDK update (`sidecar-llm`
+transitive bump 1.29 -> 1.32); only the import and the fake-provider suites ran. Python was audited with
+`pip-audit` over the installed conda env, not over a pinned lock file (there is none).
+
 ## 6. Not yet audited
 
 Phases of `TODO.md` that have no "implemented" note are not done. In particular:
@@ -140,7 +147,7 @@ turn is in flight; normal turns, client aborts and SIGTERM/SIGINT clean up, see 
 `test:process-lifecycle`),
 CI (69),
 retries/timeouts (71/72), the
-remaining parts of the security review (77: the token is done, see §2; the other listed areas were covered piecewise by phases 43–47/76), dependency audit (79) and the final
+remaining parts of the security review (77: the token is done, see §2; the other listed areas were covered piecewise by phases 43–47/76), and the final
 reliability report (90).
 
 **CUDA is unverified.** `torch 2.12.0+cpu` is installed here: every CUDA branch of

@@ -3826,6 +3826,26 @@ Update
 → verify compatibility
 ```
 
+> **Implemented 2026-10-06.** Evidence (before/after, per tool): `docs/engineering/evidence/phase79-dependency-audit.txt`.
+> **npm, repo root:** 8 findings (5 high, 3 moderate; all transitive — vite/eslint toolchain: brace-expansion,
+> browserslist, nanoid, postcss, source-map-js, baseline-browser-mapping; plus monaco-editor/dompurify) → 2 LOW
+> (dompurify via monaco-editor) after `npm audit fix` (lockfile only, `package.json` untouched).
+> **npm, `sidecar-llm/` (its own manifest — a runtime component, found because the root audit does not see
+> it):** 8 findings incl. **1 critical** (`proxy-addr` IP spoofing), 3 high (`@modelcontextprotocol/sdk`,
+> `fast-uri`, `ip-address`) → **0** after `npm audit fix`; all transitive through the Claude Agent SDK's MCP
+> SDK (express/hono stack that the sidecar never runs — in-process MCP only), top-level `openai` / `@anthropic-ai/sdk`
+> / `claude-agent-sdk` / `zod` unchanged. **Rust:** 4 vulnerabilities → 1 (`rkyv`, a lock-file-only entry:
+> `cargo tree --target all --all-features` shows no rkyv, i.e. never compiled): `time` was PINNED to the vulnerable
+> 0.3.46 (RUSTSEC-2026-0009) for a cookie-0.18 trait conflict that no longer exists — un-pinned (0.3.55 builds),
+> and `plist`/`quick-xml` (build-time `tauri-codegen`, RUSTSEC-2026-0194/0195) updated. **Python:** pip-audit over
+> the installed `mlforge-dev` env: none. Each update was followed by the relevant suites (cargo test 88, the LLM
+> suites, build, full `npm run ci`). Not blindly upgraded: no `package.json`/direct-dependency bump, no
+> `cargo update` of unrelated crates. **Not done / limits:** the subscription provider (OAuth) could not be
+> exercised after the MCP SDK bump (`import` + the fake-provider suites pass); 2 low dompurify advisories remain
+> (Monaco is loaded from a CDN anyway — R052); 7 unmaintained / 2 unsound transitive crates (GTK3 bindings,
+> `unic-*`, `proc-macro-error`, `anyhow` unsoundness in `downcast_mut`, `glib`) come with Tauri on Linux and are
+> not fixable here; the audit is a point-in-time check — there is no scheduled audit job (CI has never run).
+
 ---
 
 # 81. PHASE 80 – DOCUMENTATION

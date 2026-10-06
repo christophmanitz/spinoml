@@ -34,9 +34,11 @@ portable-pty = "0.8"
 # 0.3.x is already in the dependency closure via transitive deps; we only need
 # the `getrandom::fill` entry point.
 getrandom = "0.3"
-# Pin: time >=0.3.47 has a HourBase impl that conflicts with cookie 0.18's
-# blanket From<Into<Option<OffsetDateTime>>>. Downgrade resolves trait coherence.
-time = "=0.3.46"
+# History: `time` was pinned to =0.3.46 because >=0.3.47 had a HourBase impl that
+# conflicted with cookie 0.18's blanket From<Into<Option<OffsetDateTime>>>. That
+# conflict no longer exists (0.3.55 builds with cookie 0.18.1, verified Phase 79) and
+# the pin kept RUSTSEC-2026-0009 (stack-exhaustion DoS, patched >=0.3.47) in the tree.
+time = "0.3"
 
 # Linux PR_SET_PDEATHSIG so spawned sidecars/tunnels die with the app even on
 # a hard kill (dev restart / crash), preventing orphaned port holders.
