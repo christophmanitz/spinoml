@@ -242,6 +242,14 @@ export const SUITES: readonly Suite[] = [
     why: 'Self-test of the Python silent-exception guard (23 detect / not-detect cases)',
   },
   {
+    name: 'test:process-lifecycle',
+    npmScript: 'test:process-lifecycle',
+    category: 'contract',
+    timeoutSec: 600,
+    needs: ['torch-env'],
+    why: 'Both sidecars vs real processes: port busy (exit 3), invalid port (exit 2), SIGTERM/SIGINT cleanup incl. orphan children and grandchildren, 25 start/stop cycles without fd/port/process leaks, restart on the same port',
+  },
+  {
     name: 'verify:rust-panics',
     npmScript: 'verify:rust-panics',
     category: 'unit',

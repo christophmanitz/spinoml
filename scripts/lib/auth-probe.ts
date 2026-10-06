@@ -8,6 +8,7 @@
 // group on stop, so no straggler python survives a failed run.
 
 import { spawn, type ChildProcess } from 'node:child_process'
+import { readFileSync, readdirSync } from 'node:fs'
 import net from 'node:net'
 import { setTimeout as wait } from 'node:timers/promises'
 
@@ -242,6 +243,127 @@ export type ExitResult = {
   stdout: string
   stderr: string
   ok: boolean
+}
+
+// ── Additive helpers for process-lifecycle tests (Phase 13) ──────────────
+// SIGTERM → graceful shutdown; SIGKILL bypasses every in-process handler
+// (Node can't catch SIGKILL by design). For sidecars that spawn children
+// (opencode, run_script), only SIGTERM triggers the child's kill path —
+// using SIGKILL leaves orphans. These helpers prefer SIGTERM.
+
+export function pidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code !== 'ESRCH'
+  }
+}
+
+export async function awaitProcessExit(proc: ChildProcess, ms: number): Promise<boolean> {
+  if (proc.exitCode !== null || proc.signalCode !== null) return true
+  return await new Promise<boolean>((resolve) => {
+    const t = setTimeout(() => resolve(false), ms)
+    proc.once('exit', () => {
+      clearTimeout(t)
+      resolve(true)
+    })
+  })
+}
+
+export async function gracefulStop(proc: ChildProcess, ms = 5000): Promise<number | null> {
+  if (proc.exitCode !== null) return proc.exitCode
+  try { proc.kill('SIGTERM') } catch { /* already gone */ }
+  const exited = await awaitProcessExit(proc, ms)
+  if (!exited && proc.exitCode === null && proc.signalCode === null) {
+    if (typeof proc.pid === 'number') {
+      try { process.kill(-proc.pid, 'SIGKILL') } catch { /* already gone */ }
+    }
+    await awaitProcessExit(proc, 1500)
+  }
+  return proc.exitCode
+}
+
+// Recursively walk /proc/<pid>/task/*/children — Linux-only. Returns the
+// flat set of every descendant PID (excludes `pid` itself). Used to prove
+// the SIGTERM handler killed every grandchild of a sidecar process, not
+// just the immediate children.
+export function descendantsOf(pid: number): Set<number> {
+  const out = new Set<number>()
+  if (!Number.isInteger(pid) || pid <= 0) return out
+  const queue: number[] = [pid]
+  while (queue.length > 0) {
+    const p = queue.shift()
+    if (p === undefined) continue
+    if (out.has(p)) continue
+    out.add(p)
+    try {
+      const tids = readdirSync(`/proc/${p}/task`)
+      for (const tid of tids) {
+        try {
+          const text = readFileSync(`/proc/${p}/task/${tid}/children`, 'utf8')
+          for (const m of text.matchAll(/(\d+)/g)) {
+            const cpid = Number(m[1])
+            if (!Number.isNaN(cpid)) queue.push(cpid)
+          }
+        } catch {
+          // thread is gone — ignore
+        }
+      }
+    } catch {
+      // /proc/<p> is gone — ignore
+    }
+  }
+  out.delete(pid)
+  return out
+}
+
+export async function waitDescendantsGone(pid: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (descendantsOf(pid).size === 0) return true
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  return descendantsOf(pid).size === 0
+}
+
+export async function waitGone(pid: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (!pidAlive(pid)) return true
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  return !pidAlive(pid)
+}
+
+// Briefly try to bind the port; resolves true if the port is free.
+// Uses SO_REUSEADDR so it can test a port that another listener JUST
+// released (without TIME_WAIT races tripping the probe).
+export async function isPortFree(port: number, host = '127.0.0.1'): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const srv = net.createServer()
+    srv.on('error', () => resolve(false))
+    srv.listen({ port, host }, () => {
+      srv.close(() => resolve(true))
+    })
+  })
+}
+
+// Probes /health with a hard timeout — returns true on any complete
+// response, false on connection error or hang. Used to verify a request
+// arriving during shutdown never hangs > 3 s.
+export async function probeHealth(url: string, ms: number): Promise<boolean> {
+  const ctl = new AbortController()
+  const t = setTimeout(() => ctl.abort(), ms)
+  try {
+    const r = await fetch(url, { signal: ctl.signal })
+    clearTimeout(t)
+    return r.status > 0
+  } catch {
+    clearTimeout(t)
+    return false
+  }
 }
 
 export async function expectExit(opts: ExpectExitOptions, expectedCode: number): Promise<ExitResult> {

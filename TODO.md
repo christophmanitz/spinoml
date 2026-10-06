@@ -1607,6 +1607,26 @@ Released ports
 Incorrect service state
 ```
 
+> **Implemented 2026-10-06 (sidecars; the Rust parent is not exercised).** `npm run test:process-lifecycle`
+> (`scripts/test-process-lifecycle.ts`, 75 rows, real processes/signals/sockets, run twice in a row) for BOTH
+> sidecars: **port occupied** → exit 3 within 5 s with one clear line naming the port (no traceback / stack),
+> the squatter untouched, a second sidecar never takes over a healthy first; **invalid port** → exit 2 naming
+> the variable (the torch sidecar used to print an `int('abc')` traceback); **shutdown**: SIGTERM/SIGINT →
+> exit 0, port immediately re-bindable, no zombie, no orphaned children: pip/script children of the torch
+> sidecar (own session + process group, tracked), `run_script` shell children, opencode and its MCP bridge
+> (descendants of the LLM sidecar are SNAPSHOT from `/proc` before the turns are aborted — found while
+> reviewing: the worker's version killed the shell first, reparenting a script's long-running child to
+> init, and its test deliberately used `exec sleep` so it could not see that; new grandchild case, red
+> without the ordering), temp opencode session dirs removed; **25 start/stop cycles** per sidecar without
+> fd/port/process growth; **restart on the same port** right after SIGTERM and after SIGKILL
+> (`allow_reuse_address`); `/health` never partial during teardown. Mutations red: torch child-kill removed,
+> snapshot-after-abort. Not covered: the Rust parent (`spawn_managed`, `PR_SET_PDEATHSIG`, app restart),
+> Windows/macOS (the descendant walk reads `/proc`), SIGKILL of the sidecar (cannot be handled: children
+> that are not in its process group and a temp dir can survive).
+> **Also (Phase 51 groundwork):** the test suites left >1 GB / ~1800 `spinoml-*` dirs in `/tmp`; the runner
+> now gives every `npm run ci` its own `TMPDIR`, deletes it afterwards and reports `temp: N entries, X MB`
+> (`--keep-tmp` keeps it).
+
 ---
 
 # 15. PHASE 14 – LLM / CLAUDE SAFETY

@@ -23,8 +23,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -59,8 +61,18 @@ from safe_load import UnsafePickleError, safe_torch_load
 
 # Default 7421 keeps local-mode behaviour unchanged. Override via env so a
 # remote deploy (Phase 12b) can pick a free port on the HPC login node
-# without colliding with another user's sidecar.
-PORT = int(os.environ.get("SPINOML_TORCH_PORT", "7421"))
+# without colliding with another user's sidecar. Invalid values fail loud
+# at startup (Phase 13) instead of the old silent `int('abc')` traceback.
+_PORT_ENV = os.environ.get("SPINOML_TORCH_PORT", "7421")
+try:
+    _port_int = int(_PORT_ENV)
+except ValueError:
+    print(f"[spinoml-torch] invalid SPINOML_TORCH_PORT={_PORT_ENV!r} (expected an integer 1024-65535)", file=sys.stderr, flush=True)
+    sys.exit(2)
+if _port_int < 1024 or _port_int > 65535:
+    print(f"[spinoml-torch] invalid SPINOML_TORCH_PORT={_port_int} (expected 1024-65535)", file=sys.stderr, flush=True)
+    sys.exit(2)
+PORT = _port_int
 
 # ── Structured error codes ───────────────────────────────────────────────
 # Every error response carries `error_code` (machine-readable, stable for the
@@ -94,6 +106,112 @@ MAX_INPUT_ELEMS = 1 << 30  # 1G elems ≈ 4–8 GB fp32 — already too big for 
 # forward pass itself is handled by the outer process watchdog + restart
 # (Phase 13). Overridable so the robustness harness can test the cap quickly.
 REQUEST_TIMEOUT = float(os.environ.get("SPINOML_TORCH_TIMEOUT", "30"))
+
+
+# ── Tracked subprocess + signal cleanup (Phase 13) ────────────────────────
+# Every long-running subprocess is started in its OWN process group
+# (`start_new_session=True` in `_run_tracked`) so SIGTERM to the sidecar
+# can be escalated to the entire group via `os.killpg(child_pid, SIGTERM)`.
+# Without that, a SIGTERM the parent sends us on shutdown would leave
+# `pip`, `sbatch`, user scripts and their descendants orphaned — they
+# would keep running under init and pin the port forever. We walk
+# /proc/self/task/*/children (Linux-only; this sidecar is local-only
+# anyway) to discover the PIDs we need to kill, so we don't have to
+# thread an explicit registry through every call site.
+
+def _killpg(pid: int, sig: int) -> None:
+    try:
+        os.killpg(pid, sig)
+    except (ProcessLookupError, PermissionError) as e:
+        # ESRCH = already gone; EPERM = a child already adopted it under init.
+        print(f"[spinoml-torch] shutdown: killpg({pid}, {sig}) → {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+    except OSError as e:
+        # Any other OS-level kill failure is also best-effort — a partial
+        # SIGTERM is acceptable during shutdown cleanup.
+        print(f"[spinoml-torch] shutdown: killpg({pid}, {sig}) → OSError: {e}", file=sys.stderr, flush=True)
+
+
+def _list_children(pid: int) -> list[int]:
+    """Direct child PIDs of `pid` from /proc — Linux only. Recurses callers
+    iterate to reach grandchildren."""
+    try:
+        tids = os.listdir(f"/proc/{pid}/task")
+    except (FileNotFoundError, ProcessLookupError, NotADirectoryError) as e:
+        # The process is gone mid-walk (just exited) or the path is not a
+        # directory (race with another kill path) — return what we have.
+        print(f"[spinoml-torch] shutdown: listdir /proc/{pid}/task → {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        return []
+    out: list[int] = []
+    for tid in tids:
+        try:
+            with open(f"/proc/{pid}/task/{tid}/children", "r") as f:
+                for m in re.finditer(r"\d+", f.read()):
+                    out.append(int(m.group()))
+        except (FileNotFoundError, ProcessLookupError) as e:
+            # A thread can vanish between readdir and open during shutdown.
+            print(f"[spinoml-torch] shutdown: open /proc/{pid}/task/{tid}/children → {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+    return out
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError) as e:
+        # ESRCH (already exited) and EPERM (we can't probe it) both mean
+        # "not our problem to wait on any more".
+        print(f"[spinoml-torch] shutdown: kill(pid={pid}, 0) → {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        return False
+    except OSError as e:
+        # Any other OS-level probe failure — treat as gone.
+        print(f"[spinoml-torch] shutdown: kill(pid={pid}, 0) → OSError: {e}", file=sys.stderr, flush=True)
+        return False
+
+
+def _kill_all_children() -> None:
+    """Walk every descendant of self, SIGTERM each root (its process
+    group, since children were started with start_new_session=True),
+    then SIGKILL survivors after a brief grace. Idempotent."""
+    visited: set[int] = set()
+    queue: list[int] = list(_list_children(os.getpid()))
+    roots: list[int] = []
+    while queue:
+        pid = queue.pop(0)
+        if pid in visited:
+            continue
+        visited.add(pid)
+        roots.append(pid)
+        queue.extend(_list_children(pid))
+    for pid in roots:
+        try:
+            os.getpgid(pid)
+        except (ProcessLookupError, PermissionError) as e:
+            # pid is already gone — nothing to signal, no group to kill.
+            print(f"[spinoml-torch] shutdown: getpgid({pid}) → {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+            continue
+        _killpg(pid, signal.SIGTERM)
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        if all(not _pid_alive(p) for p in roots):
+            break
+        time.sleep(0.05)
+    for pid in roots:
+        if _pid_alive(pid):
+            _killpg(pid, signal.SIGKILL)
+
+
+def _run_tracked(cmd, *, cwd=None, capture_output=True, text=True,
+                 timeout=None, **kw):
+    """subprocess.run with one extra: the child is started in its own
+    session + process group (`start_new_session=True`), so the SIGTERM
+    handler can `os.killpg(child_pid, SIGTERM)` the entire group on
+    shutdown. The test monkey-patch (`scripts/test-run-script.py`
+    monkey-patches `main.subprocess.run`) keeps working because we still
+    go through subprocess.run. Return shape + timeout semantics are
+    byte-identical."""
+    kw.setdefault("start_new_session", True)
+    return subprocess.run(cmd, cwd=cwd, capture_output=capture_output,
+                          text=text, timeout=timeout, **kw)
 
 
 def _err(code: str, message: str, stage: str | None = None,
@@ -821,7 +939,7 @@ def deps_check(specs: list[str]) -> dict:
     cmd = [sys.executable, "-m", "pip", "install", "--dry-run", "--quiet",
            "--disable-pip-version-check", "--no-input", "--report", "-", "--"] + specs
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
+        r = _run_tracked(cmd, capture_output=True, text=True, timeout=240)
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "pip resolution timed out (240s) — check network / index"}
     except Exception as e:
@@ -861,7 +979,7 @@ def deps_install(specs: list[str]) -> dict:
     cmd = [sys.executable, "-m", "pip", "install",
            "--disable-pip-version-check", "--no-input", "--"] + specs
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+        r = _run_tracked(cmd, capture_output=True, text=True, timeout=1800)
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "pip install timed out (1800s)"}
     except Exception as e:
@@ -926,7 +1044,7 @@ def run_workspace_script(payload: dict) -> dict:
         return {"ok": False, "error": f"no code given and {rel} does not exist"}
     try:
         if mode == "slurm":
-            r = subprocess.run(["sbatch", "./" + rel], cwd=root, capture_output=True, text=True, timeout=120)
+            r = _run_tracked(["sbatch", "./" + rel], cwd=root, capture_output=True, text=True, timeout=120)
             m = _re.search(r"Submitted batch job (\d+)", f"{r.stdout}\n{r.stderr}")
             return {"ok": r.returncode == 0, "mode": "slurm", "code": r.returncode,
                     "stdout": r.stdout[-8000:], "stderr": r.stderr[-8000:],
@@ -935,7 +1053,7 @@ def run_workspace_script(payload: dict) -> dict:
             cmd = [sys.executable, "-u", "./" + rel]
         else:
             cmd = ["bash", "./" + rel]
-        r = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=600)
+        r = _run_tracked(cmd, cwd=root, capture_output=True, text=True, timeout=600)
         return {"ok": r.returncode == 0, "mode": "shell", "code": r.returncode,
                 "stdout": r.stdout[-16000:], "stderr": r.stderr[-16000:], "timed_out": False}
     except subprocess.TimeoutExpired:
@@ -1213,13 +1331,64 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    # SO_REUSEADDR: a SIGTERM'd sidecar leaves the port in TIME_WAIT for ~30s,
+    # which makes an immediate restart on the same port fail with EADDRINUSE.
+    # Setting this on the class (inherited by `srv`) is enough; the listener
+    # socket picks it up at bind() time.
+    ThreadingHTTPServer.allow_reuse_address = True
+    # `bind_and_activate=False` so we can catch EADDRINUSE with a clear
+    # one-line error and exit 3 — the ctor's default path closes the socket
+    # on failure but raises a Python traceback, which the brief forbids.
+    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler, bind_and_activate=False)
+    try:
+        srv.server_bind()
+        srv.server_activate()
+    except OSError as e:
+        if e.errno == 98 or "address already in use" in str(e).lower():
+            print(f"[spinoml-torch] port {PORT} is already in use — another sidecar running? (stop it or set SPINOML_TORCH_PORT)", file=sys.stderr, flush=True)
+            sys.exit(3)
+        raise
     print(f"[spinoml-torch] listening on http://127.0.0.1:{PORT} (torch {torch.__version__})", flush=True)
+
+    # SIGTERM/SIGINT — `serve_forever` blocks the main thread, so we cannot
+    # call `srv.shutdown()` from the handler (it would deadlock waiting for
+    # serve_forever to return). The standard recipe is a tiny helper thread
+    # that invokes shutdown(); serve_forever then returns and we proceed to
+    # child cleanup.
+    def _trigger_shutdown() -> None:
+        try:
+            srv.shutdown()
+        except Exception as e:
+            # The server is already shutting down or the socket is gone —
+            # either way we are on the cleanup path; surface the failure so
+            # it shows in the logs (the helper thread runs without traceback
+            # capture) but do not block the exit.
+            print(f"[spinoml-torch] shutdown: srv.shutdown() → {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+
+    def _on_signal(signum, _frame) -> None:
+        threading.Thread(target=_trigger_shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGTERM, _on_signal)
+    signal.signal(signal.SIGINT, _on_signal)
+
     try:
         srv.serve_forever()
-    except KeyboardInterrupt:
-        print("[spinoml-torch] shutting down", file=sys.stderr)
-        srv.server_close()
+    finally:
+        try:
+            srv.server_close()
+        except Exception as e:
+            # server_close is best-effort during shutdown; the OS reaps the
+            # socket when the process exits, so any error here is non-fatal.
+            print(f"[spinoml-torch] shutdown: srv.server_close() → {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        # Kill every descendant of self (pip, sbatch, user scripts,
+        # `sleep` from inside those scripts, …). Idempotent.
+        try:
+            _kill_all_children()
+        except Exception as e:
+            # A failure in the child-reap walk during shutdown must not
+            # prevent the sidecar from exiting — we have done what we can.
+            print(f"[spinoml-torch] shutdown: _kill_all_children() → {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+    sys.exit(0)
 
 
 if __name__ == "__main__":

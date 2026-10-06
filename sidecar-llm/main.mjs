@@ -33,6 +33,7 @@
 
 import { createServer } from 'node:http'
 import { promises as fs } from 'node:fs'
+import { readFileSync, readdirSync, rmSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import os from 'node:os'
@@ -84,6 +85,128 @@ const PORT = (() => {
   }
   return n
 })()
+
+// ── Lifecycle + child cleanup (Phase 13) ──────────────────────────────────
+// Children (opencode per turn, run_script shell/slurm, ssh, the Claude CLI of the
+// subscription SDK) are deliberately NOT detached: they stay in the sidecar's
+// process group so a SIGKILL of the sidecar still reaps them. On SIGTERM/SIGINT
+// (also what the Tauri parent's PR_SET_PDEATHSIG delivers when the app dies) we walk
+// /proc for EVERY descendant of this process — not only the ones we spawned
+// ourselves, an SDK-spawned CLI would otherwise leak — SIGTERM them, SIGKILL
+// survivors after 1 s, and a 2.5 s watchdog hard-exits even if something is stuck.
+// Track turn controllers so SIGTERM can abort in-flight /chat turns — the
+// upstream provider stream is otherwise wedged on a write to a dead socket.
+const trackedChildren = new Set()
+// Disposable opencode session dirs of in-flight turns: removed synchronously on SIGTERM/SIGINT
+// (a SIGKILL cannot be handled, so an empty tmp dir may still remain in that case).
+const openSessionDirs = new Set()
+const activeTurnControllers = new Set()
+
+function trackChild(child) {
+  if (!child) return
+  trackedChildren.add(child)
+  const cleanup = () => trackedChildren.delete(child)
+  child.once('close', cleanup)
+  child.once('error', cleanup)
+}
+
+// Snapshot EVERY descendant (tracked children and anything else below this process,
+// e.g. a CLI spawned by an SDK) BEFORE anything is aborted or killed: once a parent
+// (say the `bash` of a run_script) dies, its children are reparented to init and can no
+// longer be found by walking down from us, so the snapshot has to come first.
+function snapshotDescendants() {
+  const all = new Set()
+  for (const child of trackedChildren) {
+    if (typeof child.pid !== 'number') continue
+    if (child.exitCode !== null || child.signalCode !== null) continue
+    all.add(child.pid)
+    collectDescendants(child.pid, all)
+  }
+  collectDescendants(process.pid, all)
+  return all
+}
+
+function killPids(all) {
+  for (const pid of all) {
+    try {
+      process.kill(pid, 'SIGTERM')
+    } catch (e) {
+      console.error(`[spinoml-llm] shutdown: kill ${pid} SIGTERM failed: ${e && e.message ? e.message : e}`)
+    }
+  }
+  // 1 s grace then SIGKILL any survivors; the parent process itself exits
+  // via the watchdog in shutdownAll(), so an unref'd timer is correct.
+  const watchdog = setTimeout(() => {
+    for (const pid of all) {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch (e) {
+        console.error(`[spinoml-llm] shutdown: kill ${pid} SIGKILL failed: ${e && e.message ? e.message : e}`)
+      }
+    }
+  }, 1000)
+  watchdog.unref()
+}
+
+function collectDescendants(root, out) {
+  // /proc/<pid>/task/*/children — Linux only. Reused from the torch
+  // sidecar's design (sidecar-torch/main.py `_list_children`).
+  let names
+  try {
+    names = readdirSync(`/proc/${root}/task`)
+  } catch (e) {
+    console.error(`[spinoml-llm] shutdown: readdir /proc/${root}/task failed: ${e && e.message ? e.message : e}`)
+    return
+  }
+  for (const tid of names) {
+    let text
+    try {
+      text = readFileSync(`/proc/${root}/task/${tid}/children`, 'utf8')
+    } catch (e) {
+      console.error(`[spinoml-llm] shutdown: readfile /proc/${root}/task/${tid}/children failed: ${e && e.message ? e.message : e}`)
+      continue
+    }
+    for (const m of text.matchAll(/(\d+)/g)) {
+      const c = Number(m[1])
+      if (!Number.isNaN(c) && !out.has(c)) {
+        out.add(c)
+        collectDescendants(c, out)
+      }
+    }
+  }
+}
+
+let shuttingDown = false
+function shutdownAll(name) {
+  if (shuttingDown) return
+  shuttingDown = true
+  const doomed = snapshotDescendants() // BEFORE the aborts below reparent grandchildren
+  for (const ctrl of activeTurnControllers) {
+    try {
+      ctrl.abort()
+    } catch (e) {
+      console.error(`[spinoml-llm] shutdown: abort turn controller failed: ${e && e.message ? e.message : e}`)
+    }
+  }
+  killPids(doomed)
+  for (const dir of openSessionDirs) {
+    try {
+      rmSync(dir, { recursive: true, force: true })
+    } catch (e) {
+      console.error(`[spinoml-llm] shutdown: remove ${dir} failed: ${e && e.message ? e.message : e}`)
+    }
+  }
+  try {
+    server.close()
+  } catch (e) {
+    console.error(`[spinoml-llm] shutdown: server.close failed: ${e && e.message ? e.message : e}`)
+  }
+  const t = setTimeout(() => { process.exit(0) }, 2500)
+  t.unref()
+}
+
+process.on('SIGTERM', () => shutdownAll('SIGTERM'))
+process.on('SIGINT', () => shutdownAll('SIGINT'))
 
 // Idle timeout for an upstream provider request: if no response headers (or no
 // further stream chunk) arrive for this long, abort the request and surface an
@@ -610,7 +733,12 @@ function spawnCapture(file, args, opts = {}) {
     if (signal?.aborted) { resolve({ code: -1, stdout: '', stderr: 'aborted', timedOut: false, aborted: true }); return }
     // `signal` (the turn's AbortController) → Node sends SIGTERM to the child,
     // so hitting Stop in the chat actually kills the running script.
+    // NOT detached: the child stays in the sidecar's process group, so a
+    // SIGKILL to the sidecar (e.g. a test harness / the OS on an app crash)
+    // still reaps it, and the SIGTERM handler reaps it via `trackedChildren`
+    // + the /proc descendant walk (works whether or not the child detached).
     const child = spawn(file, args, { stdio: ['ignore', 'pipe', 'pipe'], signal })
+    trackChild(child)
     let stdout = ''; let stderr = ''; let timedOut = false; let aborted = false
     if (signal) signal.addEventListener('abort', () => { aborted = true }, { once: true })
     const onData = (d, isErr) => {
@@ -2106,6 +2234,7 @@ async function runOpenCode(specs, systemPrompt, history, user, emit, opts, reque
   }
 
   const sessionDir = await fs.mkdtemp(path.join(os.tmpdir(), 'spinoml-opencode-'))
+  openSessionDirs.add(sessionDir)
   const env = {
     ...process.env,
     OPENCODE_CONFIG_CONTENT: JSON.stringify(opencodeConfig),
@@ -2120,9 +2249,13 @@ async function runOpenCode(specs, systemPrompt, history, user, emit, opts, reque
 
   let child
   try {
+    // NOT detached: opencode stays in the sidecar's process group so a
+    // SIGKILL to the sidecar reaps it too; the SIGTERM handler additionally
+    // walks /proc for the whole opencode → bridge subtree and kills each PID.
     child = spawn(OPENCODE_BIN, ['run', '--format', 'json', '--model', model, '--pure', prompt], {
       cwd: sessionDir, stdio: ['ignore', 'pipe', 'pipe'], env, signal: turnAbort.signal,
     })
+    trackChild(child)
   } catch (e) {
     emit({ type: 'status', value: 'error', message: `opencode start failed: ${e.message}` })
     return ''
@@ -2234,7 +2367,7 @@ async function runOpenCode(specs, systemPrompt, history, user, emit, opts, reque
     // so a completed/aborted turn never leaves a `spinoml-opencode-*` behind.
     // A fire-and-forget rm raced the process teardown (the lifecycle test
     // asserts no leftover temp dir, and a killed sidecar would keep them).
-    const cleanupSessionDir = () => fs.rm(sessionDir, { recursive: true, force: true }).catch(() => { /* disposable opencode session dir cleanup */ })
+    const cleanupSessionDir = () => fs.rm(sessionDir, { recursive: true, force: true }).then(() => { openSessionDirs.delete(sessionDir) }).catch(() => { /* disposable opencode session dir cleanup */ })
     child.on('close', async (code) => {
       clearTimeout(deadline)
       clearTimeout(startDeadline)
@@ -2678,6 +2811,11 @@ async function handleChat(req, res) {
   // Aborted when the client disconnects (Stop/reset in the chat) → kills any
   // running run_script child so the user isn't stuck waiting on the login node.
   const turnAbort = new AbortController()
+  // Register in the SIGTERM-aware set so a parent-initiated shutdown can
+  // abort the in-flight provider stream too — without this the run_script
+  // child would be reaped by killTrackedChildren while its provider is
+  // still trying to write, which on some SDKs deadlocks the event loop.
+  activeTurnControllers.add(turnAbort)
   // The client can go away via an explicit Stop/reset (the EventSource/fetch is
   // aborted). Node may report that on the request OR the response depending on
   // how the client tears the connection down, so watch both.
@@ -2836,6 +2974,7 @@ async function handleChat(req, res) {
   } catch (e) {
     emit({ type: 'status', value: 'error', message: `${e.name}: ${e.message}` })
   } finally {
+    activeTurnControllers.delete(turnAbort)
     clearInterval(heartbeat)
     rejectPendingAsks('chat turn ended')
     actions.close()
@@ -2931,6 +3070,15 @@ const server = createServer(async (req, res) => {
     return
   }
   sendJson(res, 404, { error: 'not found' })
+})
+
+server.on('error', (e) => {
+  if (e && e.code === 'EADDRINUSE') {
+    console.error(`[spinoml-llm] port ${PORT} is already in use — another sidecar running? (stop it or set SPINOML_LLM_PORT)`)
+    process.exit(3)
+  }
+  console.error(`[spinoml-llm] server error: ${e && e.message ? e.message : String(e)}`)
+  process.exit(1)
 })
 
 server.listen(PORT, '127.0.0.1', () => {

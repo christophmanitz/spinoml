@@ -125,12 +125,19 @@
 - Only the `random` split strategy is implemented; the other strategies fail
   loudly (Phase 19).
 
+**Process lifecycle (Phase 13).** The sidecars' own shutdown, port and orphan behaviour is tested against real
+processes (`test:process-lifecycle`). Not tested: the Rust parent (`spawn_managed`, `PR_SET_PDEATHSIG`, app
+restart/crash — no GUI here). The descendant walk reads `/proc/<pid>/task/*/children` (Linux with
+`CONFIG_PROC_CHILDREN`); elsewhere children of the LLM sidecar that are not in its process group can survive.
+A SIGKILL of a sidecar cannot be handled: its tracked children (torch: own sessions) can outlive it.
+
 ## 6. Not yet audited
 
 Phases of `TODO.md` that have no "implemented" note are not done. In particular:
 resource leak and long-run tests (51/52 — known leak:
-an empty `/tmp/spinoml-opencode-*` directory remains when the LLM sidecar is killed while an opencode
-turn is in flight; normal turns and client aborts clean up, see `test:opencode-lifecycle`),
+an empty `/tmp/spinoml-opencode-*` directory remains only when the LLM sidecar is SIGKILLed while an opencode
+turn is in flight; normal turns, client aborts and SIGTERM/SIGINT clean up, see `test:opencode-lifecycle` and
+`test:process-lifecycle`),
 CI (69),
 retries/timeouts (71/72), the
 remaining parts of the security review (77: the token is done, see §2; the other listed areas were covered piecewise by phases 43–47/76), dependency audit (79) and the final

@@ -26,10 +26,13 @@
 //   --json <path>      write JSON report (default .test-results/results.json)
 //   --allow-known      exit 0 if every non-PASS is a documented known one
 //   --allow-busy-ports run even if 7421/7422 are already in use (default: refuse, see preflight)
+//   --keep-tmp        keep the per-run TMPDIR (default: every suite gets its own TMPDIR which is
+//                      deleted after the run — the suites left >1 GB of spinoml-* dirs in /tmp)
 //                      (lint-at-baseline, BLOCKED/SKIPPED by capability)
 //   --check            verify the registry ↔ package.json and exit
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -57,6 +60,7 @@ interface Flags {
   jsonPath: string
   allowKnown: boolean
   allowBusyPorts: boolean
+  keepTmp: boolean
 }
 
 function parseFlags(argv: string[]): Flags {
@@ -72,6 +76,7 @@ function parseFlags(argv: string[]): Flags {
     jsonPath: join(RESULTS_DIR, 'results.json'),
     allowKnown: false,
     allowBusyPorts: false,
+    keepTmp: false,
   }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
@@ -82,6 +87,7 @@ function parseFlags(argv: string[]): Flags {
     else if (a === '--only-python') flags.onlyPython = true
     else if (a === '--allow-known') flags.allowKnown = true
     else if (a === '--allow-busy-ports') flags.allowBusyPorts = true
+    else if (a === '--keep-tmp') flags.keepTmp = true
     else if (a === '--only') {
       const v = argv[++i]
       if (!v) throw new Error('--only requires a comma-separated list')
@@ -316,6 +322,10 @@ const ALLOW = new Set([
   'SPINOML_OPENCODE_TEST_MODEL',
 ])
 
+// Per-run TMPDIR (set in main() before the first suite starts). Every suite creates its scratch
+// dirs below it, so a crashed/killed suite cannot leave anything behind in the shared /tmp.
+let CI_TMPDIR: string | null = null
+
 function scrubbedEnv(): { env: NodeJS.ProcessEnv; removed: string[] } {
   const env: NodeJS.ProcessEnv = {}
   const removed: string[] = []
@@ -326,7 +336,29 @@ function scrubbedEnv(): { env: NodeJS.ProcessEnv; removed: string[] } {
       removed.push(k)
     }
   }
+  if (CI_TMPDIR) env.TMPDIR = CI_TMPDIR
   return { env, removed }
+}
+
+/** Entries + bytes below a directory (best effort; a vanished entry is simply not counted). */
+function dirStats(dir: string): { entries: number; bytes: number } {
+  let entries = 0
+  let bytes = 0
+  const walk = (d: string): void => {
+    let names: string[]
+    try { names = readdirSync(d) } catch { return /* directory vanished while scanning: nothing to count */ }
+    for (const n of names) {
+      const p = join(d, n)
+      entries++
+      try {
+        const st = statSync(p)
+        if (st.isDirectory()) walk(p)
+        else bytes += st.size
+      } catch { /* entry vanished while scanning: nothing to count */ }
+    }
+  }
+  walk(dir)
+  return { entries, bytes }
 }
 
 // ── python env resolution ────────────────────────────────────────────────
@@ -981,8 +1013,10 @@ async function main(): Promise<void> {
   const commandLine = `npm run ci${process.argv.slice(2).length > 0 ? ' -- ' + process.argv.slice(2).join(' ') : ''}`
   const startedAt = new Date().toISOString()
 
+  CI_TMPDIR = mkdtempSync(join(tmpdir(), 'spinoml-ci-'))
   const { removed: removedVars } = scrubbedEnv()
   console.log(`[run-all] ${selected.length} suites selected`)
+  console.log(`[run-all] per-run TMPDIR: ${CI_TMPDIR}${flags.keepTmp ? ' (kept: --keep-tmp)' : ' (deleted after the run)'}`)
   console.log(`[run-all] python: ${caps['torch-env'].detail}`)
   console.log(`[run-all] cargo: ${caps.cargo.detail}`)
   console.log(`[run-all] cuda: ${caps.cuda.detail}`)
@@ -1064,6 +1098,17 @@ async function main(): Promise<void> {
     `summary: PASS=${summary.PASS}  SKIPPED=${summary.SKIPPED}  FAIL=${summary.FAIL}  TIMEOUT=${summary.TIMEOUT}  BLOCKED=${summary.BLOCKED}`,
   )
   console.log(`total: ${totalDurationSec}s`)
+
+  if (CI_TMPDIR) {
+    const left = dirStats(CI_TMPDIR)
+    const mb = (left.bytes / (1024 * 1024)).toFixed(1)
+    if (flags.keepTmp) {
+      console.log(`temp: ${left.entries} entries, ${mb} MB left in ${CI_TMPDIR} (--keep-tmp)`)
+    } else {
+      rmSync(CI_TMPDIR, { recursive: true, force: true })
+      console.log(`temp: ${left.entries} entries, ${mb} MB created by the suites and removed`)
+    }
+  }
   console.log(`results: ${flags.jsonPath}`)
 
   writeJson(flags.jsonPath, report)
