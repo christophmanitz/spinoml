@@ -2618,6 +2618,16 @@ Long paths
 
 Ensure path operations behave predictably.
 
+> **2026-10-06 — implemented (tests + resolver).** Path behaviour is now specified by two
+> matrices that run the same hostile inputs through both resolvers: `npm run verify:paths`
+> (Node `sidecar-llm/path-scope.mjs`, 48 checks) and `npm run test:scope` (Python
+> `sidecar-torch/scope.py`, 88 checks) — spaces, unicode, emoji, 255/256-byte segments, 4097-char
+> paths, empty, NUL, `..`/`a/../../x`, absolute, `~`, backslash names, `//`, `/proc/self/*`,
+> sibling-prefix confusion (`ws` vs `ws-evil`), missing files/parents for writes, symlink chains,
+> dangling links, loops (Python's `os.path.realpath` silently swallows loops, so `scope.py`
+> resolves component-wise and raises `PATH_INVALID`). Relative paths are rejected where an
+> absolute one is required.
+
 ---
 
 # 47. PHASE 46 – PATH TRAVERSAL
@@ -2633,6 +2643,30 @@ symlinks
 ```
 
 where the application expects paths to remain inside a workspace/dataset directory.
+
+> **2026-10-06 — implemented (mechanism complete; local default NOT yet enforcing).**
+> Rule: the fully resolved path must lie under the realpath of an allowed root OR of a
+> user-configured symlink target — NOT "no symlink may leave the root", because the user
+> symlinks data onto cluster scratch (`/work2`). Torch sidecar: `sidecar-torch/scope.py`;
+> every request path (`/dataset/inspect|stats|smoke`, `/activations` abspaths + checkpoint,
+> `/run_script` root + script) and every path derived from FILE CONTENT (manifest table and
+> branch sources incl. absolute / `../`, `contains`-matches that are symlinks, structure-path
+> columns, prep cards, image/graph folder files, cache dirs) goes through `check_path` and uses
+> the RESOLVED path. Roots come from `SPINOML_ALLOWED_ROOTS`, `SPINOML_SYMLINK_TARGETS` and
+> `~/.cache/spinoml/scope.json` (regular file, owned by the uid, not group/world-writable,
+> re-read on change). Errors: HTTP 403 `SCOPE_DENIED` / `PATH_SYMLINK_OUTSIDE` /
+> `SCOPE_UNCONFIGURED` with a one-line fix; data-level `ok:false` + `error_code` inside handlers;
+> `/health.scope` shows mode + counts, never paths. Node sidecar: `resolveInWorkspace` on all
+> local `read_file`/`list_dir`/`write_file`/notes/dataset/download paths. Remote HPC sidecar:
+> `remote_sidecar.rs` now exports `SPINOML_ALLOWED_ROOTS="$ROOT…"` (**Rust edit UNCOMPILED**).
+> Verified with a real sidecar over HTTP (16 hostile scenarios incl. symlinked files/dirs,
+> hostile manifests, `/proc/self/environ`, `run_script` root `/`: no marker leaked, nothing
+> written outside). **Honest status:** with no root configured the sidecar runs in the visible
+> mode `unconfigured-open` (warning + `/health`), because Rust has no channel to the sidecar
+> and cannot be compiled here — the local app is NOT scoped until Rust writes `scope.json`
+> (or the user sets `SPINOML_ALLOWED_ROOTS`); `SPINOML_REQUIRE_SCOPE=1` makes it fail closed.
+> Scoping does not protect the exec endpoints (`/infer`, smoke, activations run model `code`)
+> — that is the sidecar token (Phase 77/78). Rust `resolve()` is still lexical (R016, LIMITATIONS).
 
 ---
 
@@ -2654,6 +2688,25 @@ Review every occurrence.
 A dataset file must not automatically be considered trusted.
 
 Where safe serialization is possible, use it.
+
+> **2026-10-06 — implemented.** 14 `torch.load(..., weights_only=False)` sites (torch sidecar
+> main.py, dataset_handlers.py ×7, training_template.py ×6) now call one safe loader
+> (`sidecar-torch/safe_load.py`): `weights_only=True` plus an allow-list of the real artifact types
+> (PyG `Data`/`HeteroData`/storages, numpy RNG-state arrays). Measured first: with
+> `weights_only=True` alone the PyG `AF-*.pt` graphs from the user's pipeline FAIL to load while
+> checkpoints load — after registering PyG's classes all 18 real artifacts under
+> `examples/reaction-workspace` load. Anything else raises `UnsafePickleError` →
+> `error_code: UNSAFE_PICKLE` (datasets), a visible note (activations checkpoint), `run.failed`
+> (trainer). The trainer cannot import sidecar modules, so the loader is embedded as a marker-
+> delimited block in `training_template.py`; `test:safe-load` enforces byte-equality plus a static
+> audit (one `weights_only=False`, only in the escape hatch). Escape hatch:
+> `SPINOML_ALLOW_UNSAFE_PICKLE=1` (process-wide, loud stderr warning, recorded in `config.env` and
+> `run.provenance` as `unsafe_pickle`). `npm run test:safe-load` (85 checks) really tries to
+> execute pickled `os.system`/`Popen`/`exec`/`eval` payloads, also hidden inside a PyG `Data`
+> attribute, a numpy object array, a dict key and nested lists: sentinel never created. Other
+> deserialization: only JSON (`json.load`, `JSON.parse`) and `np.load(allow_pickle=False)`; no yaml,
+> joblib, dill, marshal. Not covered: the escape hatch trusts the whole process, torch < 2.4 has no
+> allow-list API (plain tensors/dicts only).
 
 ---
 

@@ -242,11 +242,17 @@ fn build_run_command(alias: &str, root: &str) -> Command {
     let env_sh = shell_quote_path(&format!("{}/.spinoml/env.sh", root.trim_end_matches('/')));
     // The remote command:
     //   1. cd into spinoml dir
-    //   2. source env.sh if present (lets users `module load` first)
-    //   3. exec the sidecar with the chosen port
+    //   2. source env.sh if present (lets users `module load` first, and set
+    //      SPINOML_SYMLINK_TARGETS=/work2/... for datasets symlinked out of the root)
+    //   3. scope the sidecar's file access to this workspace root (appended to
+    //      any roots env.sh already exported) — the login node is shared, so the
+    //      loopback port is reachable by other users
+    //   4. exec the sidecar with the chosen port
+    // NOTE: `${{` / `}}` are format! escapes for a literal `${` / `}`.
     let remote = format!(
         "ROOT={root_q}; MLDIR=\"$ROOT/.spinoml\"; \
          if [ -f {env_sh} ]; then . {env_sh}; fi; \
+         export SPINOML_ALLOWED_ROOTS=\"$ROOT${{SPINOML_ALLOWED_ROOTS:+:$SPINOML_ALLOWED_ROOTS}}\"; \
          cd \"$MLDIR\" && SPINOML_TORCH_PORT={port} exec \"$MLDIR/venv/bin/python\" -u sidecar-torch/main.py",
         port = REMOTE_REMOTE_PORT
     );

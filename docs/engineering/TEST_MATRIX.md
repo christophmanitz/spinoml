@@ -12,7 +12,7 @@ Layer registry         | `verify-codegen` (13 graphs via generator) + G001 param
 Code generation        | `verify-codegen` 13/13 ✓ + `test:determinism` ✓ (repeatability, shuffled arrays) + `verify:codegen-security` ✓ (5362 adversarial cases: 10 hostile payloads × every string sink of model/data/training codegen + numeric NaN/Infinity/string/null, checked with Python `ast`+`tokenize`; `pyStr` round-trip via `ast.literal_eval`; by-design code sinks asserted exactly) | golden outputs, multi-input  | §6 golden tests
 Training codegen       | `verify-traingen` ✓ (compile, multitask, eval-only) | immersive failure tests | §24 training failure tests
 Shape inference        | `verify-sidecar` ✓ + `test:verifier` ✓ (fail-closed gate) + `test:races` ✓ (stale-response replay) + `verify:graph-revision` ✓ (graph revision + runCounter guard, stale shape drop) | live multi-request on real sidecar | §8/9/10/40
-Dataset handling       | `verify-sidecar` ✓ + `test:datasets` ✓ + `verify:graph-revision` ✓ + `verify:concurrent` ✓ (per-dataset seq + refreshSeq + smoke graphRev, no stale overwrite) | leak tests, parquet (pyarrow absent), remote pre-12b | §19/40/41
+Dataset handling       | `verify-sidecar` ✓ + `test:datasets` ✓ + `verify:graph-revision` ✓ + `verify:concurrent` ✓ (per-dataset seq + refreshSeq + smoke graphRev, no stale overwrite) | leak tests, parquet (pyarrow absent), remote pre-12b | §19/40/41 + `test:safe-load` ✓ (85; real RCE attempts, all 18 example artifacts load) + `test:scope` ✓ (manifest escapes)
 Training runs (local)  | `verify-traingen` e2e ✓ + `verify:states` ✓ + `verify:events` ✓ + `verify:cancel` ✓ | — | §30/31/32
 Training runs (remote) | `verify:submission` ✓ + `verify:slurm` ✓ + `verify:recovery` ✓ (close→restart→reconnect re-queries live pid/status/squeue/sacct, not cache; detached survival; atomic claim) | — | §33/36/37
 Persistence            | `npm run test:persistence` ✓ (P001/P011: round-trip, malformed-file matrix, schema versions, fail-closed) | autosave (localStorage) browser smoke | §4.3, §5
@@ -20,7 +20,7 @@ Torch sidecar          | `verify-sidecar` 6/6+activations ✓ + `test:robustness
 LLM sidecar            | `verify-opencode` ✓ (+manual ask/confirm) + `verify:command-injection` ✓ (args split/quote round-tripped through a real `sh`, SSRF blocklist + DNS-resolving `safeFetch` with fake lookup/fetch, ssh target policy, runScript `./` prefix)      | `/respond`/auto-approve auth | §14/15, §77
 MCP                    | `verify-opencode` (via opencode bridge) ✓      | spec-parity across providers | §16 MCP validation
 Tauri/Rust             | `cargo check` ✓ + `cargo test` (ssh failures + slurm 13 tests) ✓ + `alias_validation_tests` (Phase 44, **written but UNCOMPILED here — no toolchain, see LIMITATIONS §1**) | command integration tests    | §1.6 (env), §48 Rust errors
-Filesystem (local)     | none                                          | path-sanity tests            | §45/46
+Filesystem (local)     | `verify:paths` ✓ (48, Node resolver) + `test:scope` ✓ (88, Python scope: path matrix, modes/config, dataset_handlers incl. hostile manifests, real-HTTP) | Rust `resolve()` symlinks (lexical only, no toolchain) | §45/46
 Filesystem (remote)    | `verify:ssh` ✓                                | ssh mirror parity tests      | §34/35
 SSH                    | `verify:ssh` ✓ + `verify:credentials` ✓       | live cluster integration     | §34/35 (+ R003 alias)
 PTY/Terminal           | none                                          | interactive smoke            | manual

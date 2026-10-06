@@ -41,6 +41,7 @@ import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { splitArgs, quoteArgv, checkDownloadUrl, checkSshTarget, safeFetch } from './shell-safety.mjs'
+import { resolveInWorkspace, loadSymlinkTargets } from './path-scope.mjs'
 
 const PORT = 7422
 
@@ -275,7 +276,7 @@ async function notesList(ws) {
         return { name, size: Number(size) || 0 }
       })
   }
-  const dir = path.join(ws.root, 'notes')
+  const dir = await resolveWsPath(ws, 'notes')
   const items = await fs.readdir(dir).catch(() => [])
   const filtered = items.filter((f) => /\.(md|txt)$/i.test(f) && !f.startsWith('.'))
   const out = []
@@ -294,7 +295,7 @@ async function notesRead(ws, name) {
     const p = `${ws.root}/notes/${safe}`
     return await runSsh(ws.sshTarget, `cat ${shellQuotePath(p)}`)
   }
-  return await fs.readFile(path.join(ws.root, 'notes', safe), 'utf8')
+  return await fs.readFile(await resolveWsPath(ws, `notes/${safe}`), 'utf8')
 }
 
 async function notesAppend(ws, name, body) {
@@ -309,9 +310,9 @@ async function notesAppend(ws, name, body) {
       text,
     )
   } else {
-    const dir = path.join(ws.root, 'notes')
-    await fs.mkdir(dir, { recursive: true })
-    await fs.appendFile(path.join(dir, safe), text, 'utf8')
+    const abs = await resolveWsPath(ws, `notes/${safe}`, { forWrite: true })
+    await fs.mkdir(path.dirname(abs), { recursive: true })
+    await fs.appendFile(abs, text, 'utf8')
   }
   return text.length
 }
@@ -339,12 +340,11 @@ async function downloadToDatasets(ws, url, filename) {
     const bytes = parseInt(out.trim(), 10) || 0
     return { relpath: `datasets/${safe}`, bytes }
   }
-  const dir = path.join(ws.root, 'datasets')
-  await fs.mkdir(dir, { recursive: true })
-  const dest = path.join(dir, safe)
+  const dest = await resolveWsPath(ws, `datasets/${safe}`, { forWrite: true })
   const res = await safeFetch(safeUrl)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const buf = Buffer.from(await res.arrayBuffer())
+  await fs.mkdir(path.dirname(dest), { recursive: true })
   await fs.writeFile(dest, buf)
   return { relpath: `datasets/${safe}`, bytes: buf.length }
 }
@@ -363,9 +363,9 @@ async function writeDatasetFile(ws, filename, content) {
     await runSsh(ws.sshTarget, `mkdir -p ${shellQuotePath(dir)} && cat > ${shellQuotePath(p)}`, text)
     return { relpath: `datasets/${safe}`, bytes: Buffer.byteLength(text) }
   }
-  const dir = path.join(ws.root, 'datasets')
-  await fs.mkdir(dir, { recursive: true })
-  await fs.writeFile(path.join(dir, safe), text, 'utf8')
+  const abs = await resolveWsPath(ws, `datasets/${safe}`, { forWrite: true })
+  await fs.mkdir(path.dirname(abs), { recursive: true })
+  await fs.writeFile(abs, text, 'utf8')
   return { relpath: `datasets/${safe}`, bytes: Buffer.byteLength(text) }
 }
 
@@ -376,14 +376,16 @@ async function wsListDir(ws, reldir) {
     const out = await runSsh(ws.sshTarget, `ls -1 ${shellQuotePath(`${ws.root}/${reldir}`)} 2>/dev/null || true`)
     return out.split('\n').map((s) => s.trim()).filter(Boolean)
   }
-  return await fs.readdir(path.join(ws.root, reldir)).catch(() => [])
+  const abs = await resolveWsPath(ws, safeRelpath(reldir))
+  return await fs.readdir(abs).catch(() => [])
 }
 
 async function wsReadFile(ws, relpath) {
   if (ws.isRemote) {
     return await runSsh(ws.sshTarget, `cat ${shellQuotePath(`${ws.root}/${relpath}`)} 2>/dev/null || true`)
   }
-  return await fs.readFile(path.join(ws.root, relpath), 'utf8').catch(() => '')
+  const abs = await resolveWsPath(ws, safeRelpath(relpath))
+  return await fs.readFile(abs, 'utf8').catch(() => '')
 }
 
 // ── Generic agent FS + exec helpers (Phase: agent workspace tools) ──────────
@@ -402,12 +404,34 @@ function safeRelpath(rel) {
   return segs.join('/')
 }
 
+// Symlink-aware containment for LOCAL workspace paths (remote/ssh paths stay
+// lexical — they are shell-quoted relative paths on the host). safeRelpath is
+// the lexical first pass; resolveInWorkspace then resolves the real path and
+// requires it inside the realpath of the workspace root, OR inside a
+// user-configured symlink target (env SPINOML_SYMLINK_TARGETS / scope.json).
+// A rejection throws the same kind of explicit error the callers already
+// surface; the code is included in the message. `abs` (the RESOLVED path) must
+// be used for every later operation.
+let lastScopeLoadError = null
+async function resolveWsPath(ws, safe, { forWrite = false } = {}) {
+  const scope = loadSymlinkTargets()
+  if (scope.loadError && scope.loadError !== lastScopeLoadError) {
+    lastScopeLoadError = scope.loadError
+    console.error(`[path-scope] scope config ignored: ${scope.loadError}`)
+  }
+  const r = await resolveInWorkspace(ws.root, safe, { forWrite, symlinkTargets: scope.targets })
+  if (!r.ok) throw new Error(`${r.code}: ${r.error}`)
+  return r.abs
+}
+
 // write_file carries a UTF-8 string, so it can write any TEXT file. The path is
-// already confined to the workspace root by safeRelpath (no .. / absolute / ~),
-// which is the real safety boundary — within the root the agent may write any
-// file in any directory (scripts, configs, models, manifests, notes). The only
-// guard left is refusing known-binary extensions, which a text write would
-// corrupt; binary payloads must go through download_to_datasets instead.
+// confined to the workspace root by safeRelpath (no .. / absolute / ~) and the
+// symlink-aware resolveWsPath (the real path must stay inside the root or an
+// allow-listed target), which is the real safety boundary — within the root the
+// agent may write any file in any directory (scripts, configs, models,
+// manifests, notes). The only guard left is refusing known-binary extensions,
+// which a text write would corrupt; binary payloads must go through
+// download_to_datasets instead.
 const BINARY_EXT_RE = /\.(pt|pth|ckpt|safetensors|h5|hdf5|pkl|pickle|joblib|onnx|msgpack|npy|npz|zip|tar|gz|tgz|bz2|xz|7z|db|sqlite|sqlite3|png|jpe?g|gif|bmp|webp|ico|tiff?|pdf|parquet|pq|feather|arrow|so|dylib|dll|exe|bin|wav|mp3|mp4|mov|woff2?|ttf|otf)$/i
 // A few in-root dirs are never legitimate write targets and would turn an
 // unconfirmed text write into code execution (a planted .git hook, or a
@@ -436,7 +460,7 @@ async function wsWriteText(ws, relpath, text) {
     const dir = p.slice(0, p.lastIndexOf('/'))
     await runSsh(ws.sshTarget, `mkdir -p ${shellQuotePath(dir)} && cat > ${shellQuotePath(p)}`, text)
   } else {
-    const abs = path.join(ws.root, safe)
+    const abs = await resolveWsPath(ws, safe, { forWrite: true })
     await fs.mkdir(path.dirname(abs), { recursive: true })
     await fs.writeFile(abs, text, 'utf8')
   }
@@ -452,7 +476,8 @@ async function wsPathExists(ws, relpath) {
     const out = await runSsh(ws.sshTarget, `test -e ${shellQuotePath(`${ws.root}/${safe}`)} && echo MLF_YES || echo MLF_NO`)
     return out.includes('MLF_YES')
   }
-  try { await fs.access(path.join(ws.root, safe)); return true } catch { return false }
+  const abs = await resolveWsPath(ws, safe)
+  try { await fs.access(abs); return true } catch { return false }
 }
 
 async function wsReadTextStrict(ws, relpath, cap = 100000) {
@@ -463,7 +488,7 @@ async function wsReadTextStrict(ws, relpath, cap = 100000) {
     // turns into a thrown error the agent can see.
     text = await runSsh(ws.sshTarget, `cat ${shellQuotePath(`${ws.root}/${safe}`)}`)
   } else {
-    text = await fs.readFile(path.join(ws.root, safe), 'utf8')
+    text = await fs.readFile(await resolveWsPath(ws, safe), 'utf8')
   }
   return capText(text, cap)
 }
@@ -478,7 +503,7 @@ async function wsListDirDetailed(ws, reldir) {
       is_dir: name.endsWith('/'),
     }))
   }
-  const abs = safe ? path.join(ws.root, safe) : ws.root
+  const abs = await resolveWsPath(ws, safe || '.')
   const ents = await fs.readdir(abs, { withFileTypes: true }).catch(() => [])
   return ents.map((e) => ({ name: e.name, is_dir: e.isDirectory() }))
 }
@@ -630,7 +655,7 @@ async function readSummaryEvents(ws, id) {
     if (ws.isRemote) {
       return await runSsh(ws.sshTarget, `grep -hE '"(epoch.end|run.done)"' ${shellQuotePath(`${ws.root}/${p}`)} 2>/dev/null || true`)
     }
-    const raw = await fs.readFile(path.join(ws.root, p), 'utf8')
+    const raw = await fs.readFile(await resolveWsPath(ws, p), 'utf8')
     return raw.split('\n').filter((l) => l.includes('epoch.end') || l.includes('run.done')).join('\n')
   } catch { return '' }
 }
@@ -1360,7 +1385,12 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
                 true,
               )
             }
-          } catch { /* if the existence probe itself fails, fall through and let the run surface the real error */ }
+          } catch (e) {
+            // A path-scope rejection (symlink escaping the workspace) is a hard
+            // stop — never fall through to executing the script.
+            if (e && /^PATH_/.test(e.message)) return content(`run failed: ${e.message}`, true)
+            /* otherwise: if the existence probe itself fails, fall through and let the run surface the real error */
+          }
           let preview = ''
           try { preview = await wsReadTextStrict(workspace, safe, 2000) } catch { /* show prompt without preview */ }
           const parsedArgs = splitArgs(args)

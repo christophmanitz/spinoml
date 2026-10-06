@@ -23,6 +23,42 @@ from typing import Any
 
 import torch
 
+import scope
+from safe_load import UnsafePickleError, safe_torch_load
+from scope import ScopeError
+
+# Phase 46 — audited open sites (every one goes through scope.check_path and uses
+# the returned resolved path):
+#   * entry points inspect() / stats() / sample_tensor()                  (request abspath)
+#   * _table_path() inner table of a prepared dataset dir                 (dir content)
+#   * _read_manifest() / _manifest_table_df() table                       (file content)
+#   * _resolve_branch_file() dir listing + exact/contains/absolute cell   (file content)
+#   * _lookup_value() side-table join                                     (file content)
+#   * _cached_mol_data() .graphcache read/write and ensure_espf_cache()   (cache dirs)
+#   * image folders: each image actually opened/thumbnailed               (dir content)
+#   * graph folders: each .pt actually loaded                             (dir content)
+#   * _describe_dir_bundle() prep_card.json                               (dir content)
+#   * _sha256_file() / _fingerprint_dir() fingerprint reads               (request path)
+
+
+def _scope_error(exc: "ScopeError", kind: str = "unknown") -> dict[str, Any]:
+    """Turn a scope denial into the module's normal data-level error dict."""
+    return {"kind": kind, "ok": False,
+            "error": getattr(exc, "message", str(exc)) or str(exc),
+            "error_code": getattr(exc, "code", "SCOPE_DENIED")}
+
+
+def _checked(path: Any, write: bool = False) -> str:
+    """Scope-check ``path`` and return the resolved absolute path to open."""
+    return scope.check_path(str(path), write=write)
+
+
+def _mark_unsafe_pickle(result: dict[str, Any], exc: BaseException) -> None:
+    """Tag a handler error dict when the failure is a refused unsafe-pickle load."""
+    if isinstance(exc, UnsafePickleError):
+        result["error_code"] = "UNSAFE_PICKLE"
+        result["error"] = str(exc)
+
 
 # ─── Detection ────────────────────────────────────────────────────────────
 
@@ -181,6 +217,7 @@ def _sha256_file(path: Path) -> tuple[str, int]:
     renamed keeps the same identifier."""
     h = hashlib.sha256(_FP_HEADER)
     size = 0
+    path = Path(_checked(path))
     with open(path, "rb") as f:
         while True:
             chunk = f.read(1 << 20)
@@ -202,8 +239,12 @@ def _fingerprint_dir(path: Path, exts: set[str] | None) -> dict[str, Any] | None
             continue
         if exts and p.suffix.lower() not in exts:
             continue
-        entries.append((p.relative_to(path).as_posix(), p.stat().st_size))
-        total += p.stat().st_size
+        try:
+            rp = Path(_checked(p))
+        except ScopeError:
+            continue  # never hash a file that resolves outside the scope
+        entries.append((rp.relative_to(path).as_posix(), rp.stat().st_size))
+        total += rp.stat().st_size
     if not entries:
         return None
     h = hashlib.sha256(_FP_HEADER)
@@ -263,7 +304,7 @@ def _fingerprint_for(abspath: str, kind: str) -> dict[str, Any] | None:
             # the hash pins the reference file, NOT the remote content.
             h, size = _sha256_file(Path(abspath))
             return {"alg": "sha256", "mode": "reference", "hash": h, "size_bytes": size}
-    except OSError:
+    except (OSError, ScopeError):
         return None
     return None
 
@@ -272,6 +313,10 @@ def inspect(abspath: str) -> dict[str, Any]:
     # Phase 12b: remote workspaces send tilde-prefixed paths ('~/spinoml/...');
     # Python's os.path doesn't expand those, so we do it once at the entry point.
     abspath = os.path.expanduser(abspath)
+    try:
+        abspath = _checked(abspath)
+    except ScopeError as e:
+        return _scope_error(e)
     if not os.path.exists(abspath):
         return _missing_path(abspath)
     kind = detect_kind(abspath)
@@ -311,6 +356,10 @@ def _inspect_tabular(abspath: str) -> dict[str, Any]:
         return _missing_dep("tabular", "pandas")
     src = Path(abspath)
     p = _table_path(abspath)  # a prepared-dataset dir → its inner table
+    try:
+        p = Path(_checked(p))
+    except ScopeError as e:
+        return _scope_error(e, "tabular")
     try:
         if p.suffix.lower() == ".parquet":
             df = pd.read_parquet(p)
@@ -358,7 +407,9 @@ def _describe_dir_bundle(d: Path, table: Path) -> dict[str, Any]:
                 files.append(c.name)
             if c.name == "prep_card.json":
                 try:
-                    card = json.loads(c.read_text(encoding="utf-8"))
+                    card = json.loads(Path(_checked(c)).read_text(encoding="utf-8"))
+                except ScopeError:
+                    card = None
                 except Exception:
                     card = None
     except OSError:
@@ -393,6 +444,10 @@ def _inspect_image_folder(abspath: str) -> dict[str, Any]:
     try:
         from PIL import Image
         for sp in sample_paths[:6]:
+            try:
+                sp = Path(_checked(sp))
+            except ScopeError:
+                continue  # a symlinked-out image is never opened/thumbnailed
             try:
                 img = Image.open(sp)
                 if sample_size is None:
@@ -500,9 +555,15 @@ def _inspect_graph_folder(abspath: str) -> dict[str, Any]:
     if not files:
         return {"kind": "graph_folder", "ok": False, "error": "no .pt files in folder"}
     try:
-        d = _as_pyg_data(torch.load(files[0], map_location="cpu", weights_only=False))
+        first = Path(_checked(files[0]))
+    except ScopeError as e:
+        return _scope_error(e, "graph_folder")
+    try:
+        d = _as_pyg_data(safe_torch_load(first))
     except Exception as e:
-        return {"kind": "graph_folder", "ok": False, "error": f"{type(e).__name__}: {e}"}
+        result = {"kind": "graph_folder", "ok": False, "error": f"{type(e).__name__}: {e}"}
+        _mark_unsafe_pickle(result, e)
+        return result
     if d is None:
         return {"kind": "graph_folder", "ok": False, "error": f"{files[0].name} is not a PyG graph"}
     info = _graph_info(d)
@@ -531,9 +592,15 @@ def _sample_graph_folder(abspath: str, options: dict[str, Any] | None = None) ->
     if options and isinstance(options.get("index"), int):
         idx = max(0, min(int(options["index"]), len(files) - 1))
     try:
-        d = _as_pyg_data(torch.load(files[idx], map_location="cpu", weights_only=False))
+        target = Path(_checked(files[idx]))
+    except ScopeError as e:
+        return _scope_error(e)
+    try:
+        d = _as_pyg_data(safe_torch_load(target))
     except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        result = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        _mark_unsafe_pickle(result, e)
+        return result
     if d is None:
         return {"ok": False, "error": f"{files[idx].name} is not a PyG graph"}
     field = (options or {}).get("field") if options else None
@@ -545,7 +612,7 @@ def _inspect_tensor(abspath: str) -> dict[str, Any]:
     ext = p.suffix.lower()
     try:
         if ext in (".pt", ".pth"):
-            t = torch.load(p, map_location="cpu", weights_only=False)
+            t = safe_torch_load(p)
             d = _as_pyg_data(t)
             if d is not None:
                 return {"kind": "tensor", "ok": True, "size_bytes": p.stat().st_size, **_graph_info(d)}
@@ -563,7 +630,9 @@ def _inspect_tensor(abspath: str) -> dict[str, Any]:
         else:
             return {"kind": "tensor", "ok": False, "error": f"unsupported tensor ext {ext}"}
     except Exception as e:
-        return {"kind": "tensor", "ok": False, "error": f"{type(e).__name__}: {e}"}
+        result = {"kind": "tensor", "ok": False, "error": f"{type(e).__name__}: {e}"}
+        _mark_unsafe_pickle(result, e)
+        return result
     info: dict[str, Any] = {"kind": "tensor", "ok": True, "size_bytes": p.stat().st_size}
     if isinstance(t, torch.Tensor):
         info["shape"] = list(t.shape)
@@ -820,7 +889,7 @@ def _sample_pyg(abspath: str, target: list[int] | None, options: dict[str, Any] 
 
 def _read_manifest(abspath: str) -> dict[str, Any]:
     import json
-    with open(abspath, "r", encoding="utf-8") as f:
+    with open(_checked(abspath), "r", encoding="utf-8") as f:
         cfg = json.load(f)
     if not isinstance(cfg, dict) or "table" not in cfg or "pairs" not in cfg:
         raise ValueError("manifest must be a JSON object with 'table' and 'pairs'")
@@ -831,7 +900,7 @@ def _read_manifest(abspath: str) -> dict[str, Any]:
 
 def _manifest_table_df(base: Path, cfg: dict[str, Any]):
     import pandas as pd
-    tp = (base / str(cfg["table"])).expanduser()
+    tp = Path(_checked((base / str(cfg["table"])).expanduser()))
     if tp.suffix.lower() == ".parquet":
         return pd.read_parquet(tp)
     if tp.suffix.lower() == ".tsv":
@@ -844,7 +913,7 @@ def _resolve_branch_file(base: Path, spec: dict[str, Any], value: str) -> Path |
     if not value:
         return None
     if "dir" in spec:
-        d = (base / str(spec["dir"])).expanduser()
+        d = Path(_checked((base / str(spec["dir"])).expanduser()))  # may be outside → ScopeError
         ext = str(spec.get("ext", "") or "")
         match = str(spec.get("match", "exact"))
         if match == "contains":
@@ -855,16 +924,20 @@ def _resolve_branch_file(base: Path, spec: dict[str, Any], value: str) -> Path |
             if ext:
                 narrowed = [c for c in cands if c.suffix.lower() == ext.lower()]
                 cands = narrowed or cands
-            return cands[0] if cands else None
+            if not cands:
+                return None
+            return Path(_checked(cands[0]))
         # exact: <dir>/<value><ext>
         cand = d / (value if (not ext or value.endswith(ext)) else value + ext)
         if cand.exists():
-            return cand
+            return Path(_checked(cand))
         alt = d / value  # tolerate a value that already carries its extension
-        return alt if alt.exists() else cand
+        if alt.exists():
+            return Path(_checked(alt))
+        return Path(_checked(cand))  # missing but scoped → caller raises FileNotFoundError
     # no dir → the cell holds a path (relative to the manifest dir, or absolute)
     p = Path(value)
-    return p if p.is_absolute() else (base / value)
+    return Path(_checked(p if p.is_absolute() else (base / value)))
 
 
 def _mol_data(smi: str):
@@ -879,19 +952,26 @@ def _mol_data(smi: str):
 def _cached_mol_data(smi: str, cache_dir: Path):
     """Build (or load) the molecule graph and persist it as a real PyG .pt, so
     RDKit work is done once and the molecule graphs exist as .pt like the rest."""
-    cache_dir = Path(cache_dir)
+    cache_dir = Path(_checked(cache_dir, write=True))
     fp = cache_dir / f"mol_{hashlib.sha1(smi.encode('utf-8')).hexdigest()[:16]}.pt"
     if fp.exists():
         try:
-            d = _as_pyg_data(torch.load(fp, map_location="cpu", weights_only=False))
+            d = _as_pyg_data(safe_torch_load(Path(_checked(fp))))
             if d is not None:
                 return d
+        except ScopeError:
+            raise
+        except UnsafePickleError:
+            raise
         except Exception:
             pass
     d = _mol_data(smi)
     try:
+        fp = Path(_checked(fp, write=True))
         cache_dir.mkdir(parents=True, exist_ok=True)
         torch.save(d, fp)
+    except ScopeError:
+        raise
     except Exception:
         pass  # caching is best-effort; sampling still works without it
     return d
@@ -1071,8 +1151,8 @@ def ensure_espf_cache(base: Path, name: str = "drug") -> Path | None:
         return None
     import gzip
     import json
-    out_dir = Path(base) / ".espf"
-    fp = out_dir / f"{name}.json.gz"
+    out_dir = Path(_checked(Path(base) / ".espf", write=True))
+    fp = Path(_checked(out_dir / f"{name}.json.gz", write=True))
     if fp.exists():
         return fp
     try:
@@ -1104,6 +1184,7 @@ def _lookup_value(base: Path, spec: dict[str, Any], value: Any) -> Any:
     lp = Path(os.path.expanduser(str(lk)))
     if not lp.is_absolute():
         lp = base / str(lk)
+    lp = Path(_checked(lp))
     ck = (str(lp), key_col, val_col)
     table = _LOOKUP_CACHE.get(ck)
     if table is None:
@@ -1139,7 +1220,7 @@ def _load_branch_graph(base: Path, spec: dict[str, Any], value: Any, cache_dir: 
         raise FileNotFoundError(
             f"no graph file for value {value!r} (dir={spec.get('dir')}, "
             f"match={spec.get('match', 'exact')}, ext={spec.get('ext', '')})")
-    loaded = torch.load(fp, map_location="cpu", weights_only=False)
+    loaded = safe_torch_load(fp)
     d = _as_pyg_data(loaded)
     if d is not None:
         return ("data", d)
@@ -1240,6 +1321,8 @@ def _inspect_manifest(abspath: str) -> dict[str, Any]:
     try:
         cfg = _read_manifest(abspath)
         df = _manifest_table_df(base, cfg)
+    except ScopeError as e:
+        return _scope_error(e, "manifest")
     except Exception as e:
         return {"kind": "manifest", "ok": False, "error": f"{type(e).__name__}: {e}"}
     if len(df) == 0:
@@ -1266,6 +1349,10 @@ def _inspect_manifest(abspath: str) -> dict[str, Any]:
                 notes.append(f"branch '{branch}': ESPF substructures "
                              f"(codebook='{espf_codebook_name(spec)}', "
                              f"num_embeddings={espf_vocab_size(spec)})")
+        except UnsafePickleError as e:
+            return {"kind": "manifest", "ok": False, "error": str(e), "error_code": "UNSAFE_PICKLE"}
+        except ScopeError as e:
+            return _scope_error(e, "manifest")
         except ImportError:
             return _missing_dep("molecule", "rdkit")
         except Exception as e:
@@ -1298,6 +1385,8 @@ def _stats_manifest(abspath: str) -> dict[str, Any]:
     try:
         cfg = _read_manifest(abspath)
         table_abs = str((base / str(cfg["table"])).expanduser())
+    except ScopeError as e:
+        return _scope_error(e, "manifest")
     except Exception as e:
         return {"kind": "manifest", "ok": False, "error": f"{type(e).__name__}: {e}"}
     return _stats_tabular(table_abs)
@@ -1312,6 +1401,8 @@ def _sample_manifest(abspath: str, target_shape, options: dict[str, Any] | None 
     try:
         cfg = _read_manifest(abspath)
         df = _manifest_table_df(base, cfg)
+    except ScopeError as e:
+        return _scope_error(e, "manifest")
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
     if len(df) == 0:
@@ -1334,10 +1425,14 @@ def _sample_manifest(abspath: str, target_shape, options: dict[str, Any] | None 
     cache_dir = (base / ".graphcache") if bool(cfg.get("cache", True)) else None
     try:
         kind, obj = _load_branch_graph(base, spec, row.get(col), cache_dir)
+    except ScopeError as e:
+        return _scope_error(e, "manifest")
     except ImportError:
         return _missing_dep("molecule", "rdkit")
     except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        result = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        _mark_unsafe_pickle(result, e)
+        return result
     res = _branch_field(kind, obj, sub)
     if res.get("ok"):
         res["note"] = f"manifest row {idx}: {branch}.{sub} ({col}={row.get(col)})"
@@ -1357,6 +1452,10 @@ def _missing_dep(kind: str, dep: str) -> dict[str, Any]:
 
 def stats(abspath: str) -> dict[str, Any]:
     abspath = os.path.expanduser(abspath)
+    try:
+        abspath = _checked(abspath)
+    except ScopeError as e:
+        return _scope_error(e)
     if not os.path.exists(abspath):
         return _missing_path(abspath)
     kind = detect_kind(abspath)
@@ -1387,6 +1486,10 @@ def _stats_tabular(abspath: str) -> dict[str, Any]:
     except ImportError:
         return _missing_dep("tabular", "pandas")
     p = _table_path(abspath)  # prepared-dataset dir → its inner table
+    try:
+        p = Path(_checked(p))
+    except ScopeError as e:
+        return _scope_error(e, "tabular")
     try:
         if p.suffix.lower() == ".parquet":
             df = pd.read_parquet(p)
@@ -1464,6 +1567,10 @@ def _stats_image_folder(abspath: str) -> dict[str, Any]:
             if Image is not None:
                 for f in imgs[:3]:
                     try:
+                        f = Path(_checked(f))
+                    except ScopeError:
+                        continue  # skip images that resolve outside the scope
+                    try:
                         with Image.open(f) as im:
                             sizes.append(im.size)
                     except Exception:
@@ -1490,14 +1597,16 @@ def _stats_tensor(abspath: str) -> dict[str, Any]:
     ext = p.suffix.lower()
     try:
         if ext in (".pt", ".pth"):
-            t = torch.load(p, map_location="cpu", weights_only=False)
+            t = safe_torch_load(p)
         elif ext == ".npy":
             import numpy as np
             t = torch.from_numpy(np.load(p, allow_pickle=False))
         else:
             return info
     except Exception as e:
-        return {"kind": "tensor", "ok": False, "error": str(e)}
+        result = {"kind": "tensor", "ok": False, "error": str(e)}
+        _mark_unsafe_pickle(result, e)
+        return result
     if not isinstance(t, torch.Tensor):
         return info
     ft = t.flatten().float()
@@ -1565,6 +1674,10 @@ def sample_tensor(
     options: per-input bag — currently {features: list[str]} for tabular.
     """
     abspath = os.path.expanduser(abspath)
+    try:
+        abspath = _checked(abspath)
+    except ScopeError as e:
+        return _scope_error(e)
     if not os.path.exists(abspath):
         return _missing_path(abspath)
     kind = detect_kind(abspath)
@@ -1602,6 +1715,10 @@ def _sample_tabular(
     except ImportError:
         return _missing_dep("tabular", "pandas")
     p = _table_path(abspath)  # prepared-dataset dir → its inner table
+    try:
+        p = Path(_checked(p))
+    except ScopeError as e:
+        return _scope_error(e, "tabular")
     try:
         if p.suffix.lower() == ".parquet":
             df = pd.read_parquet(p)
@@ -1678,6 +1795,10 @@ def _sample_image_folder(abspath: str, target: list[int] | None) -> dict[str, An
         return {"ok": False, "error": f"could not read image folder: {e}"}
     if img_path is None:
         return {"ok": False, "error": "no images found in image folder"}
+    try:
+        img_path = Path(_checked(img_path))
+    except ScopeError as e:
+        return _scope_error(e, "image_folder")
     # target shape: [N, C, H, W] or [C, H, W]
     n, c, h, w = 1, 3, 64, 64
     if target and len(target) == 4:
@@ -1707,14 +1828,16 @@ def _sample_tensor_file(abspath: str, target: list[int] | None, options: dict[st
     # the SAME file already returns a clean ok:false). Never a silent empty.
     try:
         if ext in (".pt", ".pth"):
-            t = torch.load(p, map_location="cpu", weights_only=False)
+            t = safe_torch_load(p)
         elif ext == ".npy":
             import numpy as np
             t = torch.from_numpy(np.load(p, allow_pickle=False))
         else:
             return {"ok": False, "error": f"sampling not supported for tensor ext {ext}"}
     except Exception as e:
-        return {"ok": False, "error": f"could not load tensor file: {type(e).__name__}: {e}"}
+        result = {"ok": False, "error": f"could not load tensor file: {type(e).__name__}: {e}"}
+        _mark_unsafe_pickle(result, e)
+        return result
     # A saved PyG graph → expose the requested field (x/edge_index/edge_attr/…).
     d = _as_pyg_data(t)
     if d is not None:
@@ -1790,6 +1913,10 @@ def _sample_tabular_graph(abspath: str, field: str, smiles_col: str | None) -> d
     except ImportError:
         return _missing_dep("molecule", "rdkit")
     p = _table_path(abspath)  # prepared-dataset dir → its inner table
+    try:
+        p = Path(_checked(p))
+    except ScopeError as e:
+        return _scope_error(e, "tabular")
     try:
         if p.suffix.lower() == ".parquet":
             df = pd.read_parquet(p)

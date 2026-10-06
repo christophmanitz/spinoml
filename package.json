@@ -36,6 +36,7 @@
     "verify:immutability": "tsx scripts/verify-immutability.ts",
     "verify:opencode": "tsx scripts/verify-opencode.ts",
     "verify:command-injection": "tsx scripts/verify-command-injection.ts",
+    "verify:paths": "tsx scripts/verify-paths.ts",
     "test:graphstore": "tsx scripts/test-graphstore.ts",
     "test:persistence": "tsx scripts/test-persistence.ts",
     "test:determinism": "tsx scripts/test-determinism.ts",
@@ -45,6 +46,8 @@
     "test:deps-policy": "python scripts/test-deps-policy.py",
     "test:run-script": "python scripts/test-run-script.py",
     "test:datasets": "python scripts/test-datasets.py",
+    "test:scope": "python scripts/test-scope.py",
+    "test:safe-load": "python scripts/test-safe-load.py",
     "sidecar:torch": "python sidecar-torch/main.py",
     "sidecar:llm": "node sidecar-llm/main.mjs"
   },

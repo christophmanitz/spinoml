@@ -43,3 +43,7 @@ sidecar-torch/.venv
 *.sln
 *.sw?
 .council/
+
+# Python bytecode
+__pycache__/
+*.pyc

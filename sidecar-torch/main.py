@@ -34,6 +34,8 @@ import torch.nn.functional as F
 
 import dataset_handlers as ds_mod
 import deps_policy
+import scope
+from safe_load import UnsafePickleError, safe_torch_load
 
 # Default 7421 keeps local-mode behaviour unchanged. Override via env so a
 # remote deploy (Phase 12b) can pick a free port on the HPC login node
@@ -665,7 +667,7 @@ def activations(
         pass  # best-effort lazy init; a real shape error surfaces at the hooked forward
     if checkpoint:
         try:
-            ckpt = torch.load(os.path.expanduser(checkpoint), map_location="cpu", weights_only=False)
+            ckpt = safe_torch_load(os.path.expanduser(checkpoint))
             state = ckpt.get("model_state", ckpt) if isinstance(ckpt, dict) else ckpt
             model_sd = model.state_dict()
             compat = {k: v for k, v in state.items()
@@ -681,6 +683,8 @@ def activations(
                 weights_note = "trainierte Gewichte" + (f" (Epoche {ep + 1})" if isinstance(ep, int) else "")
                 if matched < total:
                     weights_note += f" · {matched}/{total} Schichten geladen (Rest zufällig)"
+        except UnsafePickleError as e:
+            weights_note = f"Checkpoint nicht ladbar: {e}"
         except Exception as e:
             weights_note = f"Checkpoint nicht ladbar: {type(e).__name__}: {e}"
     model.eval()
@@ -885,7 +889,12 @@ def run_workspace_script(payload: dict) -> dict:
     if not rel.endswith((".py", ".sh", ".sbatch", ".slurm")):
         return {"ok": False, "error": "extension must be one of .py, .sh, .sbatch, .slurm", "error_code": "INVALID_RELPATH"}
 
-    abspath = os.path.join(root, rel)
+    # Filesystem scope (Phase 46): the workspace root AND the script file must
+    # resolve inside an allowed root. Raises ScopeError -> the HTTP layer maps it
+    # to a 403 BEFORE anything is written. `rel` is already whitelisted above, so
+    # a hostile relpath still fails as INVALID_RELPATH rather than SCOPE_DENIED.
+    root = scope.check_path(root, write=True)
+    abspath = scope.check_path(os.path.join(root, rel), write=True)
     if isinstance(code, str):
         try:
             os.makedirs(os.path.dirname(abspath) or root, exist_ok=True)
@@ -937,7 +946,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
-            self._json(200, {"ok": True, "torch": torch.__version__})
+            self._json(200, {"ok": True, "torch": torch.__version__, "scope": scope.scope_status()})
             return
         self._json(404, _err(CODE_UNKNOWN_ENDPOINT, f"unknown endpoint: {self.path}"))
 
@@ -958,12 +967,22 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(abspath, str):
                     self._json(400, _err(CODE_VALIDATION, "expected {abspath: str}"))
                     return
+                try:
+                    scope.check_path(abspath)
+                except scope.ScopeError as e:
+                    self._scope_denied(e)
+                    return
                 self._json(200, ds_mod.inspect(abspath))
                 return
             if self.path == "/dataset/stats":
                 abspath = payload.get("abspath")
                 if not isinstance(abspath, str):
                     self._json(400, _err(CODE_VALIDATION, "expected {abspath: str}"))
+                    return
+                try:
+                    scope.check_path(abspath)
+                except scope.ScopeError as e:
+                    self._scope_denied(e)
                     return
                 self._json(200, ds_mod.stats(abspath))
                 return
@@ -986,6 +1005,12 @@ class Handler(BaseHTTPRequestHandler):
                                          "expected {code, abspaths: str[] | abspath: str, input_shapes?: int[][]}"))
                     return
                 abspaths = [str(p) for p in abspaths_in if isinstance(p, str)]
+                try:
+                    for p in abspaths:
+                        scope.check_path(p)
+                except scope.ScopeError as e:
+                    self._scope_denied(e)
+                    return
                 shapes: list[list[int]] | None = None
                 if shapes_in is not None:
                     norm = _normalize_shapes(shapes_in, None)
@@ -1022,6 +1047,14 @@ class Handler(BaseHTTPRequestHandler):
                 opts = opts_in if isinstance(opts_in, list) else None
                 ckpt = payload.get("checkpoint")
                 ckpt = ckpt if isinstance(ckpt, str) and ckpt else None
+                try:
+                    for p in (abspaths or []):
+                        scope.check_path(p)
+                    if ckpt:
+                        scope.check_path(ckpt)
+                except scope.ScopeError as e:
+                    self._scope_denied(e)
+                    return
                 ga_in = payload.get("graph_attrs")
                 ga = [str(a) for a in ga_in if isinstance(a, str)] if isinstance(ga_in, list) else None
                 self._json(200, activations(code, normalized, dtypes, abspaths or None, opts, ckpt, ga))
@@ -1041,7 +1074,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, deps_install([str(s) for s in specs]))
                 return
             if self.path == "/run_script":
-                self._json(200, run_workspace_script(payload))
+                try:
+                    result = run_workspace_script(payload)
+                except scope.ScopeError as e:
+                    self._scope_denied(e)
+                    return
+                self._json(200, result)
                 return
         except Exception as e:
             self._json(500, _err(CODE_INTERNAL,
@@ -1079,6 +1117,11 @@ class Handler(BaseHTTPRequestHandler):
             result = _err(CODE_INTERNAL, f"sidecar crash: {type(e).__name__}: {e}",
                           stage="sidecar", trace=traceback.format_exc(limit=4), shapes={})
         self._json(200, result)
+
+    def _scope_denied(self, exc: scope.ScopeError) -> None:
+        """HTTP 403 for a top-level scope denial, in the existing structured shape."""
+        self._json(403, _err(getattr(exc, "code", scope.SCOPE_DENIED),
+                             getattr(exc, "message", str(exc)) or "path outside allowed scope"))
 
     def _json(self, status: int, obj: dict) -> None:
         body = json.dumps(obj).encode()

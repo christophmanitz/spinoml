@@ -202,6 +202,14 @@ sidecar-llm/shell-safety.mjs   pure helpers: splitArgs/quoteArgv (run_script arg
                                isBlockedAddress + safeFetch (SSRF), checkSshTarget. Tested against a
                                real shell by scripts/verify-command-injection.ts.
 sidecar-torch/deps_policy.py   validate_specs: /deps/* accept only plain PyPI requirements.
+sidecar-torch/scope.py         check_path: every path a request (or a manifest/table cell) makes the sidecar
+                               open must resolve inside an allowed root / symlink target. Config via env
+                               SPINOML_ALLOWED_ROOTS / SPINOML_SYMLINK_TARGETS / ~/.cache/spinoml/scope.json;
+                               mode shown in /health.scope. Use the RETURNED resolved path for every open.
+sidecar-torch/safe_load.py     safe_torch_load — the ONLY torch.load. The block between the `# >>> safe_load`
+                               markers is duplicated byte-for-byte in training_template.py (standalone
+                               train.py); scripts/test-safe-load.py enforces equality.
+sidecar-llm/path-scope.mjs     resolveInWorkspace: symlink-aware containment for the LLM tools' local paths.
 ```
 
 ## Two execution modes + two FS backends — keep them straight
@@ -259,6 +267,9 @@ npm run verify:code-trust           # trust store + collector + ALLOWED_APPROVER
 npm run verify:code-trust-wiring    # untrusted code never reaches /infer, smoke, startRun
 npm run test:deps-policy            # pip spec policy   (run inside the conda env)
 npm run test:run-script             # torch /run_script relpath policy (inside the conda env)
+npm run verify:paths                # Node symlink-aware path containment (48)
+npm run test:scope                  # Python scope + hostile manifests + real HTTP (inside the conda env)
+npm run test:safe-load              # real malicious-pickle attempts (inside the conda env)
 npm run verify:opencode             # LLM sidecar must be up; asserts /opencode/models
                                     # + a real opencode chat + clean bogus-model error
 ```
@@ -476,6 +487,10 @@ not catch it cleanly. Fix path:
     `splitArgs`+`quoteArgv`/`shellQuote`, a `./` prefix for script paths, `validate_alias`
     plus `--` for ssh targets, `deps_policy.validate_specs` for pip. Rust changes can't be
     compiled on every machine — say so explicitly instead of claiming `cargo check` passed.
+11. **Never open a request- or file-content-derived path without `scope.check_path`** (Python) /
+    `resolveInWorkspace` (Node), and never `torch.load` directly — `safe_torch_load` only. New
+    dataset kinds must add their open sites to the audit list at the top of `dataset_handlers.py`
+    and to `scripts/test-scope.py`.
 
 ## Patterns that work
 

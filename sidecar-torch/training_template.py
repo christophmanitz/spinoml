@@ -50,6 +50,146 @@ CKPT_DIR = RUN_DIR / "checkpoints"
 WORKSPACE_ROOT = RUN_DIR.parents[2] if len(RUN_DIR.parents) >= 3 else RUN_DIR
 
 
+# >>> safe_load (synced block: keep byte-identical with the copy in training_template.py; checked by scripts/test-safe-load.py)
+class UnsafePickleError(Exception):
+    """Raised when a .pt file requires arbitrary unpickling that weights_only=True refuses."""
+
+    def __init__(self, path: str, blocked: list[str]) -> None:
+        import os
+        self.path = path
+        self.blocked = list(blocked)
+        names = ", ".join(self.blocked) if self.blocked else "unknown globals"
+        super().__init__(
+            f"{os.path.basename(str(path))}: refusing to unpickle arbitrary Python objects "
+            f"(blocked: {names}). Re-save the data as tensors/dicts/PyG Data objects, or "
+            "start the sidecar/trainer with SPINOML_ALLOW_UNSAFE_PICKLE=1 only if you trust "
+            "where the file came from."
+        )
+
+
+def unsafe_pickle_allowed() -> bool:
+    """True iff SPINOML_ALLOW_UNSAFE_PICKLE=1 (the explicit trust escape hatch)."""
+    import os
+    return os.environ.get("SPINOML_ALLOW_UNSAFE_PICKLE") == "1"
+
+
+_SAFE_GLOBALS_CACHE: list[str] | None = None
+
+
+def register_safe_globals() -> list[str]:
+    """Idempotently allowlist PyG/numpy globals weights_only=True rejects; returns their names."""
+    global _SAFE_GLOBALS_CACHE
+    if _SAFE_GLOBALS_CACHE is not None:
+        return list(_SAFE_GLOBALS_CACHE)
+    import torch
+    registered: list[str] = []
+    allow: list = []
+
+    def _add(qual: str, obj: object) -> None:
+        if obj is None:
+            return
+        allow.append(obj)
+        registered.append(qual)
+
+    try:
+        import torch_geometric.data.data as _pg_data
+        _add("torch_geometric.data.Data", getattr(_pg_data, "Data", None))
+        _add("torch_geometric.data.data.DataEdgeAttr", getattr(_pg_data, "DataEdgeAttr", None))
+        _add("torch_geometric.data.data.DataTensorAttr", getattr(_pg_data, "DataTensorAttr", None))
+    except ImportError:
+        pass
+    try:
+        import torch_geometric.data as _pg
+        _add("torch_geometric.data.HeteroData", getattr(_pg, "HeteroData", None))
+    except ImportError:
+        pass
+    try:
+        import torch_geometric.data.storage as _pg_store
+        _add("torch_geometric.data.storage.GlobalStorage", getattr(_pg_store, "GlobalStorage", None))
+        _add("torch_geometric.data.storage.NodeStorage", getattr(_pg_store, "NodeStorage", None))
+        _add("torch_geometric.data.storage.EdgeStorage", getattr(_pg_store, "EdgeStorage", None))
+        _add("torch_geometric.data.storage.BaseStorage", getattr(_pg_store, "BaseStorage", None))
+    except ImportError:
+        pass
+    try:
+        import numpy as _np
+    except ImportError:
+        _np = None
+    if _np is not None:
+        _add("numpy.ndarray", _np.ndarray)
+        _add("numpy.dtype", _np.dtype)
+        try:
+            import numpy._core.multiarray as _np_ma
+        except ImportError:
+            try:
+                import numpy.core.multiarray as _np_ma  # type: ignore[no-redef]
+            except ImportError:
+                _np_ma = None
+        if _np_ma is not None:
+            _add("numpy.multiarray._reconstruct", getattr(_np_ma, "_reconstruct", None))
+            _add("numpy.multiarray.scalar", getattr(_np_ma, "scalar", None))
+        try:
+            import numpy.dtypes as _np_dtypes
+            for _name in dir(_np_dtypes):
+                if _name.endswith("DType"):
+                    _cls = getattr(_np_dtypes, _name, None)
+                    if isinstance(_cls, type):
+                        _add("numpy.dtypes." + _name, _cls)
+        except ImportError:
+            pass
+    try:
+        torch.serialization.add_safe_globals(allow)
+    except AttributeError:
+        # torch < 2.4 has no safe-globals API: plain tensors/dicts still load;
+        # anything else is refused by weights_only=True rather than crashing.
+        pass
+    _SAFE_GLOBALS_CACHE = registered
+    return list(registered)
+
+
+def _is_weights_only_error(exc: BaseException) -> bool:
+    """True iff `exc` is torch's weights-only refusal (not a corrupt/missing file)."""
+    text = str(exc)
+    return ("Weights only load failed" in text
+            or "WeightsUnpickler error" in text
+            or "was not an allowed global" in text
+            or ("whose module" in text and "is blocked" in text))
+
+
+def _blocked_globals(exc: BaseException) -> list[str]:
+    """Extract the qualified names of the globals torch's weights-only unpickler refused."""
+    import re
+    names: list[str] = []
+    for match in re.finditer(r"GLOBAL\s+([A-Za-z_][\w.]*)", str(exc)):
+        name = match.group(1)
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def safe_torch_load(path, map_location="cpu"):
+    """Load a .pt/.pth with weights_only=True; refuse arbitrary unpickling unless trusted."""
+    import os
+    import sys
+    import torch
+    register_safe_globals()
+    try:
+        return torch.load(path, map_location=map_location, weights_only=True)
+    except Exception as exc:
+        if not _is_weights_only_error(exc):
+            raise
+        blocked = _blocked_globals(exc)
+        if unsafe_pickle_allowed():
+            sys.stderr.write(
+                "[spinoml] WARNING: loading %s with weights_only=False because "
+                "SPINOML_ALLOW_UNSAFE_PICKLE=1 — arbitrary code in the file would run\n"
+                % os.path.basename(str(path))
+            )
+            return torch.load(path, map_location=map_location, weights_only=False)
+        raise UnsafePickleError(str(path), blocked) from exc
+# <<< safe_load
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -409,6 +549,7 @@ def _env_info(torch_mod, device, amp: str | None, git_root: Path | None = None) 
                 info["git_commit"] = out
         except Exception:  # noqa: BLE001
             pass
+    info["unsafe_pickle"] = unsafe_pickle_allowed()
     return info
 
 
@@ -597,9 +738,11 @@ def _manifest_mol_graph(smi: str, cache_dir):
             cache_dir.mkdir(parents=True, exist_ok=True)
             fp = cache_dir / f"mol_{hashlib.sha1(smi.encode('utf-8')).hexdigest()[:16]}.pt"
             if fp.exists():
-                d = torch.load(fp, map_location="cpu", weights_only=False)
+                d = safe_torch_load(fp)
                 if hasattr(d, "edge_index"):
                     return d
+        except UnsafePickleError:
+            raise
         except Exception:
             fp = None
     from rdkit import Chem
@@ -723,9 +866,11 @@ def _manifest_espf_tokenize(base, value, spec, cache_dir=None):
             h = hashlib.sha1(f"{name}|{ml}|{s}".encode("utf-8")).hexdigest()[:16]
             fp = cache_dir / f"espf_{name}_{h}.pt"
             if fp.exists():
-                t = torch.load(fp, map_location="cpu", weights_only=False)
+                t = safe_torch_load(fp)
                 if hasattr(t, "dtype"):
                     return t
+        except UnsafePickleError:
+            raise
         except Exception:
             fp = None
     cb = _load_espf_codebook(base, name)
@@ -851,7 +996,7 @@ def load_manifest_graphs(ds_cfg: dict, heads: list[dict], known_classes_by_head:
         fp = _manifest_resolve_file(base, spec, raw)
         if fp is None or not Path(fp).exists():
             raise FileNotFoundError(f"no graph file for {raw!r}")
-        return torch.load(fp, map_location="cpu", weights_only=False)
+        return safe_torch_load(fp)
 
     graphs_list = []
     kept_idx = []
@@ -876,6 +1021,8 @@ def load_manifest_graphs(ds_cfg: dict, heads: list[dict], known_classes_by_head:
                 g = resolve_branch(b, spec, r[spec["column"]])
                 memo[b][key] = g
                 graphs.append(g)
+            except UnsafePickleError:
+                raise
             except Exception:
                 memo[b][key] = _FAIL
                 ok = False
@@ -1416,7 +1563,7 @@ def main() -> None:
             cp = Path(os.path.expanduser(str(ck)))
             if not cp.is_absolute():
                 cp = WORKSPACE_ROOT / str(ck)
-            eval_ckpt = torch.load(cp, map_location="cpu", weights_only=False)
+            eval_ckpt = safe_torch_load(cp)
             if isinstance(eval_ckpt, dict):
                 known_classes_by_head = eval_ckpt.get("head_classes") or None
         except Exception as e:  # noqa: BLE001
@@ -1436,6 +1583,7 @@ def main() -> None:
          model=cfg.get("model_path"),
          ds_kind=ds_cfg.get("kind"),
          fingerprint_id=(f"{fp['alg']}:{fp['hash']}" if isinstance(fp, dict) and fp.get("hash") else None),
+         unsafe_pickle=unsafe_pickle_allowed(),
          split={"val_split": val_split, "seed": seed, "strategy": split_strategy})
     try:
         emit("dataset.fingerprint", **_verify_fingerprint(ds_cfg))
@@ -1672,7 +1820,7 @@ def main() -> None:
             rp = Path(os.path.expanduser(str(resume_from)))
             if not rp.is_absolute():
                 rp = WORKSPACE_ROOT / str(resume_from)
-            ckpt = torch.load(rp, map_location="cpu", weights_only=False)
+            ckpt = safe_torch_load(rp)
             model.load_state_dict(ckpt["model_state"])
             if "optim_state" in ckpt:
                 optimizer.load_state_dict(ckpt["optim_state"])

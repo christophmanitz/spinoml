@@ -352,6 +352,23 @@ canvas) and the blocked training launch open the dialog via
   `ssh.rs`, `pty.rs`, `remote_sidecar.rs`; every spawn passes `--` before the
   target. (Not compiled on the current dev machine — LIMITATIONS §1.)
 
+## 8d. Filesystem scope and safe unpickling (Phase 45–47)
+
+- **Sidecar file scope** (`sidecar-torch/scope.py`, Node `sidecar-llm/path-scope.mjs`): a
+  path is served only if its fully resolved location lies under an allowed root or a
+  user-listed symlink target. Configure with `SPINOML_ALLOWED_ROOTS` (workspace root),
+  `SPINOML_SYMLINK_TARGETS` (e.g. `/work2/...` when `datasets` is a link to scratch) or
+  `~/.cache/spinoml/scope.json` (`{"version":1,"roots":[...],"symlink_targets":[...]}`, owner-only,
+  re-read on change). `GET /health` → `scope.mode`: `enforced` | `unconfigured-open` (no
+  restriction, warning — the local app today) | `unconfigured-closed` (`SPINOML_REQUIRE_SCOPE=1`).
+  Errors: `SCOPE_DENIED`, `PATH_SYMLINK_OUTSIDE`, `SCOPE_UNCONFIGURED`, `PATH_INVALID`, each with a
+  one-line fix. Manifests/table cells that point outside are refused the same way.
+- **Safe `.pt` loading** (`sidecar-torch/safe_load.py`, embedded block in `training_template.py`):
+  `weights_only=True` + PyG/numpy allow-list; a file needing arbitrary unpickling is refused with
+  `UNSAFE_PICKLE` (datasets), a note (activations) or a failed run (trainer). Escape hatch for
+  files you trust: start the sidecar/trainer with `SPINOML_ALLOW_UNSAFE_PICKLE=1` (recorded in
+  the run as `unsafe_pickle`). Proof: `npm run test:safe-load`, `test:scope`, `verify:paths`.
+
 ## 9. Common tasks (how to do X)
 
 - **Build a dual-encoder (ligand + protein → affinity)**: `Manifest` → `Graph`
@@ -364,6 +381,9 @@ canvas) and the blocked training launch open the dialog via
   `agent/`, run via `run_script`; write outputs under `datasets/`.
 
 ## Changelog (append one dated line per feature; newest first)
+
+- 2026-10-06 — **Unsafe deserialization closed (Phase 47)**: every `torch.load` goes through `safe_load.py` (`weights_only=True` + PyG/numpy allow-list, `UNSAFE_PICKLE` errors, `SPINOML_ALLOW_UNSAFE_PICKLE` escape hatch recorded per run); trainer carries a byte-identical embedded copy. `npm run test:safe-load` (85, real RCE attempts).
+- 2026-10-06 — **Filesystem scope (Phase 45/46)**: symlink-aware realpath containment for the torch sidecar (`scope.py`: roots, symlink targets, scope.json, `/health.scope`, explicit 403 codes; manifest/table-derived paths included) and the Node sidecar (`path-scope.mjs`); remote HPC sidecar launched with `SPINOML_ALLOWED_ROOTS`. Local default is the visible `unconfigured-open` mode until Rust writes `scope.json`. `npm run test:scope` (88), `npm run verify:paths` (48).
 
 - 2026-10-06 — **Command/argument injection hardening (Phase 44)**: `run_script` args quoted via a real tokenizer + `./`-prefixed targets (`sidecar-llm/shell-safety.mjs`); torch `/run_script` relpath whitelist (removes the `bash -lc <filename>` branch); `/deps/*` pip-spec policy (`sidecar-torch/deps_policy.py`); `download_to_datasets` SSRF policy + DNS-checking `safeFetch`; ssh `validate_alias` rejects leading `-`, `--` before every ssh target, `remote_sidecar` alias now validated (Rust edits uncompiled — no toolchain). New checks: `npm run verify:command-injection` (162), `npm run test:deps-policy` (34), `npm run test:run-script` (125), extra rejects in `verify:sidecar`. See §8c.
 - 2026-10-06 — **Generated-Python safety + code-trust gate (Phase 43)**: shared `src/codegen/pyLiteral.ts` makes every interpolated value inert (`npm run verify:codegen-security`, 5362 adversarial cases checked with Python `ast`/`tokenize`; 620 failed before); LLM-written or imported `Custom`/`init_args`/`DataOp`/`CustomScript` code no longer runs without an explicit user decision — content-addressed trust store, approval dialog, `status:'untrusted'`, run.json `snapshot.code_trust`. `npm run verify:code-trust` (110), `npm run verify:code-trust-wiring` (78). See §8b/§8c.

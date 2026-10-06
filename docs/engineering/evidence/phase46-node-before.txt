@@ -1,0 +1,63 @@
+
+> spinoml@0.0.0 verify:paths
+> tsx scripts/verify-paths.ts
+
+phase 46: node sidecar symlink-aware path containment
+
+=== A. lexical ===
+  ✓ a/b.txt ok
+  ✓ ./a/b.txt ok
+  ✓ name with spaces ok
+  ✓ unicode + ✓ ok
+  ✓ emoji ok
+  ✓ 255-byte segment ok
+  ✓ 256-byte segment rejected
+  ✓ 4097-char path rejected
+  ✓ empty rejected
+  ✓ .. rejected
+  ✓ a/../../x rejected
+  ✓ /etc/passwd rejected
+  ✓ ~/x rejected
+  ✓ NUL rejected
+  ✓ backslash name ok
+
+=== B. symlinks ===
+  ✓ in-root link -> in-root dir ok
+  ✓ prefix-confusion symlink rejected
+  ✓ outside link rejected for read
+  ✓ outside link rejected for write
+  ✓ outside link allowed when in targets
+  ✓ different outside still rejected
+  ✓ dangling outside link rejected for write
+  ✓ dangling inside-root link ok
+  ✓ symlink loop -> PATH_INVALID
+  ✓ symlink loop on bare link -> PATH_INVALID
+  ✓ link chain A->B->outside rejected
+  ✓ root-as-symlink resolves inside
+  ✓ non-existing file under existing dir resolves inside
+  ✓ non-existing parent chain resolves inside
+  ✓ nonexistent symlink target skipped, still rejected
+  ✓ isInside child inside parent
+  ✓ isInside parent inside parent (self)
+  ✓ isInside sibling prefix not inside
+  ✓ isInside with ..foo segment is inside
+
+=== C. loadSymlinkTargets ===
+  ✓ env only -> source env
+  ✓ env dedupe + relative + / skipped
+  ✓ file only -> source file
+  ✓ both env + file -> source both
+  ✓ invalid JSON -> none + loadError
+  ✓ mode 0666 -> none + loadError
+  ✓ nothing configured -> source none, no error
+  ✓ bad symlink_targets type -> none + loadError
+
+=== D. main.mjs wiring ===
+  ✗ imports from './path-scope.mjs'
+  ✗ uses resolveInWorkspace(
+  ✗ calls loadSymlinkTargets(
+  ✗ no path.join(ws.root …) on local FS calls — offenders at lines 278,297,312,342,366,379,386,439,455,466,481,633
+  ✓ safeRelpath still defined
+  ✗ error includes PATH_ code
+
+5 check(s) failed
