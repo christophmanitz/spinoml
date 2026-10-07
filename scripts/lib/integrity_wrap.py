@@ -21,6 +21,7 @@ where <sabotage_id> is one of:
   - corrupt-manifest           : manifest.json is corrupted before the gate runs
   - missing-config-env         : the config.env event is stripped from events.jsonl
   - inject-pid-stderr-missing  : create a pid file + delete stderr.log after save
+  - inject-pid-empty-logs      : executor-style launch: pid file + EMPTY stdout.log/stderr.log
   - raise-in-gate              : patch _checkpoint_ok to raise (gate fails closed)
   - crash-after-epoch-0        : writes a model.py whose forward raises on call 9
   - crash-epoch-0-first        : writes a model.py whose forward raises on call 1
@@ -210,6 +211,16 @@ def _sabotage_pid_stderr_missing(trainer, run_dir):
         stderr_log.unlink()
 
 
+def _sabotage_pid_empty_logs(trainer, run_dir):
+    # What the real executors produce (training.rs / ssh.rs): `python -u train.py
+    # > stdout.log 2> stderr.log` + a pid file. The trainer writes its events to
+    # events.jsonl, so both logs are legitimately EMPTY in a healthy run.
+    d = pathlib.Path(run_dir)
+    (d / "pid").write_text("12345\n", encoding="utf-8")
+    (d / "stdout.log").write_text("", encoding="utf-8")
+    (d / "stderr.log").write_text("", encoding="utf-8")
+
+
 def _sabotage_raise_in_gate(trainer, run_dir):
     def boom(path):
         raise RuntimeError("simulated integrity-gate failure")
@@ -332,6 +343,7 @@ SABOTAGES = {
     "corrupt-manifest": _sabotage_corrupt_manifest,
     "missing-config-env": _sabotage_missing_config_env,
     "inject-pid-stderr-missing": _sabotage_pid_stderr_missing,
+    "inject-pid-empty-logs": _sabotage_pid_empty_logs,
     "raise-in-gate": _sabotage_raise_in_gate,
     "crash-after-epoch-0": _sabotage_crash_after_epoch_0,
     "crash-epoch-0-first": _sabotage_crash_epoch_0_first,

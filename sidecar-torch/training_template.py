@@ -1077,9 +1077,13 @@ def _verify_run_integrity(eval_only: bool) -> dict:
             else:
                 invalid.append("manifest.json: not a JSON object")
 
-        # (e) stdout.log / stderr.log — required ONLY when the executor launched
-        # the run (the run dir carries a `pid` file). Direct `python train.py`
-        # launches (e.g. the verify-* harnesses) have none — record a note.
+        # (e) stdout.log / stderr.log — they must EXIST when the executor launched
+        # the run (the run dir carries a `pid` file), because their absence means the
+        # launch redirection was lost. They may be EMPTY: the trainer writes its
+        # events to events.jsonl, so a healthy run leaves both logs at 0 bytes (an
+        # empty-log rule turned every executor-launched run into `failed`, found by
+        # the live cluster run). Direct `python train.py` launches (e.g. the
+        # verify-* harnesses) have no pid file — record a note.
         pid_file = RUN_DIR / "pid"
         if pid_file.exists():
             for name in ("stdout.log", "stderr.log"):
@@ -1088,8 +1092,7 @@ def _verify_run_integrity(eval_only: bool) -> dict:
                     missing.append(f"{name} (missing; required by executor launch)")
                 else:
                     try:
-                        if p.stat().st_size == 0:
-                            invalid.append(f"{name}: empty (0 bytes)")
+                        p.stat()
                     except OSError:
                         invalid.append(f"{name}: stat failed")
         else:

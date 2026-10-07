@@ -248,6 +248,22 @@ section('2b. pid file present + stderr.log missing -> FAIL')
   check('message names stderr.log', /stderr\.log/.test(msg), msg.slice(0, 200))
 }
 
+// ── 2b'. executor launch (pid + EMPTY stdout.log/stderr.log) → done, NOT failed ──
+// Found by the live cluster run: both executors redirect stdout/stderr to files and the
+// trainer logs to events.jsonl, so an empty log is the NORMAL healthy case. The gate used
+// to flag "stdout.log: empty (0 bytes)" and turned every executor-launched run into `failed`.
+section("2b'. pid file present + empty stdout.log/stderr.log -> gate ok (logs must exist, not be non-empty)")
+{
+  const dir = makeRunDir('pid-empty-logs')
+  const r = runWrap(dir, 'inject-pid-empty-logs')
+  const events = readEvents(dir)
+  const integ = events.find((e) => e.kind === 'run.integrity') as Record<string, unknown> | undefined
+  check('gate ok=true with empty logs', integ?.ok === true, JSON.stringify(integ))
+  check('trainer exits 0', r.exitCode === 0, r.stderr.slice(0, 200))
+  const status = existsSync(join(dir, 'status')) ? readFileSync(join(dir, 'status'), 'utf8').trim() : ''
+  check('status file = done', status === 'done', status)
+}
+
 // ── 2c. NO pid + stderr.log missing → note (not fail) ──
 section('2c. no pid file + stderr.log missing -> only a note (not a failure)')
 {
