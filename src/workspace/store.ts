@@ -170,17 +170,58 @@ function hydrate(): { entries: Record<string, Entry>; activeFileId: string | nul
 // graph full of malformed children. Narrow defensively: every shape field is
 // optional, every Entry only keeps what still parses, and corrupt entries are
 // dropped rather than promoted.
+/** Make the persisted entry map a TREE rooted at ROOT_ID: every kept entry is reachable from the root
+ *  exactly once, `parentId` always names the folder that lists it, dangling and repeated child ids
+ *  (parent cycles `a <-> b`, an entry listed by two folders) are dropped, unreachable orphans are dropped.
+ *  Without this a corrupt localStorage state made every walk up the parent chain loop forever (a hung
+ *  tab) — and "corrupt state fails safely" is a release-gate item. Iterative: a 10k-deep chain must not
+ *  overflow the stack. Returns {} when there is no root (the caller then starts an empty workspace). */
+function repairTree(entries: Record<string, Entry>): Record<string, Entry> {
+  const root = entries[ROOT_ID]
+  if (!root || root.kind !== 'folder') return {}
+  const out: Record<string, Entry> = {}
+  const seen = new Set<string>([ROOT_ID])
+  const stack: Array<{ id: string; parentId: string | null }> = [{ id: ROOT_ID, parentId: null }]
+  for (let cur = stack.pop(); cur !== undefined; cur = stack.pop()) {
+    const { id, parentId } = cur
+    const e = entries[id]
+    if (!e) continue
+    if (e.kind === 'file') {
+      out[id] = { ...e, parentId }
+      continue
+    }
+    const kept: string[] = []
+    for (const childId of e.childIds) {
+      const child = entries[childId]
+      if (!child || seen.has(childId)) continue
+      seen.add(childId)
+      kept.push(childId)
+      stack.push({ id: childId, parentId: id })
+    }
+    out[id] = { ...e, parentId, childIds: kept }
+  }
+  return out
+}
+
 function normalizePersisted(raw: unknown): Persisted {
   const isObj = (v: unknown): v is Record<string, unknown> =>
     typeof v === 'object' && v !== null && !Array.isArray(v)
   const r = isObj(raw) ? raw : {}
   const entriesRaw = isObj(r.entries) ? r.entries : {}
-  const entries: Record<string, Entry> = {}
-  for (const [id, e] of Object.entries(entriesRaw)) {
+  const entriesFlat: Record<string, Entry> = {}
+  for (const [key, e] of Object.entries(entriesRaw)) {
     const en = normalizeEntry(e)
-    if (en) entries[id] = en
+    // The map key is the identity; an `id` field that disagrees with it (hand-edited or torn state)
+    // would make `entries[x].id !== x` and break every lookup that goes through the field.
+    if (en) entriesFlat[key] = { ...en, id: key }
   }
-  const activeFileId = typeof r.activeFileId === 'string' ? r.activeFileId : null
+  const entries = repairTree(entriesFlat)
+  const activeFileIdRaw = typeof r.activeFileId === 'string' ? r.activeFileId : null
+  // Invariant 4: activeFileId must reference an existing FILE or be null. A
+  // stale or hostile persisted entry (pointing to a missing file, or to a
+  // folder) would crash the canvas binding; repair it here, on the trust
+  // boundary, where we already validate the rest of the entry graph.
+  const activeFileId = activeFileIdRaw && entries[activeFileIdRaw]?.kind === 'file' ? activeFileIdRaw : null
   const expanded = Array.isArray(r.expanded) ? r.expanded.filter((s): s is string => typeof s === 'string') : []
   return { entries, activeFileId, expanded }
 }
@@ -245,7 +286,15 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       await fsBackend.write(relpath, content)
       const twinErr = await writeTwin(relpath, content)
       await get().refreshFromDisk()
-      set({ activeFileId: relpath, dirty: false, pyTwinError: twinErr })
+      // refreshFromDisk rebuilds entries from disk but can only carry content it
+      // already had in memory; for a just-created file that is empty, which made
+      // fingerprintFile('') return null and silently disabled dirty tracking for
+      // the new file. Re-attach the bytes we just wrote so the baseline is real.
+      const created = get().entries[relpath]
+      const entries = created && created.kind === 'file'
+        ? { ...get().entries, [relpath]: { ...created, content, savedAt: new Date().toISOString() } }
+        : get().entries
+      set({ entries, activeFileId: relpath, dirty: false, pyTwinError: twinErr })
       return relpath
     }
     const parent = get().entries[parentId]

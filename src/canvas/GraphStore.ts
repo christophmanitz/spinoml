@@ -54,6 +54,11 @@ type State = {
    *  as `const rev = get().revision` before the await and drop the response
    *  if `rev !== get().revision` — the response is stale. */
   revision: number
+  /** Bumped by every DOCUMENT swap (`loadSnapshot` success, `resetGraph`) — not by edits. The undo
+   *  history keys off it: a loaded/new document must start a fresh history, otherwise the first
+   *  undo after opening file B would restore file A's graph into B's canvas (and autosave would
+   *  write it into B's file). */
+  loadEpoch: number
 
   onNodesChange: OnNodesChange<LayerNode>
   onEdgesChange: OnEdgesChange
@@ -96,6 +101,7 @@ export const useGraphStore = create<State>((set, get) => ({
   edges: [],
   selectedNodeId: null,
   revision: 0,
+  loadEpoch: 0,
 
   onNodesChange: (changes) => {
     // Phase 40 — pure position/dimensions drags are not structural; don't
@@ -247,7 +253,7 @@ export const useGraphStore = create<State>((set, get) => ({
       console.warn(`loadSnapshot rejected (${v.issues.length} issues):`, v.issues)
       return false
     }
-    set({ nodes, edges, selectedNodeId: null, revision: get().revision + 1 })
+    set({ nodes, edges, selectedNodeId: null, revision: get().revision + 1, loadEpoch: get().loadEpoch + 1 })
     const needsLayout = snapshot.nodes.some((n) => !n.position)
     if (needsLayout) get().autoLayout()
     return true
@@ -264,6 +270,7 @@ export const useGraphStore = create<State>((set, get) => ({
       edges: [],
       selectedNodeId: null,
       revision: get().revision + 1,
+      loadEpoch: get().loadEpoch + 1,
     })
   },
 }))

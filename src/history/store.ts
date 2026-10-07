@@ -23,6 +23,22 @@ function structuralKey(s: StructuralSnap): string {
   return JSON.stringify(s)
 }
 
+/** Deep-copy every snapshot we put on the undo/redo stack. `captureSnapshot`
+ *  stores `n.data.params` by reference (the generator, persistence and
+ *  writeback paths all want refs), so an in-place mutation of a live node's
+ *  params would otherwise rewrite a historical entry. History must be immutable. */
+function cloneSnapshot(s: GraphSnapshot): GraphSnapshot {
+  return {
+    nodes: s.nodes.map((n) => ({
+      id: n.id,
+      layerType: n.layerType,
+      params: structuredClone(n.params),
+      ...(n.position ? { position: { x: n.position.x, y: n.position.y } } : {}),
+    })),
+    edges: s.edges.map((e) => ({ source: e.source, target: e.target })),
+  }
+}
+
 export const useHistoryStore = create<HistoryState>((set, get) => ({
   past: [],
   future: [],
@@ -33,7 +49,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     const { past } = get()
     if (past.length === 0) return
     const target = past[past.length - 1]
-    const current = captureSnapshot(useGraphStore.getState())
+    const current = cloneSnapshot(captureSnapshot(useGraphStore.getState()))
     suppress = true
     try {
       useGraphStore.getState().loadSnapshot(target)
@@ -53,7 +69,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     const { future } = get()
     if (future.length === 0) return
     const target = future[0]
-    const current = captureSnapshot(useGraphStore.getState())
+    const current = cloneSnapshot(captureSnapshot(useGraphStore.getState()))
     suppress = true
     try {
       useGraphStore.getState().loadSnapshot(target)
@@ -91,6 +107,15 @@ useGraphStore.subscribe((state, prev) => {
   if (suppress) return
   if (state.nodes === prev.nodes && state.edges === prev.edges) return
 
+  // A document swap (open another file, File → New, autosave restore) is not an edit of the current
+  // document: history belongs to ONE document. Without this the first undo after opening file B
+  // restored file A's graph into B's canvas, where autosave then wrote it into B's file.
+  if (state.loadEpoch !== prev.loadEpoch) {
+    lastStructural = structuralKey(captureStructuralSnapshot(state))
+    useHistoryStore.setState({ past: [], future: [], canUndo: false, canRedo: false })
+    return
+  }
+
   const snap = captureStructuralSnapshot(state)
   const key = structuralKey(snap)
   if (lastStructural === null) {
@@ -100,7 +125,7 @@ useGraphStore.subscribe((state, prev) => {
   if (key === lastStructural) return
   lastStructural = key
 
-  const full = captureSnapshot(prev)
+  const full = cloneSnapshot(captureSnapshot(prev))
   const h = useHistoryStore.getState()
   useHistoryStore.setState({
     past: [...h.past, full].slice(-MAX_HISTORY),

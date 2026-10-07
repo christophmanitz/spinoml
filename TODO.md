@@ -1289,6 +1289,24 @@ An invalid graph must never become the authoritative graph state.
 
 ---
 
+
+> **Addendum 2026-10-07 — undo history and workspace store (R018).** `npm run test:history-store` (69 checks, real GraphStore
+> + real history store): exact structural round-trips for add / connect / update / delete / auto-port sync / load, redo cleared
+> by a new edit, cap of 50, position-only changes never enter the history (invariant 6), no aliasing between history and the
+> live graph, a seeded 300-step random walk keeps `validateGraph` true after every step, revision monotone across undo/redo.
+> `npm run test:workspace-store` (121 checks, browser-mode virtual FS under a `localStorage` stub): create/rename/delete/move
+> including collisions and move cycles, `activeFileId` consistent after every action, the `.py` twin and `pyTwinError`,
+> dirty tracking, and hostile persisted state. **Defects found and fixed:** (1) **CRITICAL (R060) — opening a file did not
+> start a fresh undo history: the first undo after opening file B restored file A's graph into B's canvas, and autosave
+> then wrote it into B's file** (`GraphStore.loadEpoch` + a history subscriber that starts a fresh history on a document
+> swap; found by the new suite's section 6, the worker had first recorded the behaviour as "documented", I reproduced the data
+> path with the real stores); (2) history snapshots shared mutable `params` with the live graph (an in-place edit changed the
+> history), (3) a persisted `activeFileId` could point at a missing entry or a folder, (4) a new Tauri file lost its content
+> in the store so its dirty tracking was silently off, (5) corrupt persisted state with parent cycles, an entry listed by two
+> folders, ids that disagree with their keys or orphans hung every walk up the parent chain — the persisted map is now repaired
+> into a tree on load. **Not fixed, documented (LIMITATIONS §4):** browser-mode names are not validated (`..`, `a/b` are
+> accepted verbatim; Tauri mode goes through Rust `resolve()`); the Tauri branch of the workspace store is not testable under
+> tsx.
 # 5. PHASE 4 – GRAPH PERSISTENCE
 
 Test:

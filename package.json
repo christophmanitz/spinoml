@@ -55,6 +55,8 @@
     "verify:integrity": "tsx scripts/verify-integrity.ts",
     "test:graphstore": "tsx scripts/test-graphstore.ts",
     "test:persistence": "tsx scripts/test-persistence.ts",
+    "test:history-store": "tsx scripts/test-history-store.ts",
+    "test:workspace-store": "tsx scripts/test-workspace-store.ts",
     "test:determinism": "tsx scripts/test-determinism.ts",
     "test:codegen-golden": "tsx scripts/test-codegen-golden.ts",
     "test:verifier": "tsx scripts/test-verifier.ts",

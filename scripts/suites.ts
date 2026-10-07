@@ -306,6 +306,22 @@ export const SUITES: readonly Suite[] = [
     why: 'Short soak (default 90 s; `npm run test:soak -- --seconds 3600` for the real one): mixed requests + real trainer runs, RSS slope / fd / thread trend, state consistency; GPU memory SKIPPED (no CUDA)',
   },
   {
+    name: 'test:history-store',
+    npmScript: 'test:history-store',
+    category: 'unit',
+    timeoutSec: 120,
+    needs: [],
+    why: 'Undo/redo history on the real GraphStore: exact round-trips, cap 50, no aliasing, valid graph after every step of a seeded random walk, a document swap starts a fresh history (cross-file undo bug)',
+  },
+  {
+    name: 'test:workspace-store',
+    npmScript: 'test:workspace-store',
+    category: 'unit',
+    timeoutSec: 120,
+    needs: [],
+    why: 'Browser-mode workspace store: file/folder operations, activeFileId invariant after every action, hostile persisted state, .py twin, dirty tracking',
+  },
+  {
     name: 'test:llm-providers',
     npmScript: 'test:llm-providers',
     category: 'contract',

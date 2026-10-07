@@ -121,6 +121,12 @@
 - Only the architecture graph store has a revision counter; training-graph and
   data-graph stores do not (Phase 40).
 
+**Workspace store (R018).** Names in the browser-mode virtual workspace are not validated (`..` and `a/b` are accepted
+verbatim; in Tauri mode every path goes through Rust `resolve()` and is checked there). The undo history is per document:
+opening a file, File → New and an autosave restore start a fresh history (before this was fixed the first undo after opening
+a file restored the previous file's graph — R060). The Tauri branch of the workspace store has no test (it needs the
+Rust commands).
+
 ## 5. Reproducibility
 
 - Bit-level GPU reproducibility is **not** claimed: CUDA `atomicAdd` based
