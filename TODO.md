@@ -3907,6 +3907,26 @@ Documentation must describe the actual behavior of the system.
 
 Do not document intended behavior as if it were already implemented.
 
+
+> **Implemented 2026-10-07.** `docs/engineering/` now holds all eight documents the phase asks for:
+> ARCHITECTURE.md (new section "Changes since the Phase 1 inventory": process model, env vars, trust boundaries, data
+> flow, modules added since), BASELINE.md (unchanged — it is the historical Phase 0 baseline; the current numbers are
+> in the final report), RISK_REGISTER.md, TEST_MATRIX.md, REPRODUCIBILITY.md, **FAILURE_RECOVERY.md (new: the real
+> state machine and its legal transitions, failure stages, crash/kill/OOM/power-loss/cancel behaviour, `resumable`
+> semantics, SSH drop and SLURM reconciliation, a 15+-row symptom → cause → action table with the suite that exercises
+> each)**, **REMOTE_TRAINING.md (new: connection model and validation, remote-sidecar bootstrap, submission modes and
+> idempotency, recovery, security properties, setup checklist, troubleshooting by real error string / exit code, and a
+> prominent "NOT verified against a real cluster" section)**, LIMITATIONS.md. The rule "describe the actual behavior"
+> is enforced where it can be: `npm run verify:doc-refs` (`scripts/verify-doc-refs.ts`, self-test with 18 cases) fails
+> when a backticked repo path, `npm run` script, suite name, markdown link or `docs/engineering/<X>.md` named in the
+> docs / `docs/FEATURES.md` / `CLAUDE.md` does not exist; it found and fixed stale references in the OLD docs (e.g. a
+> `.ts` that is a `.py`, a memory file that no longer exists). **Review of the worker's text** (spot-checks against the
+> code: validators, ssh options, status machine, SLURM mapping, constants) found four wrong statements, now corrected:
+> a layer count (48 → 55 registry entries), non-unix behaviour of the scope writer (it fails closed, it is not a
+> no-op), remote chat "tunnelling through ssh" (the local LLM sidecar acts on the cluster by issuing ssh commands), and
+> `MAX_TOOL_TURNS` (a "continue?" question every 100 steps, not a hard cap). The docs cite `file:line`; those drift
+> with every edit — the checker verifies paths, not line numbers.
+
 ---
 
 # 82. PHASE 81 – KNOWN LIMITATIONS
@@ -3930,6 +3950,21 @@ Platform limitations
 Claude dependency
 Known performance limitations
 ```
+
+
+> **Implemented 2026-10-07.** `docs/engineering/LIMITATIONS.md` §7 "Functional limits": nondeterministic PyTorch
+> operations (what deterministic mode sets and what it does NOT guarantee on CUDA), CUDA (marked `unverified:` — torch
+> 2.12.0+cpu here), unsupported layers (derived from the real 55-entry registry against `torch.nn` /
+> `torch_geometric.nn`: no `LeakyReLU/ELU/PReLU/Mish`, no 1d/3d pooling beyond the listed, no `ConvTranspose1d/3d`, no
+> `InstanceNorm`, no `TransformerDecoder`, no `PixelShuffle/Upsample/padding` layers, no heterogeneous GNN convs or
+> top-k/SAG pooling; workaround `Custom`/`Subgraph`), unsupported dataset types (the real `detect_kind` taxonomy; audio,
+> video, HDF5, SQLite, Excel, Arrow/Feather, TFRecord, webdataset refused), remote execution, SLURM (what `build_sbatch`
+> emits and what is not modelled: arrays, dependencies, requeue), platform (Linux `.deb` only, `/proc` use, the Tauri
+> window never run here), the Claude/LLM dependency (four providers, which are exercised by tests, offline behaviour),
+> and a performance table of the real constants with their values and sources (spot-checked: request timeout 30 s,
+> input caps 16 dims / 10^6 per dim / 2^30 elements, shell caps 2 min remote / 10 min local, history 50, code-trust
+> cap 5000, checkpoint deep-load skip 256 MB). Older sections of the same file were kept; sentences made false by later
+> phases were corrected.
 
 ---
 

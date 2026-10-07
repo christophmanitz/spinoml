@@ -47,6 +47,7 @@
     "verify:silent-catch": "tsx scripts/verify-silent-catch.ts",
     "verify:silent-fixes": "tsx scripts/verify-silent-fixes.ts",
     "verify:ts-safety": "tsx scripts/verify-ts-safety.ts",
+    "verify:doc-refs": "tsx scripts/verify-doc-refs.ts",
     "test:ts-safety-selftest": "tsx scripts/verify-ts-safety.ts --self-test",
     "test:ts-safety": "tsx scripts/test-ts-safety.ts",
     "verify:rust-panics": "tsx scripts/verify-rust-panics.ts",

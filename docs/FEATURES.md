@@ -419,6 +419,7 @@ canvas) and the blocked training launch open the dialog via
 
 ## Changelog (append one dated line per feature; newest first)
 
+- 2026-10-07 — **Failure/recovery and remote-training documentation, known limitations, doc-reference check (Phases 80/81)**: `docs/engineering/FAILURE_RECOVERY.md`, `REMOTE_TRAINING.md`, `LIMITATIONS.md` §7 and an architecture update; `npm run verify:doc-refs` fails when the docs name a path, script or link that does not exist.
 - 2026-10-07 — **TypeScript error handling (Phase 49)**: unhandled promise rejections and uncaught errors now show a dismissible rose "Unbehandelte Fehler" banner (details in the console; intentional aborts and ResizeObserver noise are filtered); run.json / manifests / localStorage / sidecar events are validated instead of cast; `npm run verify:ts-safety` keeps `any`, unchecked casts, non-null assertions and floating promises from creeping back (`docs/engineering/TS_SAFETY.md`).
 - 2026-10-07 — **Bundled Monaco + strict CSP (R052)**: the code editors no longer load from a CDN (they now work offline / on a login node) and the built app ships a strict Content-Security-Policy; verified in a real Chromium (`npm run test:webview-csp`), not yet in the Tauri window (fallback: `app.security.csp: null`).
 - 2026-10-06 — **Sidecar process lifecycle (Phase 13)**: both sidecars exit 3 with one clear line when their port is taken, 2 on an invalid port, and on SIGTERM/SIGINT shut down cleanly (no orphaned scripts/opencode/pip children, port released at once); `npm run ci` now uses a private `TMPDIR` (`--keep-tmp` keeps it) instead of littering `/tmp`.
@@ -654,6 +655,6 @@ canvas) and the blocked training launch open the dialog via
   explicit project close (`chat/store.ts`).
 - 2026-06-23 — **ESPF node**: `ESPF` input + manifest `kind:"espf"` (MolTrans
   substructure tokenizer, vendored codebook `sidecar-torch/espf/`, pure-Python BPE,
-  interpretable labels in Explain). See `memory/espf-tokenization-node.md`.
+  interpretable labels in Explain). See §3 above.
 - 2026-06-23 — **Sequence branches**: manifest `kind:"sequence"` (char/byte
   tokenizer) feeding the `Sequence` input node, end-to-end sample + train.

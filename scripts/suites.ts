@@ -282,6 +282,14 @@ export const SUITES: readonly Suite[] = [
     why: 'Phase 49 fixes: trust-boundary normalisers on junk input, error/diagnostics helpers, global error handlers (benign noise filtered)',
   },
   {
+    name: 'verify:doc-refs',
+    npmScript: 'verify:doc-refs',
+    category: 'unit',
+    timeoutSec: 60,
+    needs: [],
+    why: 'Every repo path / npm script / link referenced in docs/engineering, FEATURES.md and CLAUDE.md exists (documentation must describe the real system)',
+  },
+  {
     name: 'verify:rust-panics',
     npmScript: 'verify:rust-panics',
     category: 'unit',

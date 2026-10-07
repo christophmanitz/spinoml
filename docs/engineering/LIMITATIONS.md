@@ -185,3 +185,370 @@ fails on drift. `AbortSignal.any` needs Node ≥ 20.3 (the dev machine has 22).
 **Test infrastructure (Phase 67–72, 82).** `.github/workflows/ci.yml` has never run on GitHub. `remote-live` and `hardware-cuda` have no
 suite (BLOCKED by design). `test:verifier` skips its e2e part when no torch sidecar is running (it reports SKIPPED). Lint is reported FAIL
 (81 known problems, baseline 82); the gate is "no regression". No test freezes the wall clock.
+
+---
+
+## 7. Functional limits (Phase 81)
+
+This section is the single source of truth for "what does SpinoML actually
+NOT do today" — the same list a reviewer should consult before claiming a
+result is reproducible, before debugging a slow run, or before pointing
+SpinoML at a remote cluster. Each limit names the source (`file:line` or
+test); each cross-references the existing section it links to so we
+don't duplicate. Where a limit is unverified here, it is marked
+`unverified:` with a reason.
+
+### 7.1 Nondeterministic PyTorch operations
+
+What the trainer sets today (`sidecar-torch/training_template.py:2173-2223`,
+emitted as a `run.determinism` event):
+
+- Seeds: `python random`, `numpy.random` (when present), `torch.manual_seed`,
+  `torch.cuda.manual_seed_all` when CUDA is available.
+- `torch.backends.cudnn.deterministic = True`,
+  `torch.backends.cudnn.benchmark = False`.
+- `torch.use_deterministic_algorithms(True, warn_only=True)`
+  (the `warn_only` is necessary because some ops have no deterministic
+  CUDA path).
+- `worker_init_fn` seeds each DataLoader worker.
+
+What the trainer records as still nondeterministic on CUDA
+(`training_template.py:2216-2222`):
+
+> "atomicAdd in float reductions and scatter_add are nondeterministic on
+> CUDA even with deterministic_algorithms=True; full GPU determinism
+> requires CPU execution or torch>=2.0 with use_deterministic_algorithms(True)."
+
+What the manifest says (`training_template.py:818-822`):
+> `device cuda: bit-level reproducibility is not claimed (nondeterministic
+> CUDA reductions)`.
+
+What `deterministic` mode does NOT guarantee: that two runs with the
+same seed will produce byte-identical checkpoints on CUDA. CPU runs are
+reproducible for equal seed + software stack + inputs. Evidence:
+`verify:traingen` asserts the `run.determinism` event is emitted and the
+seed is honored on CPU; `verify:manifest` checks the manifest note.
+For the full reproducibility contract, see `REPRODUCIBILITY.md` (existing
+§5 above); this section only enumerates the deterministic-mode knobs.
+
+### 7.2 CUDA limitations
+
+**`unverified:`** This repository's installed torch build is
+`2.12.0+cpu` (`docs/engineering/BASELINE.md`); every CUDA branch of
+`verify:reference`, `verify:reference-train`, and the CUDA portions of
+the `deterministic` tests is reported `SKIPPED CUDA`. The `hardware-cuda`
+suite is BLOCKED (`scripts/suites.ts:573-579`).
+
+What is device-dependent (the user must verify on the actual GPU):
+
+- Reproducibility: bit-level reproducibility is NOT claimed on CUDA
+  (see §7.1). Different GPU models / driver versions / cuDNN versions
+  will produce different numbers even with the same seed.
+- `cudnn.benchmark = False` (`:2189`) is set, but the user can opt-in
+  via the training config if they prefer speed over reproducibility.
+- Multi-GPU: not modelled. SpinoML uses a single device per run
+  (`training_template.py:2361` picks `cuda` if available, else `cpu`).
+  No `DataParallel`/`DistributedDataParallel` is emitted.
+- Mixed precision (`MixedPrecision` callback, parsed at
+  `training_template.py:2392-2395`): supports `bf16` and `fp16`. The
+  user must verify on their specific GPU that `bf16` is hardware-
+  supported (Ampere+) or the autocast will fall back to fp32 silently.
+
+What the app does NOT do: cuDNN version pinning, CUDA driver version
+verification, MIG configuration, multi-GPU partitioning, NCCL setup.
+
+### 7.3 Unsupported layers
+
+**Source of truth:** `src/layers/registry.ts:99-756` (the `LAYERS`
+record, 55 entries incl. the Input/Output/Manifest nodes and the structural/merge nodes). The full list is exported there. Notable
+`torch.nn` and `torch_geometric.nn` layers that are NOT registered
+(missing → the LLM `add_layer` tool will reject them):
+
+**`torch.nn` (commonly used, not available):**
+- `nn.RNN` is registered, but `nn.LSTMCell`/`nn.GRUCell`/`nn.RNNCell`
+  (the per-step recurrent cells) are NOT — `nn.LSTM`/`nn.GRU`/`nn.RNN`
+  in `LAYERS` always emit the sequence-returning variant
+  (`training_template.py` consumes them with `(output, _) = lstm(x)`
+  semantics; state is dropped).
+- `nn.PixelShuffle`, `nn.Upsample`, `nn.ReflectionPad2d`/`nn.ZeroPad2d`
+  /`nn.ReplicationPad2d`/`nn.ConstantPad2d` (general padding ops;
+  only `nn.ZeroPad2d`-equivalent via `Conv2d` `padding` is supported),
+  `nn.InstanceNorm1d/2d/3d` (only `BatchNorm1d/2d`, `LayerNorm`,
+  `GroupNorm` are registered), `nn.SELU`/`nn.PReLU`/`nn.LeakyReLU`/
+  `nn.ELU`/`nn.Mish`/`nn.Hardtanh` (only `ReLU`/`GELU`/`SiLU`/
+  `Sigmoid`/`Tanh`/`Softmax`/`LogSoftmax`).
+- `nn.ConvTranspose1d`/`nn.ConvTranspose3d` (only `nn.ConvTranspose2d`).
+- `nn.AvgPool1d`/`nn.AvgPool3d`/`nn.MaxPool1d`/`nn.MaxPool3d`/
+  `nn.AdaptiveMaxPool2d` (only `nn.MaxPool2d`, `nn.AvgPool2d`,
+  `nn.AdaptiveAvgPool2d`).
+- `nn.TransformerDecoder`/`nn.TransformerDecoderLayer` (only the
+  encoder side: `TransformerEncoderLayer`/`TransformerEncoder`).
+- `nn.Unflatten` (use `Reshape`/`View` instead).
+- `nn.utils.rnn` helpers (`pack_padded_sequence`, `PackedSequence`).
+
+**`torch_geometric.nn` (commonly used, not available):**
+- All pooling ops except `GlobalMean/Max/AddPool` are missing:
+  `TopKPooling`, `SAGPooling`, `EdgePooling`, `PANPooling`,
+  `MemPooling`, `graph_pool.GraphMultisetTransformer`.
+- `nn.SchConv`/`nn.HypergraphConv`/`nn.HANConv`/`nn.PointNetConv`/
+  `nn.PPFConv`/`nn.RGCNConv`/`nn.FastRGCNConv` (heterogeneous / sparse
+  convs).
+- `nn.PNAConv` (Principal Neighbourhood Aggregation).
+- `nn.DeepGCNLayer` / `nn.GCNIIConv` (deep GCN variants).
+- `nn.dense.diff_pool` / `nn.dense.mincut_pool` (graph pooling).
+
+**Workarounds:**
+
+1. **`Custom` layer** (`registry.ts:670`) — free-form `nn.Module` from
+   Python source. The `source` and `init_args` fields are code-bearing
+   (`trust/`) and must be approved by a human (`Phase 43`) before the
+   sidecar or trainer executes them. See `verify:code-trust` and
+   `verify:code-trust-wiring`.
+2. **`Subgraph` layer** (`registry.ts:756`) — nested reusable
+   `nn.Module`. Carries its own parameter set; double-click → subcanvas.
+3. **Add a layer** by editing `src/layers/registry.ts` (recipe in
+   `CLAUDE.md`): extend `LAYERS` with the `LayerSpec` (type, category,
+   `pytorchModule`, fields, `summary`). Re-run
+   `npm run gen:layer-catalog` so the LLM-side tool registry stays
+   consistent (`test:llm-validation-parity` enforces).
+
+### 7.4 Unsupported dataset types
+
+**Source of truth:** `sidecar-torch/dataset_handlers.py` `detect_kind`
+(`:72-121`). The full taxonomy of accepted kinds:
+
+- `tabular` (`.csv`/`.tsv`/`.parquet` files; or a directory whose
+  primary content is a table, `:80-81, :118-121`).
+- `tensor` (`.pt`/`.pth`/`.npy`/`.npz`, `:82-83`).
+- `protein` (`.pdb`, `:84-85`).
+- `molecule` (`.smi`/`.smiles`; also `.txt` whose first line parses as
+  SMILES via the `_looks_like_smiles` heuristic at `:88-96, :161-167`).
+- `huggingface` (`.hf` reference file, `:97-99`).
+- `pyg` (`.pyg` reference file, `:100-102`).
+- `manifest` (`.manifest` JSON descriptor, `:103-106`).
+- `graph_folder` (a directory of `.pt`/`.pth` PyG `Data` files, `:108-110`).
+- `image_folder` (a directory of class subdirs with images, `:111-113`).
+- `unknown` (everything else, `:107, :121`).
+
+Notable formats that are explicitly refused (return `kind="unknown"`):
+
+- **Audio** (`wav`, `mp3`, `flac`) — not detected; the inspect endpoint
+  will say `unknown` and the smoke test will fail.
+- **Video** (`mp4`, `mov`, `avi`).
+- **TFRecord / TFDS** — TensorFlow datasets are not auto-loaded.
+- **WebDataset / tar shards** — not supported.
+- **HDF5 / `.h5`** — not detected (no entry in `TABULAR_EXTS`/etc.).
+- **Parquet folders / partitioned datasets** — only a single `.parquet`
+  file is recognised.
+- **Excel** (`.xlsx`) — pandas can read it, but `detect_kind` only
+  checks for `.csv`/`.tsv`/`.parquet`.
+- **SQLite** (`.db`/`.sqlite`) — not detected.
+- **Arrow / Feather** (`.arrow`/`.feather`) — not in `TABULAR_EXTS`
+  (pandas can read them but the file extension is unrecognised).
+- **Streaming datasets** (e.g. a HuggingFace `streaming=True` dataset) —
+  not supported; the inspect requires a file path.
+- **Multi-table directories with non-standard table names** — the
+  prepared-dataset directory detector at `:128-147, :150-158` looks for
+  `pairs.csv`, `data.csv`, `table.csv`, `dataset.csv`, `train.csv`,
+  `test.csv` (in that priority order) or falls back to the LARGEST
+  tabular file in the dir.
+
+Workarounds:
+
+1. **Convert to a supported kind** (CSV / Parquet for tabular; PyG
+   `.pt` per-graph for graph datasets).
+2. **Build a `manifest.json`** to glue a table to per-branch sources
+   (the dual-encoder pattern; see `docs/FEATURES.md` §5).
+3. **Use the `Custom` data path** via a `DataOp` node + a `run_script`
+   mode `shell` invocation (offline data preparation). The script is
+   itself code-bearing and goes through the trust gate.
+
+### 7.5 Remote execution limitations
+
+Documented in detail in `REMOTE_TRAINING.md` §9. Summary:
+
+- **The `remote-live` suite is BLOCKED** (`scripts/suites.ts:565-570`).
+  No real HPC cluster test; the SSH/SLURM pipelines were verified
+  against a local sshd with bash scripts faking the cluster.
+- **The remote-sidecar bootstrap has NOT been exercised against a real
+  RHEL/CentOS login node** where `systemd-logind` keeps user processes
+  alive after the SSH channel dies
+  (`remote_sidecar.rs:218-222` comment). The cleanup loop is
+  unit-tested but not against the real-world RHEL quirk.
+- **`env.sh` is sourced as bash only** — tcsh/zsh/fish users must
+  wrap their setup in bash syntax (or use a different login shell).
+- **Concurrent submissions to the same `<root>`** rely on POSIX
+  `mkdir` atomicity; sequential `verify:submission` checks pass, but
+  true concurrent races were not tested.
+- **The LLM sidecar is NEVER remote** (`sidecar-llm/main.mjs`; it only
+  ever listens on `127.0.0.1:7422` on the laptop). For a remote workspace
+  its file/run/SLURM tools act on the cluster by issuing `ssh` commands
+  (the same `BatchMode` helpers), not through a tunnel.
+- **`download_to_datasets` on remote workspaces** uses `curl` on the
+  login node and is NOT fully SSRF-checked (LIMITATIONS §2 above; a
+  hostname that resolves to a private address on the remote network
+  is not detected).
+- **The HPC-side SLURM scheduler may have policies SpinoML does not
+  model**: array jobs (`--array=`), job dependencies
+  (`--dependency=`), preemption, QoS, fairshare. The workaround is
+  the `pre_run_script` field in the SLURM config — it is written
+  verbatim into the `train.sbatch` (`ssh.rs:1104-1108`).
+
+### 7.6 SLURM limitations
+
+What the app DOES model (per `build_sbatch`, `src-tauri/src/ssh.rs:1054-1115`):
+
+- `#SBATCH --job-name=spinoml-<slugified run id>`
+- `#SBATCH --partition=<value>` (optional)
+- `#SBATCH --time=<value>` (default `04:00:00`)
+- `#SBATCH --mem=<value>` (optional)
+- `#SBATCH --cpus-per-task=<n>` (default `8`)
+- `#SBATCH --gres=<value>` (optional, e.g. `gpu:1`)
+- `#SBATCH --account=<value>` (optional)
+- `#SBATCH --qos=<value>` (optional)
+- `#SBATCH --output=slurm-%j.out` / `--error=slurm-%j.err` (always)
+- `module load <name>` per entry in `modules[]` (optional)
+- `<pre_run_script>` verbatim (optional, free-form)
+
+What the app does NOT model (the user must add via `pre_run_script`
+or accept that SpinoML doesn't see it):
+
+- **Job arrays** (`--array=1-100%4`) — no per-element status tracking;
+  one job id per submission.
+- **Job dependencies** (`--dependency=afterok:<jid>`,
+  `--dependency=afterany:<jid>`) — no chained-submission UI.
+- **QoS** beyond a single string — preemption / requeue / fairshare
+  semantics are the cluster's, not SpinoML's.
+- **Multi-job resubmission** — each run is one `sbatch`; no
+  retry-on-failure hook.
+- **Custom resource requests** (`--tmp=`, `--constraint=`, `--nodelist=`)
+  — pass via `pre_run_script` or `gres` (which is the closest field).
+- **Job arrays' sub-status reporting** — only the parent job id is
+  frozen in `pid` (`slurm:<jid>`); the children are not addressed.
+- **GPU type pinning** (`--gres=gpu:a100:1`) — works via free-form
+  `gres`, but the UI doesn't enforce the syntax; the cluster rejects
+  invalid values with a raw `sbatch: error: …` (the `ssh.rs:1023-1026`
+  parsing surfaces it).
+- **Licensed software reservation** (`--licenses=…`).
+- **Heterogeneous jobs** (multiple `#SBATCH` blocks per script) —
+  one block per file, no support for repeating the header.
+
+The SLURM reconciliation table (see FAILURE_RECOVERY §9) covers the
+seven scheduler-killed outcomes (`FAILED`/`TIMEOUT`/`OUT_OF_MEMORY`/
+`NODE_FAIL`/`BOOT_FAIL`/`DEADLINE`/`PREEMPTED` — all mapped to
+`failed`). Anything else (`CANCELLED+`, `COMPLETED`, `CONFIGURING`,
+`PENDING`, `RUNNING`, `COMPLETING`, `SUSPENDED`, `RESIZING`) is also
+mapped; see the table for the exact mapping.
+
+### 7.7 Platform limitations
+
+- **Linux only.** The Tauri shell's workspace- and ssh-path code
+  uses `std::os::unix` features (`scope_file.rs:30-31`, `MetadataExt`,
+  `PermissionsExt`). On other platforms `scope_file::write_roots` returns an
+  explicit "unix-only" error, so opening a local workspace is refused (it fails
+  closed — the sidecars are not silently left unscoped); the symlink-target list
+  is empty there. Nothing else in the app has been built or tested off Linux.
+- **`.deb` packaging only.** The README ships a Linux `.deb`. macOS /
+  Windows builds are not part of this verification environment.
+- **`/proc` use:** the LLM-sidecar's descendant walk reads
+  `/proc/<pid>/task/*/children` (Linux with `CONFIG_PROC_CHILDREN`),
+  see `Process lifecycle` paragraph in §5 above. On a kernel without
+  `CONFIG_PROC_CHILDREN` the walk yields an empty list; the sidecar
+  cannot then clean up children whose pgid differs from its own.
+- **Tauri window never exercised in this verification environment.**
+  The CSP is verified in a real headless Chromium
+  (`npm run test:webview-csp`, 14 checks); the WebKitGTK window
+  itself was not run here. Fallback documented in LIMITATIONS §2
+  (set `app.security.csp = null` if the installed app shows a blank
+  window).
+- **`setsid`/`nohup` are coreutils — present on every Linux
+  distribution the app targets.** If a cluster has a sanitised POSIX
+  without them (very unusual), the local + remote-direct launchers
+  fail; SLURM mode is unaffected.
+- **No `containerd`/`singularity` integration** — the SLURM
+  `pre_run_script` is the documented escape hatch.
+
+### 7.8 Claude / LLM dependency
+
+What the LLM sidecar (`sidecar-llm/main.mjs`) supports via
+`payload.llm.kind` (`main.mjs:2766-2768`):
+
+| `kind`              | What it is                                                                | Auth / transport             | Test coverage                                              |
+| ------------------- | ------------------------------------------------------------------------- | ---------------------------- | ---------------------------------------------------------- |
+| `subscription`      | Claude agent SDK + the local `claude` CLI (OAuth, Max) — the FORMER DEFAULT | OAuth, in-process MCP server | NOT driven end-to-end (`test:llm-safety` covers only the openai-compat path); the opencode-lifecycle suite covers the MCP bridge but not Claude SDK itself |
+| `opencode`          | The `opencode run --format json -m <model>` CLI per turn — the CURRENT DEFAULT (`OPENCODE_DEFAULT_MODEL = 'opencode/big-pickle'`, `main.mjs:2072-2073`) | per-turn MCP secret, master token NOT shared | `test:opencode-lifecycle` (68 rows vs a FAKE binary); `verify:opencode` BLOCKED unless `SPINOML_LIVE_LLM=1` |
+| `anthropic`         | Direct Anthropic Messages API (API key)                                  | API key                      | NOT driven end-to-end (shared validation gate with openai-compat) |
+| `openai-compat`     | OpenAI Chat Completions API (OpenAI, Gemini, Ollama, …)                   | API key                      | `test:llm-safety` (124 rows vs a fake server), `test:llm-validation-parity` (8284), `verify:command-injection` |
+
+What happens offline: with the LLM sidecar unreachable, the chat panel
+shows the LLM badge as `offline`; no chat can start. The model graph
+and training still work — shape inference uses the TORCH sidecar
+(7421), which is independent.
+
+Quota / cost: API-key providers bill per token; OAuth (subscription)
+is usage-based per the user's Max plan. The app does not meter or
+rate-limit; `MAX_TOOL_TURNS = 100` (`main.mjs:1890`, a "continue?" question every 100 steps) and
+`OPENCODE_MAX_TOOL_STEPS = 150` (`main.mjs:2092`, a hard stop of the opencode run) are
+per-turn guards, not rate limits.
+
+opencode CLI requirement: `SPINOML_OPENCODE_BIN` (default `opencode`,
+`main.mjs:2072`) must be installed and on PATH for the default
+provider. The `npm run verify:opencode` harness reports
+`opencode: command not found` when the binary is absent.
+
+### 7.9 Known performance limitations
+
+Real constants in the codebase, listed verbatim with their source:
+
+| Constant                                      | Value                                          | Effect                                                                                            | Source |
+| --------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------ |
+| `REQUEST_TIMEOUT`                              | 30 s (overridable via `SPINOML_TORCH_TIMEOUT`) | Per-connection socket inactivity cap on the torch sidecar — a hung client is freed               | `sidecar-torch/main.py:108, 1139` |
+| `MAX_INPUT_DIMS`                               | 16                                             | Shape validation rejects more than 16 dims                                                        | `sidecar-torch/main.py:100, 319-322` |
+| `MAX_INPUT_DIM`                                | 1 000 000                                      | Per-dim value cap (a single axis > 1M is rejected)                                                | `sidecar-torch/main.py:101, 328-329` |
+| `MAX_INPUT_ELEMS`                              | 1 Gi ≈ 4–8 GB fp32                              | Total element count cap (a sample > 1G elements is rejected; too big for a preview)               | `sidecar-torch/main.py:102, 334-336` |
+| `_CKPT_LOAD_SKIP_BYTES`                        | 256 MiB                                        | The integrity gate / `_compute_resumable` skips the deep load+keys check above this size         | `sidecar-torch/training_template.py:928, 963-966, 1139-1141` |
+| `SPINOML_LLM_UPSTREAM_TIMEOUT_MS`              | 120 000 ms (2 min, overridable)                 | Idle timeout for the openai-compat provider stream                                                 | `sidecar-llm/main.mjs:217-225` |
+| `SHELL_TIMEOUT_REMOTE_MS`                      | 120 000 ms (2 min)                             | Hard cap on a remote `run_script` mode `shell` — login-node guard, NOT for SLURM                  | `sidecar-llm/main.mjs:777, 805` |
+| `SHELL_TIMEOUT_LOCAL_MS`                       | 600 000 ms (10 min)                            | Hard cap on a local `run_script` mode `shell`                                                     | `sidecar-llm/main.mjs:778, 805` |
+| `MAX_TOOL_TURNS`                               | 100                                            | Every 100 tool steps the direct-API provider loops (`anthropic`, `openai-compat`) ask the user whether to continue (`confirmContinue`) — a checkpoint, not a hard cap | `sidecar-llm/main.mjs:1890` |
+| `OPENCODE_MAX_TOOL_STEPS`                      | 150                                            | Per-turn tool-call cap for the opencode CLI provider                                              | `sidecar-llm/main.mjs:2092` |
+| `OPENCODE_TIMEOUT_MS`                          | 30 min (overridable via `SPINOML_OPENCODE_TIMEOUT_MS`) | Hard cap on one opencode CLI run                                                                  | `sidecar-llm/main.mjs:2087` |
+| `OPENCODE_START_TIMEOUT_MS`                    | 90 s (overridable)                              | First-step (provider sync) cap                                                                    | `sidecar-llm/main.mjs:2091` |
+| `OPENCODE_MAX_JSON_CHUNK`                      | 1 000 000 bytes                                | Guard on accumulated stdout from the opencode CLI                                                 | `sidecar-llm/main.mjs:2094` |
+| `_list_pt_files` cap                            | 100 000                                        | Max graph-folder `.pt`/`.pth` files inspected                                                     | `sidecar-torch/dataset_handlers.py:170` |
+| RUNS_DIR / RUN_LIST_CAP                         | `experiments/runs`, 25 runs                    | `list_runs` LLM tool returns at most the 25 newest                                                | `sidecar-llm/main.mjs:893-894` |
+
+**Single-process `ThreadingHTTPServer`** for both sidecars. The torch
+sidecar is `ThreadingHTTPServer` (`sidecar-torch/main.py:32`); each
+request runs on a worker thread, but a single hung forward pass holds
+its worker for the whole `REQUEST_TIMEOUT` window (30s default). The
+sidecar is NOT multi-process — for real parallelism the app would
+need a process pool. In practice one forward pass per second is
+plenty for the UI's debounced inference.
+
+**Per-request model construction in `/infer`** — every shape-inference
+request builds and discards the model (`sidecar-torch/main.py` `infer`
+handler). For a slow model (multi-second `__init__`) this dominates
+the request latency. The `verify:reference`/`verify:reference-train`
+tests do NOT bench this; it's a known cost.
+
+**Dataset sampling limits in `sample_tensor`** — the smoke test feeds
+real data through the model. Per-kind caps (one sample, not the whole
+dataset) are documented per-handler; the grid/vector previews
+(`_vec_preview`/`_grid_preview` at `main.py:688-705`) cap at
+256 / 32 cells to keep the JSON payload small.
+
+**Other caps (not size-of-data):**
+
+- **Active files: `activeFileId` always references an existing entry
+  or null** (CLAUDE.md invariant §4); deleted-entry case resets
+  `activeFileId` in the same `setState`.
+- **History: 50 steps deep**, structural only (positions not undoable,
+  CLAUDE.md invariant §6).
+- **Code-trust store: 5000 records** cap (LIMITATIONS §3 above).
+- **SSE `ask/answer` channel: 10-min timeout** (`ASK_TIMEOUT_MS`,
+  `sidecar-llm/main.mjs:840`).
+- **MLflow-style pre-existing runs are NOT discovered** unless they
+  match the `experiments/runs/<run_id>/{run.json, status, …}` shape
+  (the SSH `ssh_list_training_runs` walks `experiments/runs` only).
+
