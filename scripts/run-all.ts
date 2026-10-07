@@ -621,18 +621,31 @@ async function runOne(suite: Suite, caps: Capabilities, opts: { pythonOnly: bool
   base.exitCode = exitCode
   base.signal = signal
 
+  // Leaked = a process that (a) did not exist before the suite and (b) either lives in the suite's own
+  // process group / session, or is one of THIS repo's sidecars / helpers (absolute path under ROOT) —
+  // the suites start sidecars `detached` (own process group), so killing the suite's group on a
+  // timeout used to leave them running for hours. Only these are ever killed.
+  const findLeaked = () =>
+    listProcs().filter(
+      (p) =>
+        !procsBefore.has(p.pid) &&
+        ((suitePgid > 0 && (p.pgid === suitePgid || p.sid === suitePgid)) || p.args.includes(ROOT + sep)),
+    )
+
   if (timedOut) {
     base.status = 'TIMEOUT'
     base.notes.push(`killed after ${suite.timeoutSec}s`)
+    const orphans = findLeaked()
+    if (orphans.length > 0) {
+      base.notes.push(`orphaned process(es) killed after the timeout: ${orphans.map((p) => `${p.pid} (${p.args.slice(0, 60)})`).join(', ')}`)
+      for (const p of orphans) await killPid(p.pid)
+    }
     return base
   }
 
-  // post-run leak detection: only processes that (a) did not exist before the suite and
-  // (b) live in the suite's own process group / session count as leaked — and only those are killed.
+  // post-run leak detection (see findLeaked above).
   // A sidecar that was just sent SIGTERM is legitimately still shutting down for a moment (Phase 13
   // handlers reap children first), so give such processes a short grace before calling them leaked.
-  const findLeaked = () =>
-    listProcs().filter((p) => !procsBefore.has(p.pid) && suitePgid > 0 && (p.pgid === suitePgid || p.sid === suitePgid))
   // A port counts as leaked only if it was free before this suite and busy after it.
   const findBusy = async () =>
     (await portsFree()).filter((p) => !p.free && portsBefore.find((b) => b.port === p.port)?.free === true)
