@@ -158,17 +158,16 @@ Linux. The Claude subscription provider (OAuth) could not be driven after the MC
 transitive bump 1.29 -> 1.32); only the import and the fake-provider suites ran. Python was audited with
 `pip-audit` over the installed conda env, not over a pinned lock file (there is none).
 
-## 6. Not yet audited
+## 6. Not verified / not done (after the final run of 2026-10-07)
 
-Phases of `TODO.md` that have no "implemented" note are not done. In particular:
-resource leak and long-run tests (51/52 — known leak:
-an empty `/tmp/spinoml-opencode-*` directory remains only when the LLM sidecar is SIGKILLed while an opencode
-turn is in flight; normal turns, client aborts and SIGTERM/SIGINT clean up, see `test:opencode-lifecycle` and
-`test:process-lifecycle`),
-CI (69),
-retries/timeouts (71/72), the
-remaining parts of the security review (77: the token is done, see §2; the other listed areas were covered piecewise by phases 43–47/76), and the final
-reliability report (90).
+Every phase of `TODO.md` now carries an implementation note; what is NOT proven is listed here and drives the CONDITIONAL
+verdict of `RELEASE_GATE.md`: CUDA (below), a real SLURM cluster and login node (`remote-live` BLOCKED), the real Tauri/WebKitGTK
+window (CSP, auth wiring and scope writer are verified in a real Chromium and by unit/real-process tests only), a first run of
+`.github/workflows/ci.yml` on GitHub (Phase 69: defined, never executed), an hour-scale soak (Phase 52: 90 s in CI), memory of the
+Rust shell/webview and GPU memory (Phase 51), and the Claude subscription provider / real opencode CLI. A known small leak: an empty
+`/tmp/spinoml-opencode-*` directory remains only when the LLM sidecar is SIGKILLed while an opencode turn is in flight (normal turns,
+client aborts and SIGTERM/SIGINT clean up — `test:opencode-lifecycle`, `test:process-lifecycle`). Phase 72 (retries) was audited: the
+only retry is the OpenAI SDK's own, bounded (`maxRetries: 2`).
 
 **CUDA is unverified.** `torch 2.12.0+cpu` is installed here: every CUDA branch of
 `verify:reference`/`verify:reference-train` prints `SKIPPED  CUDA` (Phase 56). The

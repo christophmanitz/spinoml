@@ -242,8 +242,8 @@ effect with `if (isTauri())`.
 |-|-|-|
 | workspace root | a folder picked via dialog | an alias + path on a remote host |
 | transport | `fs::*` in Rust | system `ssh` / `sftp`-style writes |
-| sidecars | localhost (7421 torch, 7422 llm) | localhost (Phase 12a). HPC-side sidecar = Phase 12b |
-| dataset smoke test | works | blocked with a hint until Phase 12b |
+| sidecars | localhost (7421 torch, 7422 llm) | local LLM sidecar + a remote torch sidecar bootstrapped over ssh and reached through the tunnel on 7424 (`remote_sidecar.rs`) |
+| dataset smoke test | works | works through the remote sidecar once `ensure_remote_sidecar` ran (NOT verified against a real cluster — docs/engineering/REMOTE_TRAINING.md §9) |
 
 The dispatch happens in `src/connections/backend.ts` — every higher-level
 store (workspace, project, datasets, chat-snapshot) imports `fs` / `project`
@@ -565,10 +565,9 @@ not catch it cleanly. Fix path:
   key-based auth (or GSSAPI/Kerberos) for that alias. The terminal
   itself uses `SSH_OPTS_INTERACTIVE` and CAN prompt — try opening the
   Terminal tab first to accept host keys / enter 2FA.
-- Remote smoke test errors with "Sidecar braucht HPC" → expected on
-  Phase 12a. The local torch sidecar can't open paths like
-  `/scratch/...`. Phase 12b will deploy a sidecar on the HPC side and
-  tunnel its port.
+- Remote dataset smoke test fails or is unavailable → the remote torch sidecar is probably not running: the
+  header badge shows its state; start it from the remote-sidecar badge (it bootstraps over ssh, see
+  docs/engineering/REMOTE_TRAINING.md §3). The local torch sidecar cannot open paths like `/scratch/...`.
 - Terminal shows "[terminal exited]" immediately on remote connect →
   `ssh -tt` was rejected (255 = auth/network, other codes = remote
   shell). The exit line includes the captured stderr.

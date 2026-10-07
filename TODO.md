@@ -4069,6 +4069,15 @@ All security tests
 All available fuzz/property tests
 ```
 
+> **Implemented 2026-10-07.** Final run of `npm run ci` (76 suites, 961 s, Node 20 inside the conda env, CPU only): **PASS 69, SKIPPED 4,
+> BLOCKED 3, FAIL 0, TIMEOUT 0**, lint 0 problems, `cargo check` + 88 Rust tests, build and script type-check green. SKIPPED = a
+> branch skipped and said so (`verify:reference` / `verify:reference-train`: CUDA; `test:verifier`: its end-to-end part without a running
+> torch sidecar; `test:soak`: GPU memory); BLOCKED = the capability is absent (`remote-live`: no real ssh/SLURM host, `hardware-cuda`: no
+> CUDA, `verify-opencode`: no live LLM). The per-suite table is in `docs/engineering/FINAL_RELIABILITY_REPORT.md` §90.3.
+> The runs along the way found and fixed defects of the test infrastructure itself (a suite driving the real Claude CLI, orphaned test
+> sidecars after a timeout, the leak detector flagging a sidecar that was still shutting down, a Node-22-only API under the runner's
+> Node 20, 1.4 GB of leftovers in `/tmp`).
+
 ---
 
 # 84. FINAL RELEASE GATE
@@ -4193,6 +4202,13 @@ if all applicable CRITICAL requirements pass.
 * [ ] No secrets in logs
 * [ ] Local services are appropriately bound
 * [ ] LLM/MCP actions are validated
+
+> **Evaluated 2026-10-07 — verdict CONDITIONAL.** `docs/engineering/RELEASE_GATE.md` marks every checklist item `[x]` (met, with the suite
+> that proves it), `[~]` (met only against fakes or only partly — the limit stated) or `[ ]`, evaluates the twelve §85 stop conditions
+> one by one, and lists the six conditions that must be met before "Production Ready for Scientific Work" may be claimed (CUDA, a real
+> cluster, the real Tauri window, a first CI run on GitHub, an hour-long soak, the Claude subscription provider). No CRITICAL row of
+> `RISK_REGISTER.md` is OPEN after the reconciliation of that date (R002/R003/R005/R006/R012 had been left PARTIAL/OPEN although their
+> work was done; R017/R018/R020/R022/R027 were closed with evidence; R060 — the cross-document undo bug — was found and fixed).
 
 ---
 
@@ -4449,6 +4465,10 @@ What is nondeterministic?
 What metadata is stored?
 What is required to reproduce an experiment?
 ```
+
+> **Written 2026-10-07.** `docs/engineering/FINAL_RELIABILITY_REPORT.md`: executive summary **CONDITIONAL**, environment, the test table
+> from the final run, a pointer to `docs/engineering/BUGS_FIXED.md` (89 defects: CRITICAL 29, HIGH 37, MEDIUM 21, LOW 2; 17 caught only by
+> an independent review of worker output), every remaining risk, and the reproducibility assessment.
 
 ---
 
