@@ -105,9 +105,12 @@ Backed by measurement, not by intent:
 
 ## 5. What is only partly deterministic or not at all
 
-- **GPU runs are not claimed to be bit-reproducible.** CUDA reductions that use
-  `atomicAdd` are nondeterministic even with all flags set. CUDA was **not tested on
-  this machine** (`torch 2.12.0+cpu`; both harnesses print `SKIPPED  CUDA`).
+- **GPU runs: measured once, not a general guarantee.** `npm run test:hardware-cuda` on
+  2026-10-07 (one RTX 2080 Ti) found the three reference experiments match CPU within tolerance;
+  two same-seed CUDA runs were **bit-identical** (loss_rel 0, weights max abs diff 0) for these
+  tiny models with the trainer's deterministic flags. This is NOT a general bit-reproducibility
+  guarantee: `atomicAdd` reductions can still differ for larger models or other GPUs, and only one
+  GPU model was tested. The CPU host here (`torch 2.12.0+cpu`) still prints `SKIPPED  CUDA`.
 - A different PyTorch/CUDA/PyG version, BLAS or CPU architecture can change results;
   the manifest records versions so the difference is at least explainable.
 - Datasets with fingerprint mode `reference` (PyG/HuggingFace names) are not pinned
@@ -132,5 +135,5 @@ Backed by measurement, not by intent:
 
 ## 7. Known gaps
 
-Listed in `LIMITATIONS.md` (CUDA unverified, git not available on some login nodes,
+Listed in `LIMITATIONS.md` (CUDA verified on one GPU only, git not available on some login nodes,
 `reference`-mode datasets, no enforcement of `code_trust` on the cluster).

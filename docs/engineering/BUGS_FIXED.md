@@ -134,13 +134,21 @@ All rows are sorted by commit date, oldest first.
 | H-044 | test | Corrupt persisted workspace state (parent cycles, an entry listed by two folders, ids disagreeing with their keys, orphans) hung every walk up the parent chain. | The persisted tree was not validated on load. | The persisted map is repaired into a tree on load (`src/workspace/store.ts`). | test:workspace-store | MEDIUM* | 68b8a28 |
 | H-045 | test | An unknown LLM `kind` fell back silently to the `subscription` path instead of an explicit error. | The routing default fell through to subscription. | An explicit 400 on an unknown kind (`sidecar-llm/main.mjs`). | test:llm-providers | MEDIUM* | b40eee1 |
 | H-046 | test | The opencode model string reached `opencode run --model <value>` unvalidated, so `--print-logs`, `-h` or a value with spaces/control characters could be parsed as an option. | There was no model-name validation before spawning. | `validateModelName` in `sidecar-llm/model-name.mjs` rejects anything outside the allowed pattern before any process is spawned. | test:llm-providers, test:opencode-lifecycle | HIGH* | b40eee1 |
+| H-049 | CI | CI environment assumptions failed the first GitHub run (node 11 suites, python 8): `sidecar-llm` dependencies were not installed in the node/python jobs (`ERR_MODULE_NOT_FOUND` in 7 suites), cargo-backed suites (incl. `verify:credentials`, `verify:recovery`) ran in jobs without the Tauri libraries, `verify:reference`/`verify:reference-train`/`test:property` hard-coded `conda run -n mlforge-dev`, and Chromium needed `--no-sandbox`. | The workflow assumed the development machine's environment (conda env, `sidecar-llm` deps installed, Tauri system libraries). | A `--only-needs none\|torch-env\|cargo` job partition so every suite runs in exactly one job; the runner exports `PYTHON` (commit `c960413`). | none recorded (the green runs 37679392635 / 37684968152 are the evidence) | MEDIUM* | c960413 |
+| H-050 | real-run | Every run started by the executor (local `training.rs` and remote `ssh.rs`) ended `failed` with "integrity: stdout.log: empty (0 bytes)". | With a pid file the integrity gate demanded NON-EMPTY `stdout.log`/`stderr.log`, but the trainer logs to `events.jsonl` so both are 0 bytes in a healthy run; no test combined a pid file with empty logs. | The gate requires the logs to exist but allows them to be empty (`training_template.py` gate (e)). | `verify:integrity` section 2b' (sabotage `inject-pid-empty-logs`; failed with the old rule, passes) | CRITICAL* | 05681dd |
+| H-051 | CI | `test:webview-csp` crashed on a browser candidate that is not installed (unhandled spawn `error` event) instead of trying the next one. | `spawnBrowser` had no `error` handler. | `error` handler in `spawnBrowser`. | none recorded (reproduced manually with `SPINOML_CHROMIUM=/nonexistent/chrome`: crash before, all checks pass after) | LOW* | 8649651 |
+| H-052 | CI | `verify:checkpoint` asserted a fixed cancel epoch (1) and raced the trainer on a fast machine (got 2). | The check hard-coded the epoch instead of reading the run's events. | Assert `last.pt` epoch == the last `epoch.end` of the run's events. | the test itself is the regression (`verify:checkpoint`) | LOW* | 8649651 |
+| H-053 | CI | `test:resource-leaks` counted libuv's lazily created threadpool threads (up to 4, once) as growth for the LLM sidecar (got 4 > 2). | The baseline was taken before the opencode path had created its threadpool. | Warm up the opencode path before the baseline; the leak bound is unchanged. | `test:resource-leaks` | LOW* | 8649651 |
+| H-054 | real-run | Every SLURM run ended `failed` at the same integrity gate (missing `stdout.log`/`stderr.log`) because SLURM writes `slurm-<jobid>.out`/`.err` and the pid file holds `slurm:<jobid>`. | The gate demanded `stdout.log`/`stderr.log` regardless of the backend. | A slurm pid requires `slurm-<jobid>.out`/`.err` (exist, may be empty). | `verify:integrity` section 2b'' (ok case + missing-logs case naming the slurm files) | CRITICAL* | a4cf228 |
+| H-055 | real-run | `RunDetailModal` reads `manifest.json` on every open but the shared READABLE whitelist (local and ssh) did not list it, so every run showed a read error and the Phase 74 resumable banner could never appear. | The whitelist was hand-maintained and missed `manifest.json`. | `manifest.json` added to READABLE (`training.rs`). | Rust test `every_file_the_run_detail_ui_reads_is_readable` (extracts the literal names from `RunDetailModal.tsx`; fails without the entry, mutation-checked) — suite `cargo-test` | HIGH* | a4cf228 |
+| H-056 | real-run | Stopping an already finished REMOTE run failed with "Remote SSH command failed (ssh exit 1)" (a kill of a dead pid / `scancel` of a finished job was the last command). | The stop snippet returned the exit code of the no-op kill/`scancel`. | A trailing `true` in the stop snippet (now `build_stop_command` in `ssh.rs`). | 4 Rust unit tests in the `ssh.rs` module `stop_command_tests` running the snippet in a real sh (3 of 4 fail without the fix, mutation-checked) — suite `cargo-test` | MEDIUM* | a4cf228 |
 
 ## Summary
 
-- **Defect rows: 89.** Of these, 44 are the specific subjects of register rows (R-ids) and 45 are additional defects the register did not track separately (H-ids).
-- **By severity:** CRITICAL **29**, HIGH **37**, MEDIUM **21**, LOW **2**. 43 severities are this report's reading of the TODO §86 scale (marked `*`) because the register assigns no severity to that defect.
-- **By found by:** audit **44**, test **23**, review-of-worker-output **17**, manual probe **5**, real-run **0**.
-- **`Regression test = none recorded`: 9** rows. These are named weaknesses, not hidden: a fix without a suite that proves it is a follow-up candidate. They are H-026, H-027, H-033, H-038, H-039, H-040, H-047, H-048 and R056.
+- **Defect rows: 97.** Of these, 44 are the specific subjects of register rows (R-ids) and 53 are additional defects the register did not track separately (H-ids).
+- **By severity:** CRITICAL **31**, HIGH **38**, MEDIUM **23**, LOW **5**. 51 severities are this report's reading of the TODO §86 scale (marked `*`) because the register assigns no severity to that defect.
+- **By found by:** audit **44**, test **23**, review-of-worker-output **17**, manual probe **5**, real-run **4**, CI **4**.
+- **`Regression test = none recorded`: 11** rows. These are named weaknesses, not hidden: a fix without a suite that proves it is a follow-up candidate. They are H-026, H-027, H-033, H-038, H-039, H-040, H-047, H-048, H-049, H-051 and R056.
 - **`Commit = uncommitted`: 0 rows.** The 7 rows that were uncommitted when the table was compiled (H-041 … H-046, R060) were committed afterwards (`68b8a28`, `b40eee1`) and carry their hashes.
 
 ## Defects found by review of worker output
@@ -168,6 +176,8 @@ an independent review (not the worker's own suite) caught them before commit.
 
 Count: **17** defects caught by review of worker output.
 
+**2026-10-07 — live-suite test infrastructure only, none shipped (NOT counted as defects).** A second independent review of the first live-suite worker output found only harness defects, all fixed before commit. `hardware-cuda.py`: (a) an in-place `Module.cuda()` made the CPU and CUDA models the same object and left the target on CPU (the grad check would have crashed on a GPU), (b) both repeatability trials reused one run dir so the trainer could resume (a false zero spread), (c) the weights metric was mean|w| instead of a difference, (d) no CPU-vs-CUDA trainer loss comparison, (e) a literal `python` instead of `sys.executable`, (f) an in-process memory peak of a subprocess trainer (always ~0), (g) unguarded None formatting. `live_tests.rs`: (h) the tests re-implemented the launch instead of calling the real code (fixed via the new `start_training_run_with_template`), (i) no `scancel` in the guard, (j) `wait_terminal` waited out a 480 s timeout on an already failed run, (k) a passing test deleted the evidence of a failed one. `test-llm-live.ts`: (l) `command -v` was called as an executable (the subscription provider could never have been configured), (m) a scripted fake was fed to a provider that never used it. Worker output also contained unverified UI claims in `TAURI_SMOKE.md` (env name, `claude` CLI, a size claim, menu entries, devtools in release builds), corrected.
+
 ## Not bugs
 
 These are deliberately excluded from the table: they are feature work, test
@@ -192,7 +202,13 @@ fixes, or false alarms.
   exist inside the `mlforge-dev` conda env; `cargo check` passes and 88 tests
   run.
 - **Other register rows not counted (5).** R019 (a connection alias fixed in
-  `~/.ssh/config`, not code); R020 and R021 (remote-smoke capability, the
-  latter still OPEN and site-specific); R022 (the env gap — run inside
-  `mlforge-dev`); R044 (CUDA verification, still OPEN on this CPU-only host).
+  `~/.ssh/config`, not code); R020 and R021 (remote-smoke capability, the latter
+  now ADDRESSED for one site); R022 (the env gap — run inside
+  `mlforge-dev`); R044 (CUDA verification, now ADDRESSED for one GPU).
   None describes a wrong behaviour that was shipped and fixed.
+- **Live-suite test infrastructure (2026-10-07, 13 findings + docs).** An
+  independent review of the first live-suite worker output found only harness
+  defects (none shipped): 7 in `hardware-cuda.py` (a–g), 4 in `live_tests.rs`
+  (h–k) and 2 in `test-llm-live.ts` (l, m); unverified UI claims in
+  `TAURI_SMOKE.md` were corrected. Listed under "Defects found by review of
+  worker output"; not counted as product defects.

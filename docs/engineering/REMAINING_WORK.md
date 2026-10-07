@@ -1,33 +1,33 @@
 # Remaining work — plan and resources checklist
 
-Status: 2026-10-07, after the push of `52df750`. The verdict in `RELEASE_GATE.md` / `FINAL_RELIABILITY_REPORT.md` is
-**CONDITIONAL** because six requirements could not be verified on the development machine. This file turns them into a
-plan: what closes each one (exact evidence), what it needs (resources checklist), who does what, and in which order.
+Status: 2026-10-07 update. The verdict in `RELEASE_GATE.md` / `FINAL_RELIABILITY_REPORT.md` stays **CONDITIONAL**. Three
+requirements were closed today (CI on GitHub; CUDA on one GPU; a real cluster at one site); three remain plus two scope
+limits. This file turns them into a plan: what closes each one (exact evidence), what it needs (resources checklist), who
+does what, and in which order.
 
 Legend: **[me]** = work Claude can do in this repository without your hardware/accounts · **[you]** = needs your machine,
 account, credentials or a decision · `[ ]` open · `[x]` done.
 
 ## 0. Overview and order
 
-| # | Condition (from `RELEASE_GATE.md`) | Blocking resource | Effort | Order |
-|---|---|---|---|---|
-| 4 | CI green on GitHub | none (GitHub Actions is already running — **first run: rust green, node and python jobs red**, see §1) | 0.5–1 day [me] | **1st** |
-| 3 | Real Tauri window smoke (CSP, auth wiring, scope writer) | a desktop session with WebKitGTK | 0.5–1 h [you] (+ 1 h prep [me]) | 2nd |
-| 5 | Hour-scale soak | an idle machine for 1 h | 1 h unattended [you or me] | 3rd (parallel to 2) |
-| 6 | Claude subscription provider + real opencode CLI | CLI logins / a model with quota | 1–2 h [you] (+ 2 h prep [me]) | 4th |
-| 2 | Real cluster (SSH, SLURM, remote sidecar) | HPC login + SLURM allocation | 0.5 day [you] (+ 1 day prep [me]) | 5th |
-| 1 | CUDA | a machine with an NVIDIA GPU | 2–3 h [you] (+ 0.5 day prep [me]) | 5th, **combine with #2** (GPU partition) |
+| # | Condition (from `RELEASE_GATE.md`) | Blocking resource | Effort | Order | Status 2026-10-07 |
+|---|---|---|---|---|---|
+| 4 | CI green on GitHub | none | 0.5–1 day [me] | **1st** | **DONE** — node/python/rust green (runs 37679392635, 37684968152) |
+| 3 | Real Tauri window smoke (CSP, auth wiring, scope writer) | a desktop session with WebKitGTK | 0.5–1 h [you] (+ 1 h prep [me]) | 2nd | open |
+| 5 | Hour-scale soak | an idle machine for 1 h | 1 h unattended [you or me] | 3rd (parallel to 2) | **done 2026-10-07** — 3600 s run passed 12/12 checks (torch RSS +0.95 MB/h, LLM +0.23 MB/h, fd/thread slope 0, 178 runs done, 0 5xx) |
+| 6 | Claude subscription provider + real opencode CLI | CLI logins / a model with quota | 1–2 h [you] (+ 2 h prep [me]) | 4th | open |
+| 2 | Real cluster (SSH, SLURM, remote sidecar) | HPC login + SLURM allocation | 0.5 day [you] (+ 1 day prep [me]) | 5th | **DONE at one site** (`test:remote-live`); in-window bootstrap still manual |
+| 1 | CUDA | a machine with an NVIDIA GPU | 2–3 h [you] (+ 0.5 day prep [me]) | 5th, **combine with #2** (GPU partition) | **DONE on one GPU** (RTX 2080 Ti, `test:hardware-cuda`); other GPUs open |
 
 Dependencies: #4 first — it is free and exposes environment assumptions (see §1) that would otherwise also bite #2 and #1.
-#2 and #1 share a prerequisite (the live suites in §7, which do not exist yet) and, if your cluster has a GPU partition, one
-allocation. #3 and #5 are independent of everything else.
+#2 and #1 shared a prerequisite (the live suites of §7, written and run on 2026-10-07) and one GPU-partition allocation. #3 and #5 are independent of everything else.
 
 ## 1. Condition 4 — CI green on GitHub
 
-**Evidence so far.** The push of `52df750` triggered the first CI run ever
-(<https://github.com/christophmanitz/spinoml/actions/runs/37588448387>): job `rust` **passed**; job `node` failed 11 suites,
-job `python` failed 8. These are environment assumptions of the suites/workflow, not product defects — exactly what a first run
-on a clean machine is for. Diagnosed causes (from the job logs):
+**Evidence.** The first run ever (<https://github.com/christophmanitz/spinoml/actions/runs/37588448387>, commit `52df750`)
+was rust-green with 11 node and 8 python suite failures; the first repair (`c960413`) left three suite failures; `8649651`
+fixed them and **runs 37679392635 (`8649651`) and 37684968152 (`5664918`) are green in all three jobs**. The failures were
+environment assumptions of the suites/workflow, not product defects. Diagnosed causes:
 
 | # | Symptom | Cause | Fix |
 |---|---|---|---|
@@ -35,14 +35,14 @@ on a clean machine is for. Diagnosed causes (from the job logs):
 | b | `cargo-check`, `cargo-test`, `verify:ssh`, `verify:slurm`, `verify:credentials`, `verify:recovery` fail in the node/python jobs (`glib-2.0.pc` not found) | these suites need the Rust toolchain AND the Tauri system libraries (`libwebkit2gtk-4.1-dev`, `libglib2.0-dev`, …), which only the `rust` job installs | run the cargo-backed suites only in the `rust` job (filter by `needs: ['cargo']`), or install the apt packages in the other jobs |
 | c | `test:webview-csp`: the headless browser exits at start | GitHub's Ubuntu runner restricts user namespaces, Chrome needs `--no-sandbox` there | add `--no-sandbox` when `CI=1` (or an env override such as `SPINOML_CHROMIUM_ARGS`) and keep the explicit `SKIPPED` line if no browser starts |
 | d | `verify:reference`, `verify:reference-train`, `test:property`: "Not a conda environment: …/envs/mlforge-dev" / 201 property failures | the scripts shell out to `conda run -n mlforge-dev python`; the CI python job uses a plain `pip` environment | use the runner's resolved interpreter (`PYTHON`/`pythonCmd`) instead of a hard-coded conda env name |
-| e | `verify:checkpoint`: 1 check failed | not yet diagnosed (the log shows only the summary line) | read `.test-results/verify:checkpoint.log` from the artifact, reproduce with the job's Python/torch versions |
+| e | `verify:checkpoint`: 1 check failed | the check asserted a fixed cancel epoch (1) and raced a fast trainer (got 2) — fixed in `8649651` (H-052) | assert `last.pt` epoch == the last `epoch.end` of the run's events |
 | f | 33–42 suites BLOCKED in a job | by design (each job runs its slice) — but make sure every suite runs in exactly one job | audit the three job filters against `scripts/suites.ts` |
 
 **Done when**
-- [ ] a run on `main` shows all three jobs green (BLOCKED only for `remote-live`, `hardware-cuda`, `verify-opencode`);
+- [x] a run on `main` shows all three jobs green (run 37684968152; `remote-live`, `hardware-cuda`, `verify-opencode` and `test:llm-live` run in no CI job);
 - [ ] the same workflow is green on a pull request (open a throw-away PR);
 - [ ] `ci.yml` header comments are corrected (they still say the Rust toolchain is absent on the dev box; it is in the conda env);
-- [ ] `RELEASE_GATE.md` verdict item 4 and `LIMITATIONS.md` §6 updated with the run URL.
+- [x] `RELEASE_GATE.md` verdict item 4 and `LIMITATIONS.md` §6 updated (run URLs 37679392635 / 37684968152).
 
 **Resources**
 - [x] GitHub repo write access and Actions enabled (the run exists)
@@ -91,7 +91,7 @@ Chromium and with unit/real-process tests.
 2. **[me]** read `.test-results/soak-<timestamp>.json`/`.md`: projected RSS growth per hour (fail > 200 MB/h), fd/thread slope (fail > 0.05/min), trainer runs all `done`, no 5xx, no died process.
 3. **[me]** if the LLM sidecar's projected growth (25–75 MB/h at 90 s) persists at one hour, bisect with `/health.diag` (which map/handle grows) and fix; record the numbers in `LIMITATIONS.md` §5.
 
-**Done when**: a ≥ 3600 s run passes; the measured slope replaces the "25–75 MB/h on 90 s" caveat in `LIMITATIONS.md` and `TODO.md` Phase 52.
+**Done when**: a ≥ 3600 s run passes; the measured slope replaces the "25–75 MB/h on 90 s" caveat in `LIMITATIONS.md` and `TODO.md` Phase 52. **DONE 2026-10-07** (see `LIMITATIONS.md` §5; `TODO.md` Phase 52 not edited).
 
 ## 4. Condition 6 — Claude subscription provider and real opencode
 
@@ -130,14 +130,14 @@ both in the same allocation.
 
 ### Plan
 1. **[me]** write the live suites (§7), dry-run them locally against the existing fakes so the harness itself is proven (the CUDA suite prints `SKIPPED  CUDA` on a CPU box exactly like `verify:reference`).
-2. **[you]** `SPINOML_REMOTE_TESTS=1 SPINOML_REMOTE_ALIAS=<alias> SPINOML_REMOTE_ROOT=<dir>` plus the command of the new remote-live suite (named when it is written; today `remote-live` is only a BLOCKED placeholder), in the GPU allocation also the CUDA suite.
+2. **[you]** `SPINOML_REMOTE_TESTS=1 SPINOML_REMOTE_ALIAS=<alias> SPINOML_REMOTE_ROOT_BASE=<dir> npm run test:remote-live`, in the GPU allocation also `npm run test:hardware-cuda` (both written; run once on 2026-10-07 — see §0).
 3. **[you]** launch the real app once against the same alias (§2 checklist step "remote sidecar badge"): bootstrap, tunnel on 7424, dataset smoke on the remote sidecar, a remote run, stop, restart the app, find the run again.
 4. **[me]** read the outputs, fix what breaks (expect site quirks: shell, quotas, `git` version, `systemd-logind`), update docs.
 
 **Done when**
-- [ ] `remote-live` passes: connection test, probe, bootstrap/deploy list, a direct remote run and a SLURM run (submit → squeue/sacct states → `done` with a valid integrity block), cancel, delete, app-restart recovery of both, cleanup leaves nothing behind;
-- [ ] `hardware-cuda` passes: the three reference experiments on CUDA match CPU within the documented tolerance, two same-seed CUDA runs differ by a measured, recorded amount (this number replaces "not claimed" in `REPRODUCIBILITY.md` §5), mixed precision (bf16/fp16) smoke, `cudnn` flags recorded in the manifest;
-- [ ] `RISK_REGISTER.md` R044 and R021 closed with evidence, `RELEASE_GATE.md` §Remote Execution `[~]` → `[x]`, `REMOTE_TRAINING.md` §9 rewritten with what was actually verified.
+- [x] `test:remote-live` passed at one site (2026-10-07): connection, a direct run, a SLURM run done + a run cancelled, recovery after dropping in-memory state, a GPU run, clean cleanup. `live_bootstrap` (probe/deploy list) is SKIPPED — `run_bootstrap` takes an `AppHandle`;
+- [x] `test:hardware-cuda` passed (RTX 2080 Ti): the three reference experiments match CPU within tolerance, two same-seed CUDA runs were bit-identical (measured diff 0, replacing "not claimed" in `REPRODUCIBILITY.md` §5), bf16/fp16 smoke, `cudnn` flags recorded;
+- [ ] `RISK_REGISTER.md` R044 and R021 are ADDRESSED (not CLOSED) for one GPU / one site with scope limits; `RELEASE_GATE.md` §Remote Execution now cites `test:remote-live` but keeps the `[~]` for the unwindowed bootstrap; `REMOTE_TRAINING.md` §9 rewritten with what was actually verified.
 
 ## 6. Shared resources checklist (one place)
 
@@ -168,22 +168,24 @@ both in the same allocation.
 | # | Item | Output | Closes / prepares |
 |---|---|---|---|
 | 7.1 | Fix the six CI findings of §1 | green `ci.yml` run, corrected header comments | condition 4 |
-| 7.2 | a new remote-live script or Rust `#[ignore]` live tests calling the plain `ssh_*` async functions (`ssh_start_training_run`, `ssh_training_run_status`, `ssh_stop_training_run`, `ssh_delete_training_run`, `ssh_remote_training_capabilities`, SLURM submit/reconcile) from env-gated tests; the bootstrap (`run_bootstrap` needs an `AppHandle`) either through Tauri's mock app (`tauri` `test` feature) or stays a manual step in §2 | a new npm script replacing the BLOCKED placeholder, env: `SPINOML_REMOTE_TESTS=1`, `SPINOML_REMOTE_ALIAS`, `SPINOML_REMOTE_ROOT`, optional `SPINOML_REMOTE_SLURM_*` | condition 2 |
+| 7.2 | a new remote-live script or Rust `#[ignore]` live tests calling the plain `ssh_*` async functions (`ssh_start_training_run`, `ssh_training_run_status`, `ssh_stop_training_run`, `ssh_delete_training_run`, `ssh_remote_training_capabilities`, SLURM submit/reconcile) from env-gated tests; the bootstrap (`run_bootstrap` needs an `AppHandle`) either through Tauri's mock app (`tauri` `test` feature) or stays a manual step in §2 | a new npm script replacing the BLOCKED placeholder, env: `SPINOML_REMOTE_TESTS=1`, `SPINOML_REMOTE_ALIAS`, `SPINOML_REMOTE_ROOT_BASE`, optional `SPINOML_REMOTE_SLURM_*` | condition 2 |
 | 7.3 | a new hardware-cuda script: CPU-vs-CUDA numerical comparison of the three reference experiments, same-seed repeatability on CUDA with the measured spread, bf16/fp16 smoke, `cudnn` flags, GPU memory sample; prints `SKIPPED  CUDA` without a GPU | replaces the BLOCKED placeholder | condition 1 |
 | 7.4 | a new live-provider test script (§4) | gated live provider suite | condition 6 |
 | 7.5 | new document TAURI_SMOKE under docs/engineering (§2) | the manual checklist + an evidence helper | condition 3 |
 | 7.6 | Register the new suites in `scripts/suites.ts` with `needs` so they stay BLOCKED (not failing) in CI | `npm run ci -- --check` green | all |
 
+All six landed: 7.1 in `c960413` + `8649651`; 7.2–7.6 in `5664918` (`test:remote-live`, `test:hardware-cuda`, `test:llm-live`, `docs/engineering/TAURI_SMOKE.md`, `scripts/suites.ts`).
+
 ## 8. Definition of done for the gate
 
 The verdict may change from CONDITIONAL to **PASS** only when all of these hold, each with evidence committed:
 
-- [ ] CI green on `main` and on a PR (§1)
+- [ ] CI green on `main` (run 37684968152) and on a PR (§1) — main done, PR not yet
 - [ ] Tauri window checklist ticked, fallback not needed or the CSP fixed (§2)
 - [ ] ≥ 1 h soak within the bounds (§3)
 - [ ] live LLM providers you rely on pass (§4)
-- [ ] `remote-live` and `hardware-cuda` pass on the target site / GPU (§5)
-- [ ] `RELEASE_GATE.md` rows flipped with the evidence, `RISK_REGISTER.md` R021/R044 closed, `FINAL_RELIABILITY_REPORT.md` §90.1 re-issued with a new date and test table, `LIMITATIONS.md` §6 emptied of the items above
+- [x] `test:remote-live` and `test:hardware-cuda` pass on the target site / GPU (one site / one RTX 2080 Ti, §5)
+- [ ] `RELEASE_GATE.md` rows flipped with the evidence, `RISK_REGISTER.md` R021/R044 ADDRESSED (not CLOSED) for one site / one GPU, `FINAL_RELIABILITY_REPORT.md` §90.1 updated for 2026-10-07 (the test table is still the earlier `npm run ci` run), `LIMITATIONS.md` §6 trimmed of the CUDA/cluster/CI items
 
 Suggested calendar: day 1 — §1 and §7.1/7.5 (me), §3 started in the evening; day 2 — §2 and §4 (you), §7.2–7.4 (me); day 3 — §5 on the cluster
 (you), fixes (me), re-issue of the report.

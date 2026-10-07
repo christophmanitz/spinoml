@@ -9,22 +9,20 @@ same row; where nothing backs it, it is marked as not verified.
 
 SpinoML is **not** declared "Production Ready for Scientific Work". On the machine this work was done on, every CRITICAL
 requirement that can be evaluated there passes with a named, mutation-checked suite (`RELEASE_GATE.md` evaluates the
-84-item checklist row by row and the twelve §85 stop conditions one by one). Six applicable requirements could not be
-verified here; the verdict stays CONDITIONAL until they are:
+84-item checklist row by row and the twelve §85 stop conditions one by one). Four requirements were closed on 2026-10-07
+(GitHub CI green; CUDA on one GPU; a real cluster at one site; a 1 h soak); the verdict stays CONDITIONAL until the rest are:
 
-1. **CUDA** — torch here is `2.12.0+cpu`; every CUDA branch reports `SKIPPED  CUDA` and bit-level reproducibility on a GPU is not claimed.
-2. **A real cluster** — SSH/SLURM handling, remote job reconciliation and the remote-sidecar bootstrap were verified against local fakes only (`remote-live` is BLOCKED).
-3. **The real Tauri window** — the strict CSP, the sidecar authentication wiring and the scope-file writer were verified in a real Chromium and with unit/real-process tests, never in the WebKitGTK window. Fallback if it misbehaves: `app.security.csp: null`.
-4. **CI on GitHub** — `.github/workflows/ci.yml` has never run.
-5. **A long soak** — the CI soak is 90 s; an hour (`npm run test:soak -- --seconds 3600`) is needed to say anything about slow leaks.
-6. **The Claude subscription provider** and the real opencode CLI are not driven by any suite.
+1. **The real Tauri window** — the strict CSP, the sidecar authentication wiring and the scope-file writer were verified in a real Chromium and with unit/real-process tests, never in the WebKitGTK window. The manual checklist is `docs/engineering/TAURI_SMOKE.md`; fallback if it misbehaves: `app.security.csp: null`.
+2. **The Claude subscription provider** and the real opencode CLI are not driven by any suite (`scripts/test-llm-live.ts` exists, verified only against a local fake provider; needs credentials and `SPINOML_LIVE_LLM=1`).
+3. **The in-window cluster path** — `run_bootstrap` takes an `AppHandle`, so the bootstrap/tunnel/remote-sidecar through the real Tauri window stays a manual step.
+4. **Other GPU architectures / sites** — CUDA was verified on one RTX 2080 Ti and the cluster at one site; Ampere/Ada, multi-GPU and other clusters are not tested.
 
 What the hardening changed, in one paragraph: the application now fails closed where it used to lie. A training run
 reaches `done` only through an integrity gate (valid metrics, loadable checkpoints, required events, a valid manifest);
 generated code is pinned byte for byte by 40 golden cases and compared numerically with hand-written PyTorch; the two
 local sidecars authenticate every request (token, Host, Origin) and scope every file access; LLM tool calls are validated
-against the frontend registry before any state changes; unhandled errors reach the UI instead of the console; and 89
-defects (29 CRITICAL) were found and fixed — 17 of them only because an independent review caught what green worker tests
+against the frontend registry before any state changes; unhandled errors reach the UI instead of the console; and 97
+defects (31 CRITICAL) were found and fixed — 17 of them only because an independent review caught what green worker tests
 had encoded or missed (`BUGS_FIXED.md`).
 
 ## 90.2 Environment
@@ -51,6 +49,8 @@ private `TMPDIR` and a post-suite leak sweep). `FAIL` for the lint step cannot o
 Final run: **PASS 69 · SKIPPED 4 · FAIL 0 · TIMEOUT 0 · BLOCKED 3**, total 961 s, lint **0 problems**; started 2026-10-07T03:39:24.731Z; git {"commit": "68b8a282a08a4b918b2426863c8536bd5ddc030e", "dirty": true}.
 
 SKIPPED = the suite ran but skipped a branch (CUDA, an end-to-end part that needs a running torch sidecar) and says so; BLOCKED = the required capability is absent (no real SLURM/ssh host, no CUDA, no live LLM key) — these are NOT passes.
+
+**Note (2026-10-07, later in the day):** this `npm run ci` table is the run on commit `68b8a28`, before the live suites and the CI repair landed. Since then GitHub CI is green in all three jobs (runs 37679392635 / 37684968152) and `test:remote-live` / `test:hardware-cuda` have each been run once on a real cluster / GPU (`RELEASE_GATE.md`, `REMOTE_TRAINING.md` §9, `TEST_MATRIX.md`).
 
 | Test | Result | Duration | Notes |
 |---|---|---:|---|
@@ -151,28 +151,31 @@ SKIPPED = the suite ran but skipped a branch (CUDA, an end-to-end part that need
 
 ## 90.4 Bugs fixed
 
-The full catalogue — **89 defects**, one row each with ID, who found it, description, root cause, fix, regression test,
+The full catalogue — **97 defects**, one row each with ID, who found it, description, root cause, fix, regression test,
 severity and fixing commit — is `docs/engineering/BUGS_FIXED.md`; it is part of this report. Summary:
 
-- By severity: **CRITICAL 29, HIGH 37, MEDIUM 21, LOW 2** (43 severities are the catalogue's own reading of the TODO §86
+- By severity: **CRITICAL 31, HIGH 38, MEDIUM 23, LOW 5** (51 severities are the catalogue's own reading of the TODO §86
   scale and are marked `*`; the rest come from `RISK_REGISTER.md`).
-- By who found it: audit 44, test 23, **review of worker output 17**, manual probe 5.
-- **9 rows have no recorded regression test** — named in the catalogue as weaknesses, not hidden.
-- Defects found in the last stretch (after the first draft of this report's catalogue): the cross-document undo bug
+- By who found it: audit 44, test 23, **review of worker output 17**, manual probe 5, real-run 4, CI 4.
+- **11 rows have no recorded regression test** — named in the catalogue as weaknesses, not hidden.
+- Defects found in the last stretch (after the first draft of this report's catalogue): the 2026-10-07 live/CI defects —
+  the executor/SLURM integrity gate failing healthy runs on empty `stdout.log`/`stderr.log`, the run-detail
+  `manifest.json` read whitelist, the remote-stop exit code, and the CI environment assumptions (`BUGS_FIXED.md`,
+  commits `05681dd`, `8649651`, `a4cf228`, `c960413`); earlier in the same stretch the cross-document undo bug
   (R060, CRITICAL: the first undo after opening a file restored the previous file's graph into it and autosave wrote it
   into the file), undo history aliasing live params, corrupt persisted workspace state that hung the tab, an unknown LLM
   `kind` silently falling back to the Claude subscription path, and unvalidated opencode model names.
 
 ## 90.5 Remaining risks
 
-Nothing is hidden here; the detail and the evidence are in `LIMITATIONS.md` (§1–§7) and `RISK_REGISTER.md` (OPEN rows R021, R044).
+Nothing is hidden here; the detail and the evidence are in `LIMITATIONS.md` (§1–§7) and `RISK_REGISTER.md` (R021/R044 now ADDRESSED for one site / one GPU).
 
 **Verification gaps (the CONDITIONAL reasons)**
-- No CUDA evidence (R044): results on a GPU may differ, bit-level reproducibility on CUDA is not claimed.
-- No real cluster: SSH/SLURM/remote-sidecar behaviour is verified against fakes; a site quirk (RHEL `systemd-logind`, shell, quotas, `git` version) can still break it. Cluster scratch paths are site-specific (R021).
-- The Tauri/WebKitGTK window was never run: CSP, auth and scope wiring are verified elsewhere only.
-- `ci.yml` has never run on GitHub; `test:verifier` skips its end-to-end part without a torch sidecar; `verify:reference*` skip CUDA.
-- No hour-scale soak; GPU memory and the memory of the Rust shell/webview are not measured.
+- CUDA was verified on ONE GPU (`test:hardware-cuda`, RTX 2080 Ti): results on other GPU models may differ, and bit-level reproducibility on CUDA is not a general guarantee (R044).
+- The cluster was verified at ONE site for the `test:remote-live` paths; the in-window bootstrap/tunnel/remote sidecar is manual, and a site quirk (RHEL `systemd-logind`, shell, quotas, `git` version) can still break another site (R021).
+- The Tauri/WebKitGTK window was never run: CSP, auth and scope wiring are verified elsewhere only (`docs/engineering/TAURI_SMOKE.md`).
+- `ci.yml` is green (runs 37679392635, 37684968152); `remote-live`, `hardware-cuda`, `verify-opencode` and `test:llm-live` run in no CI job; `test:verifier` skips its end-to-end part without a torch sidecar.
+- The 3600 s soak passed (2026-10-07, an RSS growth of 0.95 MB/h (torch sidecar) and 0.23 MB/h (LLM sidecar) against a bound of 200 MB/h, flat fd and thread counts (slope 0), 178 trainer runs all `done`, no 5xx over 109 375 `/infer`, 21 875 `/dataset/inspect` and 21 875 `/chat` requests, and no orphan child process); GPU memory and the memory of the Rust shell/webview are not measured, and saves/metric polling of the UI are not exercised by it.
 
 **Security (documented limits, none CRITICAL)**
 - The webview is trusted: a strict CSP is shipped, but a bug in the app's own HTML injection would still run with Tauri IPC. A same-user process can read the sidecar token. Browser-dev mode is tokenless (Host/Origin still enforced). No token rotation, no TLS (loopback / ssh tunnel only).

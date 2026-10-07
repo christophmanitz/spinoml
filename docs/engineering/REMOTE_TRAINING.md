@@ -489,13 +489,39 @@ validation + slurm state machine + token-delivery scripts).
 
 ---
 
-## 9. What is NOT verified against a real cluster in this repo
+## 9. What was verified against a real cluster, and what was not
 
-> The `remote-live` suite is BLOCKED (`scripts/suites.ts:565-570`).
-> This section is the honesty contract for every claim above. When
-> the user is debugging on a real cluster and the docs say something
-> that doesn't match their observation, THIS section is the one to
+> `test:remote-live` passed once on 2026-10-07 (see "Verified against a real cluster" below); it
+> runs only with `SPINOML_REMOTE_TESTS=1` + `SPINOML_REMOTE_ALIAS` and has no CI job. Everything not
+> listed there is the pre-2026-10-07 honesty contract: when the user is debugging on a real cluster
+> and the docs say something that doesn't match their observation, THIS section is the one to
 > re-read first.
+
+### Verified against a real cluster (2026-10-07)
+
+SC Leipzig, login node `login01`, alias `leipzig-hpc`, SLURM. `npm run test:remote-live` (env
+`SPINOML_REMOTE_TESTS=1`, `SPINOML_REMOTE_ALIAS`, optional `SPINOML_REMOTE_SLURM_PARTITION`/`ACCOUNT`,
+`SPINOML_REMOTE_GPU_PARTITION`, `SPINOML_REMOTE_CUDA_PYTHON`, `SPINOML_REMOTE_PYTHON`,
+`SPINOML_REMOTE_ROOT_BASE`), final run (stamp 1791405963, 4th iteration): **PASS 5 / FAIL 0 /
+SKIPPED 1 in 78 s**. Test root `~/spinoml-live-test/<stamp>/<test>`; the user's real `~/spinoml` and
+`~/spinoml_gnn` were verified unchanged by mtime; cleanup left no test directory and an empty queue.
+
+| Test | What it proved |
+| --- | --- |
+| `live_connection` | the `BatchMode` ssh path reaches the login node |
+| `live_direct_run` | the real launch code `start_training_run_with_template`; `ssh_*` status/list/read/stop/delete on a real run |
+| `live_slurm_run` | run A `done`; run B cancelled via `ssh_stop_training_run` → `sacct` CANCELLED (jobs 28293424 cpu COMPLETED 6 s, 28293426 cpu CANCELLED as intended) |
+| `live_recovery` | re-list and find the run after dropping in-memory state |
+| `live_gpu` | SLURM job 28293420 on partition `gpu-rtx2080ti` (COMPLETED 7 s), `gres gpu:1`, `manifest` `env.device == cuda` |
+| `live_bootstrap` | **SKIPPED** — `run_bootstrap` takes `AppHandle<Wry>`, a test cannot drive it; it stays a MANUAL step in the real window (procedure in the test's doc comment) |
+
+Python used on the cluster: a uv-managed Python 3.11 venv with torch 2.14.1+cu130 and
+torch_geometric 2.8.0.post1 — **NOT** the app's bootstrap venv (the app's remote bootstrap creates a
+venv with the login node's default python3.9 + CPU torch + numpy/pandas/pillow; that bootstrap path
+was **not** exercised).
+
+**Still NOT verified:** the bootstrap/tunnel/remote-sidecar through the real window, other clusters,
+GPUs other than the one above, long runs and multi-node.
 
 ### Verified against real processes / unit tests
 
@@ -514,7 +540,7 @@ validation + slurm state machine + token-delivery scripts).
 | SLURM `pid` file format `slurm:<jid>` + `scancel` flow                             | unit-tested by `verify:slurm`/`verify:recovery` against a local sshd                |
 | `SPINOML_ALLOWED_ROOTS` export to the remote sidecar                               | static check + behavioural env.sh test                                            |
 
-### NOT verified against a real HPC login node
+### NOT verified against a real HPC login node (pre-2026-10-07 gap list; several rows are now covered by the live run above)
 
 | Area                                                                              | Why                                                                                | What's missing                                                                                  |
 | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |

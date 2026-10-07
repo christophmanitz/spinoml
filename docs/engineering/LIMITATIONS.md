@@ -147,9 +147,8 @@ A SIGKILL of a sidecar cannot be handled: its tracked children (torch: own sessi
 **Resource growth (Phase 51/52).** Measured for the two sidecars only (`test:resource-leaks`, `test:soak`): the torch
 sidecar's RSS plateaus ≈ 124 MB above its start after the first few hundred requests (a high-water mark from lazy
 imports, not a per-request leak — checked up to 1200 requests), the LLM sidecar ≈ 65 MB; fd/thread/child counts
-return to baseline. The short soak (90 s) cannot resolve slow leaks: its LLM RSS slope projects to 25–75 MB/h, which
-is within heap noise of a window that short — run `npm run test:soak -- --seconds 3600` for a statement worth
-trusting. Not measured at all: memory/CPU of the Tauri shell and the webview, GPU memory, workspace open/close cycles.
+return to baseline. The 90 s CI soak cannot resolve slow leaks (its LLM RSS slope projects to 25–75 MB/h, heap noise at that length);
+The 3600 s run of 2026-10-07 (`npm run test:soak -- --seconds 3600`, 534 samples, 12/12 checks passed) measured an RSS growth of 0.95 MB/h (torch sidecar) and 0.23 MB/h (LLM sidecar) against a bound of 200 MB/h, flat fd and thread counts (slope 0), 178 trainer runs all `done`, no 5xx over 109 375 `/infer`, 21 875 `/dataset/inspect` and 21 875 `/chat` requests, and no orphan child process. It does not exercise UI saves, metric polling or GPU memory. Not measured at all: memory/CPU of the Tauri shell and the webview, GPU memory, workspace open/close cycles.
 
 **Dependencies (Phase 79).** Point-in-time audit only (evidence file in `docs/engineering/evidence/`); nothing runs
 it on a schedule and CI has never run. Residue: 2 low `dompurify` advisories (via the now-bundled `monaco-editor`), the
@@ -158,21 +157,24 @@ Linux. The Claude subscription provider (OAuth) could not be driven after the MC
 transitive bump 1.29 -> 1.32); only the import and the fake-provider suites ran. Python was audited with
 `pip-audit` over the installed conda env, not over a pinned lock file (there is none).
 
-## 6. Not verified / not done (after the final run of 2026-10-07)
+## 6. Not verified / not done (after the 2026-10-07 runs)
 
-Every phase of `TODO.md` now carries an implementation note; what is NOT proven is listed here and drives the CONDITIONAL
-verdict of `RELEASE_GATE.md`: CUDA (below), a real SLURM cluster and login node (`remote-live` BLOCKED), the real Tauri/WebKitGTK
-window (CSP, auth wiring and scope writer are verified in a real Chromium and by unit/real-process tests only), a first run of
-`.github/workflows/ci.yml` on GitHub (Phase 69: defined, never executed), an hour-scale soak (Phase 52: 90 s in CI), memory of the
-Rust shell/webview and GPU memory (Phase 51), and the Claude subscription provider / real opencode CLI. A known small leak: an empty
+What is NOT proven is listed here and drives the CONDITIONAL verdict of `RELEASE_GATE.md`: the real Tauri/WebKitGTK window
+(CSP, auth wiring and scope writer are verified in a real Chromium and by unit/real-process tests only; checklist
+`docs/engineering/TAURI_SMOKE.md`), memory
+of the Rust shell/webview and GPU memory (Phase 51), other GPU architectures than the one tested, other clusters than the
+one site, and the Claude subscription provider / real opencode CLI. GitHub CI is green and `test:remote-live` /
+`test:hardware-cuda` passed once (see below). A known small leak: an empty
 `/tmp/spinoml-opencode-*` directory remains only when the LLM sidecar is SIGKILLed while an opencode turn is in flight (normal turns,
 client aborts and SIGTERM/SIGINT clean up — `test:opencode-lifecycle`, `test:process-lifecycle`). Phase 72 (retries) was audited: the
 only retry is the OpenAI SDK's own, bounded (`maxRetries: 2`).
 
-**CUDA is unverified.** `torch 2.12.0+cpu` is installed here: every CUDA branch of
-`verify:reference`/`verify:reference-train` prints `SKIPPED  CUDA` (Phase 56). The
-generated-model equivalence and the same-seed reproducibility were measured on CPU only;
-no GPU claim is made (R044).
+**CUDA is verified on one GPU only.** On 2026-10-07 `test:hardware-cuda` ran on an RTX 2080 Ti
+(SLURM job 28293178, torch 2.14.1+cu130): the three reference experiments match CPU (forward max
+abs diff ≤ 1.2e-7, gradients ≤ 8.9e-8; real trainer same-seed `best_val_loss` equal to 4 decimals)
+and two same-seed CUDA runs were bit-identical for these tiny models with the trainer's
+deterministic flags. This is NOT a general bit-reproducibility guarantee and Ampere/Ada/multi-GPU
+were not tested; this CPU host still prints `SKIPPED  CUDA` (R044).
 
 **Reproducibility limits (Phase 59–63).** `reproducible_from_git` needs `git` with `-C` (≥ 1.8.5) on the machine that
 runs `train.py`; older git (some login nodes) yields an explicit reason and `false`. Node/Rust versions and the
@@ -194,9 +196,11 @@ propagation exist for `openai-compat` only. Deleting the Input/Output node throu
 catalog (`sidecar-llm/layer-catalog.generated.json`) must be regenerated (`npm run gen:layer-catalog`) when a registry changes; the parity test
 fails on drift. `AbortSignal.any` needs Node ≥ 20.3 (the dev machine has 22).
 
-**Test infrastructure (Phase 67–72, 82).** `.github/workflows/ci.yml` has never run on GitHub. `remote-live` and `hardware-cuda` have no
-suite (BLOCKED by design). `test:verifier` skips its e2e part when no torch sidecar is running (it reports SKIPPED). Lint is reported FAIL
-(81 known problems, baseline 82); the gate is "no regression". No test freezes the wall clock.
+**Test infrastructure (Phase 67–72, 82).** `.github/workflows/ci.yml` is green on GitHub (runs 37679392635 / 37684968152);
+`remote-live`, `hardware-cuda`, `verify-opencode` and `test:llm-live` run in no CI job. `test:remote-live` and
+`test:hardware-cuda` exist and passed once (2026-10-07); `test:llm-live` is gated by `SPINOML_LIVE_LLM=1` and not yet run with
+real credentials. `test:verifier` skips its e2e part when no torch sidecar is running (it reports SKIPPED). Lint is 0 problems
+(baseline 0). No test freezes the wall clock.
 
 ---
 
@@ -245,11 +249,11 @@ For the full reproducibility contract, see `REPRODUCIBILITY.md` (existing
 
 ### 7.2 CUDA limitations
 
-**`unverified:`** This repository's installed torch build is
-`2.12.0+cpu` (`docs/engineering/BASELINE.md`); every CUDA branch of
-`verify:reference`, `verify:reference-train`, and the CUDA portions of
-the `deterministic` tests is reported `SKIPPED CUDA`. The `hardware-cuda`
-suite is BLOCKED (`scripts/suites.ts:573-579`).
+**Verified on one GPU (2026-10-07); elsewhere `unverified:`** `test:hardware-cuda` ran on a single
+RTX 2080 Ti (SLURM job 28293178) and passed; Ampere/Ada, MIG and multi-GPU were NOT tested. This
+repository's installed torch build is still `2.12.0+cpu` (`docs/engineering/BASELINE.md`), so on this
+host the CUDA branches of `verify:reference`, `verify:reference-train` and `deterministic` still report
+`SKIPPED CUDA`.
 
 What is device-dependent (the user must verify on the actual GPU):
 
@@ -379,9 +383,9 @@ Workarounds:
 
 Documented in detail in `REMOTE_TRAINING.md` §9. Summary:
 
-- **The `remote-live` suite is BLOCKED** (`scripts/suites.ts:565-570`).
-  No real HPC cluster test; the SSH/SLURM pipelines were verified
-  against a local sshd with bash scripts faking the cluster.
+- **`test:remote-live` passed once against one real site** (SC Leipzig `leipzig-hpc`, 2026-10-07);
+  the SSH/SLURM pipelines are otherwise verified against a local sshd with bash scripts faking the
+  cluster. Other sites remain unverified.
 - **The remote-sidecar bootstrap has NOT been exercised against a real
   RHEL/CentOS login node** where `systemd-logind` keeps user processes
   alive after the SSH channel dies

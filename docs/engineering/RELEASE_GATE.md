@@ -17,7 +17,7 @@ conda env's Node 20 for suites (Node 22 in an interactive shell), Rust 1.96. See
 * [x] Lint passes — `npx eslint .` reports **0 problems** (was 81); `scripts/lint-baseline.json` is zero, so the runner fails on any new one
 * [x] Rust checks pass — `cargo-check`, `cargo-test` (88 tests), `verify:rust-panics`
 * [x] Python tests pass — `verify:sidecar`, `test:robustness`, `test:scope`, `test:safe-load`, `test:deps-policy`, `test:run-script`, `verify:silent-except-py`, the trainer suites below. **Limit:** CUDA branches report `SKIPPED  CUDA`; `test:verifier` skips its end-to-end part without a running torch sidecar
-* [x] No known CRITICAL bugs — no CRITICAL row of `RISK_REGISTER.md` is OPEN (after the 2026-10-07 reconciliation; R021 = site-specific cluster path, R044 = no CUDA evidence are the only OPEN rows, both MEDIUM). "Known" means found by the audits/tests/reviews described in `BUGS_FIXED.md`; nothing here proves the absence of unknown ones
+* [x] No known CRITICAL bugs — no CRITICAL row of `RISK_REGISTER.md` is OPEN (after the 2026-10-07 reconciliation; R021 = site-specific cluster path and R044 = no CUDA evidence are now ADDRESSED for one site / one GPU, with the scope limits stated there). "Known" means found by the audits/tests/reviews described in `BUGS_FIXED.md`; nothing here proves the absence of unknown ones
 
 ## Graph
 
@@ -36,7 +36,7 @@ conda env's Node 20 for suites (Node 22 in an interactive shell), Rust 1.96. See
 * [x] Generated models instantiate — `test:codegen-golden`, `verify:codegen` (13 graphs), `verify:reference`
 * [x] Forward pass works — `test:codegen-golden` runs one forward per model case and checks the output shape
 * [x] Backward pass works — `verify:reference` (loss + backward), `verify:reference-train`
-* [~] Gradient tests exist — `verify:reference` compares **every gradient** with hand-written PyTorch for three reference graphs (MLP, CNN, multi-input), with a mutation-verified negative control. The other layer families (attention, recurrent, GNN, …) are checked by golden text, one forward pass and the random-graph oracle, **not** by a gradient comparison. CPU only
+* [~] Gradient tests exist — `verify:reference` compares **every gradient** with hand-written PyTorch for three reference graphs (MLP, CNN, multi-input), with a mutation-verified negative control. The other layer families (attention, recurrent, GNN, …) are checked by golden text, one forward pass and the random-graph oracle, **not** by a gradient comparison. Verified on CPU and (for the three reference graphs only) on one GPU, `test:hardware-cuda` (RTX 2080 Ti): forward ≤ 1.2e-7, gradients ≤ 8.9e-8; other GPU architectures not tested
 
 ## Shape Inference
 
@@ -88,7 +88,7 @@ conda env's Node 20 for suites (Node 22 in an interactive shell), Rust 1.96. See
 * [~] SLURM submission · [~] SLURM status tracking · [~] SLURM failure handling — `verify:slurm` (submit parsing, every squeue/sacct mapping incl. communication loss, `cargo test`), against fakes
 * [~] Job ID persistence — `verify:submission` (claim directory idempotency, retry recognises the durable pid)
 * [~] Application restart recovery — `verify:recovery`, `verify:states`
-* **None of the above has been run against a real HPC login node or a real SLURM scheduler** (`remote-live` is BLOCKED here). Every `[~]` in this section carries that condition
+* **Verification update 2026-10-07:** `test:remote-live` drove the real `ssh_*`/launch code against SC Leipzig (`login01`, alias `leipzig-hpc`, SLURM): live connection, a direct run, a SLURM run (done) plus a run cancelled via `ssh_stop_training_run` (`sacct` CANCELLED), recovery after dropping in-memory state and a GPU run (`env.device == cuda`) all pass (PASS 5 / FAIL 0 / SKIPPED 1); `live_bootstrap` is SKIPPED because `run_bootstrap` takes an `AppHandle`. The rows above were otherwise verified against fakes; the bootstrap/tunnel/remote-sidecar through the real window, other clusters, other GPUs, long runs and multi-node remain unverified — see `REMOTE_TRAINING.md` §9
 
 ## Security
 
@@ -106,27 +106,24 @@ conda env's Node 20 for suites (Node 22 in an interactive shell), Rust 1.96. See
 | Condition | Assessment |
 |---|---|
 | Data can be silently corrupted | **No known path.** The one found (cross-document undo, R060) is fixed and tested; corrupt persisted/run files are rejected or repaired and reported. Unknown ones cannot be excluded |
-| A wrong model can be generated and accepted as valid | Not for the reference/golden/random families on CPU (`verify:reference`, `test:codegen-golden`, `test:property`). **CUDA is unverified**; layer families without a gradient comparison rely on golden + forward checks |
+| A wrong model can be generated and accepted as valid | Not for the reference/golden/random families on CPU (`verify:reference`, `test:codegen-golden`, `test:property`) nor for the three reference graphs on one GPU (`test:hardware-cuda`, RTX 2080 Ti). **Other GPU architectures are unverified**; layer families without a gradient comparison rely on golden + forward checks |
 | Shape inference can silently be wrong | Checked against an independent oracle for the random-graph families (`test:property`); families not generated are listed in `LIMITATIONS.md` §6 |
 | A failed training run can be reported as successful | No: the integrity gate refuses `done`; unreadable status/empty loader/corrupt manifest were fixed (Phase 50) |
 | A corrupted checkpoint can be silently accepted | No, except checkpoints > 256 MB get header/size checks only (`LIMITATIONS.md` §5) |
 | Dataset leakage without detection where the system manages the split | No: strategy frozen, zero-overlap asserted, overlap fails the run. Only `random` is implemented — the other selectable strategies fail the run (stage `split`) rather than falling back silently |
 | A stale asynchronous response can overwrite current state | No (`test:races`, `verify:graph-revision`) |
 | An invalid graph can become the authoritative graph | No: validated before commit (`loadSnapshot`, `connectNodes`, LLM tools) |
-| A remote job can be reported with an incorrect final status | Reconciliation is unit/fake-tested for every state; **not verified on a real scheduler** |
+| A remote job can be reported with an incorrect final status | Reconciliation is unit/fake-tested for every state and was exercised once against one real SLURM site (`test:remote-live`: a run cancelled → `sacct` CANCELLED; direct + SLURM runs reach `done`); not exhaustively on other schedulers |
 | A running experiment can be silently changed by later UI edits | No: frozen run snapshot with hashes (`verify:immutability`) |
 | An experiment cannot be reconstructed from its artifacts | Reconstructible from git state + manifest + frozen graph/model + config + seed; dataset *content* is not stored (fingerprint only) |
 | Critical security vulnerabilities remain unresolved | None known after Phases 43–47, 77/78, 79 (dependency audit: 0 critical, 2 low npm advisories, 1 lock-only Rust entry, unmaintained transitive crates) |
 
 ## Verdict: **CONDITIONAL**
 
-Every CRITICAL item that can be evaluated on this machine passes with a named, mutation-checked suite. The label
-**"Production Ready for Scientific Work" is NOT claimed**, because these applicable requirements could not be
-verified here and must be before it is:
+Every CRITICAL item that can be evaluated on this machine passes with a named, mutation-checked suite. Four requirements
+were closed on 2026-10-07, each with the scope limits stated below (GitHub CI green; CUDA on one GPU; a real cluster at one site; a 1 h soak). The label
+**"Production Ready for Scientific Work" is NOT claimed**, because these applicable requirements remain:
 
-1. **CUDA** — run `hardware-cuda` / `verify:reference-train` on a machine with a GPU (every CUDA branch is `SKIPPED` here; bit-level reproducibility on CUDA is not claimed).
-2. **A real cluster** — run `remote-live` (`SPINOML_REMOTE_TESTS`) against the target SLURM site; all remote results above are against fakes.
-3. **The real Tauri window** — launch the built app once and confirm the strict CSP, the auth wiring and the scope writer behave (they are verified in a real Chromium and by unit/real-process tests, not in WebKitGTK). Fallback if the window misbehaves: `app.security.csp: null`.
-4. **CI on GitHub** — `.github/workflows/ci.yml` has never run; confirm it is green once.
-5. **A long soak** — `npm run test:soak -- --seconds 3600` (the 90 s run in CI cannot resolve slow leaks).
-6. **The Claude subscription provider** (OAuth) and the real opencode CLI are not driven by any suite.
+1. **The real Tauri window** — launch the built app once and confirm the strict CSP, the auth wiring and the scope writer behave (they are verified in a real Chromium and by unit/real-process tests, not in WebKitGTK). Checklist: `docs/engineering/TAURI_SMOKE.md`. Fallback if the window misbehaves: `app.security.csp: null`.
+2. **The Claude subscription provider** (OAuth) and the real opencode CLI are not driven by any suite (`scripts/test-llm-live.ts` exists, verified only against a local fake provider; needs credentials and `SPINOML_LIVE_LLM=1`).
+3. **The in-window cluster path** — `test:remote-live` passed once, but `run_bootstrap` takes an `AppHandle`, so the bootstrap/tunnel/remote-sidecar through the real Tauri window is still a manual step; other clusters, other GPU architectures, multi-GPU, long runs and multi-node are untested.
