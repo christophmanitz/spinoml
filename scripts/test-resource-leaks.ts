@@ -398,6 +398,12 @@ async function llmFamily(): Promise<void> {
     harness = await LlmHarness.connect({ baseUrl: sA.url })
     // Warm up a couple of turns so lazy module init settles.
     await harness.chat({ script: [{ text: 'warm' }], token: TOKEN, timeoutMs: 20000 })
+    // ALSO warm the opencode path: its first turns do fs work that makes libuv create its
+    // lazily-started threadpool (up to UV_THREADPOOL_SIZE=4 threads, once, never again).
+    // Taking the baseline before that made the "thread delta <= 2" bound depend on how many
+    // pool threads the machine had already started (CI measured 4). A thread LEAK still
+    // shows up as growth across the 165 measured turns.
+    await runOpencodeTurns(sA, 3, false)
     const baseA = readProcStats(pidA)
     const baseDiagA = await diagOf(sA.url, TOKEN)
     const cpu0 = baseA.cpuSeconds

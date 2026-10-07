@@ -285,7 +285,14 @@ function spawnBrowser(bin: string, args: string[]): Launched {
   proc.stderr?.on('data', (d: Buffer) => {
     stderr += d.toString()
   })
-  return { proc, stderr, usedNoSandbox: args.includes('--no-sandbox') }
+  // A candidate that is not installed emits 'error' (ENOENT) instead of exiting; without a
+  // handler that is an unhandled event and kills the whole suite (GitHub runner: the first
+  // candidates do not exist). Record it as a failed launch so the next candidate is tried.
+  const launched: Launched = { proc, stderr, usedNoSandbox: args.includes('--no-sandbox') }
+  proc.on('error', (e: Error) => {
+    launched.stderr += `spawn ${bin} failed: ${e.message}\n`
+  })
+  return launched
 }
 
 function killBrowser(proc: ChildProcess | null): void {

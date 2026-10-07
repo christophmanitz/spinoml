@@ -193,7 +193,15 @@ console.log('  [cancelled run leaves resumable checkpoint]')
   check('status = cancelled', readFileSync(join(dirC, 'status'), 'utf8').trim() === 'cancelled')
   check('last.pt written on cancel', existsSync(join(dirC, 'checkpoints', 'last.pt')))
   const ep = ckptField<number>(join(dirC, 'checkpoints', 'last.pt'), 'ck["epoch"]')
-  check('cancel checkpoint epoch = 1 (last completed)', ep === 1, String(ep))
+  // The cancel is written after the poll sees epoch 1 end; on a fast machine the trainer can
+  // finish further (tiny) epochs before it reads the status file (CI: got 2). The invariant is
+  // NOT a fixed epoch but that last.pt belongs to the LAST COMPLETED epoch of this run.
+  const endedEpochs = readFileSync(join(dirC, 'events.jsonl'), 'utf8').split('\n')
+    .filter((l) => l.includes('"kind": "epoch.end"'))
+    .map((l) => (JSON.parse(l) as { epoch: number }).epoch)
+  const lastEnded = endedEpochs.length ? Math.max(...endedEpochs) : -1
+  check('cancel checkpoint epoch = last completed epoch of the run (>= 1)', ep === lastEnded && ep >= 1,
+    `checkpoint=${ep} last epoch.end=${lastEnded}`)
 }
 
 // ── 4. atomic write crash simulation (Phases 27+28) ──
