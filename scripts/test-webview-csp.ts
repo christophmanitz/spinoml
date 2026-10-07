@@ -33,6 +33,18 @@ import { extname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)), '..')
+
+// The CDP client below uses Node's global WebSocket (stable since Node 22; the conda env the
+// runner uses ships Node 20, where it only exists behind `--experimental-websocket`). Re-exec once
+// with the flag instead of failing — the flag is accepted (and a no-op) on Node 22.
+if (typeof WebSocket === 'undefined' && process.env.SPINOML_WS_REEXEC !== '1') {
+  const again = spawnSync(
+    process.execPath,
+    ['--experimental-websocket', ...process.execArgv, ...process.argv.slice(1)],
+    { stdio: 'inherit', env: { ...process.env, SPINOML_WS_REEXEC: '1' } },
+  )
+  process.exit(again.status ?? 1)
+}
 const DIST = join(ROOT, 'dist')
 const CONFIG = join(ROOT, 'src-tauri', 'tauri.conf.json')
 
