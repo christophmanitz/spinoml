@@ -26,6 +26,9 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = join(HERE, '..')
+// Interpreter that can import torch: the runner exports PYTHON (resolved from
+// SPINOML_CONDA_ENV / a plain pip env); direct runs fall back to `python`.
+const PYTHON = process.env.PYTHON ?? 'python'
 const FIXTURES_DIR = join(REPO_ROOT, 'examples', 'reference-experiments')
 const COMPARE_SCRIPT = join(HERE, 'lib', 'reference_compare.py')
 const FIXED_SAVED_AT = '1970-01-01T00:00:00.000Z'
@@ -245,8 +248,8 @@ function main(): number {
       experiments: prepared.map((p) => ({ name: p.name, model_py: p.modelPy })),
     })
     const proc = spawnSync(
-      'conda',
-      ['run', '--no-capture-output', '-n', 'mlforge-dev', 'python', COMPARE_SCRIPT],
+      PYTHON,
+      [COMPARE_SCRIPT],
       { input: job, encoding: 'utf-8', maxBuffer: 128 * 1024 * 1024 },
     )
     if (proc.error) {

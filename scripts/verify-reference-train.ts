@@ -36,6 +36,9 @@ const REPO_ROOT = join(HERE, '..')
 const FIXTURES_DIR = join(REPO_ROOT, 'examples', 'reference-experiments')
 const TEMPLATE = join(REPO_ROOT, 'sidecar-torch', 'training_template.py')
 const CHECK_PY = join(HERE, 'lib', 'reference_train_check.py')
+// Interpreter that can import torch: the runner exports PYTHON (resolved from
+// SPINOML_CONDA_ENV / a plain pip env); direct runs fall back to `python`.
+const PYTHON = process.env.PYTHON ?? 'python'
 const FP_HEADER = Buffer.from('spinoml-dataset-fp-v1\x00', 'utf8')
 
 type ExpName = 'mlp' | 'cnn' | 'multi-input'
@@ -297,7 +300,7 @@ function writeBranchTensors(csvPath: string, baseDir: string, columns: string[])
     '        t = torch.tensor([float(r[c]) for c in cols], dtype=torch.float32)',
     '        torch.save(t, os.path.join(d, f"{int(r[\'id\'])}.pt"))',
   ].join('\n')
-  const r = spawnSync('python', ['-c', script, csvPath, baseDir, String(nA), String(nB)], { encoding: 'utf8' })
+  const r = spawnSync(PYTHON, ['-c', script, csvPath, baseDir, String(nA), String(nB)], { encoding: 'utf8' })
   if (r.status !== 0) {
     throw new Error(`failed to write manifest branch tensors: ${(r.stderr ?? '').slice(0, 400)}`)
   }
@@ -368,7 +371,7 @@ type TrainOutcome = { ok: boolean; detail: string }
 
 function runTrain(dir: string): TrainOutcome {
   try {
-    execSync('python -u train.py > stdout.log 2> stderr.log', {
+    execSync(`${JSON.stringify(PYTHON)} -u train.py > stdout.log 2> stderr.log`, {
       cwd: dir,
       shell: '/bin/bash',
       timeout: 180_000,
@@ -428,7 +431,7 @@ type HelperResult = {
 }
 
 function runCheck(dir: string, kind: Kind): HelperResult {
-  const r = spawnSync('python', [CHECK_PY, dir, kind], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
+  const r = spawnSync(PYTHON, [CHECK_PY, dir, kind], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
   if (r.status !== 0) {
     return { ok: false, error: `helper exited ${r.status}: ${(r.stderr ?? '').slice(0, 400)}` }
   }
@@ -599,7 +602,7 @@ async function checkExperiment(name: ExpName, parent: string, exp: ExpResult, mi
 // ─── CUDA (only if available) ─────────────────────────────────────────────────
 
 function cudaAvailable(): boolean {
-  const r = spawnSync('python', ['-c', 'import torch; print(torch.cuda.is_available())'], { encoding: 'utf8' })
+  const r = spawnSync(PYTHON, ['-c', 'import torch; print(torch.cuda.is_available())'], { encoding: 'utf8' })
   return (r.stdout ?? '').trim() === 'True'
 }
 

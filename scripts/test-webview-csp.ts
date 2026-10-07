@@ -301,6 +301,10 @@ function killBrowser(proc: ChildProcess | null): void {
   }
 }
 
+function isTruthy(v: string | undefined): boolean {
+  return v === '1' || v === 'true'
+}
+
 function buildArgs(debugPort: number, userDataDir: string, noSandbox: boolean): string[] {
   const args = [
     '--headless=new',
@@ -315,6 +319,7 @@ function buildArgs(debugPort: number, userDataDir: string, noSandbox: boolean): 
     `--remote-debugging-port=${debugPort}`,
   ]
   if (noSandbox) args.push('--no-sandbox')
+  args.push('--disable-dev-shm-usage') // CI runners have a tiny /dev/shm
   args.push('about:blank')
   return args
 }
@@ -382,8 +387,12 @@ async function main(): Promise<number> {
     // (d) launch a real browser and connect over CDP.
     userDataDir = await mkdtemp(join(tmpdir(), 'spinoml-csp-'))
     let started = false
+    // On GitHub's ubuntu runner Chromium needs --no-sandbox (user namespaces are
+    // unavailable); try that first when running under CI, otherwise the plain
+    // invocation first. Locally both usually work.
+    const forceNoSandbox = isTruthy(process.env.CI) || process.env.SPINOML_CHROMIUM_NO_SANDBOX === '1'
     for (const bin of bins) {
-      for (const noSandbox of [false, true]) {
+      for (const noSandbox of forceNoSandbox ? [true, false] : [false, true]) {
         const attempt = spawnBrowser(bin, buildArgs(debugPort, userDataDir, noSandbox))
         const ok = await waitDebugPort(debugPort, noSandbox ? 8_000 : 8_000)
         if (ok) {

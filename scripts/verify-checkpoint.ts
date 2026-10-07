@@ -13,9 +13,10 @@ const repoRoot = join(import.meta.dirname, '..')
 const template = join(repoRoot, 'sidecar-torch', 'training_template.py')
 
 let failures = 0
+const failedChecks: string[] = []
 function check(name: string, cond: boolean, detail = '') {
   if (cond) console.log(`  ✓ ${name}`)
-  else { failures++; console.log(`  ✗ ${name} ${detail}`) }
+  else { failures++; failedChecks.push(`${name}${detail ? ` — ${detail}` : ''}`); console.log(`  ✗ ${name} ${detail}`) }
 }
 
 // ── synthetic data (same generator as verify-smoke) ──
@@ -316,5 +317,10 @@ console.log('  [rng restore failure is recorded]')
   check('python stream still restored', rr?.python === 'restored', JSON.stringify(rr ?? 'missing'))
 }
 
+if (failures > 0) {
+  console.log('')
+  console.log('[failed checks]')
+  for (const f of failedChecks) console.log(`  ✗ ${f}`)
+}
 console.log(failures === 0 ? '\n✓ all checkpoint checks passed' : `\n✗ ${failures} check(s) failed`)
 process.exit(failures === 0 ? 0 : 1)

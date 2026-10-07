@@ -42,7 +42,9 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = join(HERE, '..')
 const PY_SCRIPT = join(HERE, 'lib', 'property_run.py')
-const CONDA_ENV = process.env.SPINOML_CONDA_ENV ?? 'mlforge-dev'
+// Interpreter that can import torch: the runner exports PYTHON (resolved from
+// SPINOML_CONDA_ENV / a plain pip env); direct runs fall back to `python`.
+const PYTHON = process.env.PYTHON ?? 'python'
 const PYTHON_BATCH = 3
 const SIDECAR_PORT = Number(process.env.SPINOML_TORCH_PORT ?? '7421')
 const SIDECAR_URL = `http://127.0.0.1:${SIDECAR_PORT}`
@@ -267,8 +269,8 @@ async function main(): Promise<number> {
   console.log(`running ${pyCases.length} generated models in one python process…`)
   const job = JSON.stringify({ batch: PYTHON_BATCH, cases: pyCases })
   const proc = spawnSync(
-    'conda',
-    ['run', '--no-capture-output', '-n', CONDA_ENV, 'python', PY_SCRIPT],
+    PYTHON,
+    [PY_SCRIPT],
     { input: job, encoding: 'utf-8', maxBuffer: 512 * 1024 * 1024, cwd: REPO_ROOT },
   )
   let pyResults: Record<string, PyCaseResult> = {}

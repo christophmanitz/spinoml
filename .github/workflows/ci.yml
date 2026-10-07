@@ -20,9 +20,9 @@
 #   * No network access for downloads. Private datasets, HuggingFace auth,
 #     etc. are out of scope.
 #
-# The `rust` job has never been run by the authors on GitHub Actions — the
-# toolchain is not installed on the development box. The matrix was assembled
-# from the official Tauri 2 Linux prerequisites
+# The Rust toolchain lives in the conda env `mlforge-dev` on the dev box
+# (cargo/rustc are NOT on a bare PATH). The matrix was assembled from the
+# official Tauri 2 Linux prerequisites
 # (https://v2.tauri.app/start/prerequisites/) and the dtolnay/rust-toolchain
 # defaults. Treat a green rust job as an "if it builds, fine" smoke until
 # someone with a working toolchain has reviewed it.
@@ -64,6 +64,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install sidecar-llm deps
+        run: npm ci --prefix sidecar-llm
+
       - name: Build (tsc + vite)
         run: npm run build
 
@@ -71,7 +74,7 @@ jobs:
         run: npm run typecheck:scripts
 
       - name: Run non-python suites
-        run: npm run ci -- --no-python --allow-known --json .test-results/node.json --markdown .test-results/node.md
+        run: npm run ci -- --only-needs none --allow-known --json .test-results/node.json --markdown .test-results/node.md
 
       - name: Upload results
         if: always()
@@ -79,7 +82,7 @@ jobs:
         with:
           name: test-results-node
           path: .test-results/
-          retention-days: 14
+          retention-days: 7
 
   # ── 2. Python-backed suites (CPU torch) ─────────────────────────────
   python:
@@ -112,11 +115,14 @@ jobs:
       - name: Install npm deps
         run: npm ci
 
+      - name: Install sidecar-llm deps
+        run: npm ci --prefix sidecar-llm
+
       - name: Build (tsc + vite)
         run: npm run build
 
       - name: Run python-backed suites
-        run: npm run ci -- --only-python --allow-known --json .test-results/python.json --markdown .test-results/python.md
+        run: npm run ci -- --only-needs torch-env --allow-known --json .test-results/python.json --markdown .test-results/python.md
 
       - name: Upload results
         if: always()
@@ -124,7 +130,7 @@ jobs:
         with:
           name: test-results-python
           path: .test-results/
-          retention-days: 14
+          retention-days: 7
 
   # ── 3. Rust (Tauri shell) ───────────────────────────────────────────
   rust:
@@ -157,18 +163,16 @@ jobs:
         with:
           workspaces: src-tauri -> target
 
-      - name: cargo check
-        working-directory: src-tauri
-        run: cargo check --all-targets
+      - name: Install dependencies
+        run: npm ci
 
-      - name: cargo test
-        working-directory: src-tauri
-        run: cargo test
+      - name: Run cargo-backed suites
+        run: npm run ci -- --only-needs cargo --allow-known --json .test-results/rust.json --markdown .test-results/rust.md
 
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results-rust
-          path: src-tauri/target/
+          path: .test-results/
           retention-days: 7

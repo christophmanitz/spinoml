@@ -390,7 +390,7 @@ export const SUITES: readonly Suite[] = [
     npmScript: 'verify:credentials',
     category: 'contract',
     timeoutSec: 60,
-    needs: [],
+    needs: ['cargo'], // runs `cargo test` for the Rust sanitizers
     why: 'Secret/credential scan across artifacts, logs, error sanitize',
   },
   {
@@ -406,7 +406,7 @@ export const SUITES: readonly Suite[] = [
     npmScript: 'verify:recovery',
     category: 'contract',
     timeoutSec: 90,
-    needs: [],
+    needs: ['cargo'], // runs `cargo test` for the Rust status reconcilers
     why: 'Remote job recovery (live re-query, no localStorage cache)',
   },
   {

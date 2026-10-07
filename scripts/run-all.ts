@@ -19,6 +19,10 @@
 //   --list             print the registry as a table and exit
 //   --only a,b,c       restrict to these suite names
 //   --category c       restrict to one category
+//   --only-needs c     keep only suites whose `needs` include capability `c`
+//                      (or `none` for suites that need no capability) — the CI
+//                      jobs partition the registry this way so every suite runs
+//                      in exactly one job
 //   --ci               CI mode (sets CI=1; tightens remote/needs policy)
 //   --no-python        skip suites whose needs include `torch-env`
 //   --only-python      keep only suites whose needs include `torch-env`
@@ -48,10 +52,22 @@ const BASELINE_PATH = join(ROOT, 'scripts', 'lint-baseline.json')
 
 // ── flags ───────────────────────────────────────────────────────────────
 
+const ALL_NEEDS: readonly Need[] = [
+  'torch-env',
+  'cargo',
+  'cuda',
+  'ssh-host',
+  'slurm',
+  'network',
+  'llm-key',
+  'private-data',
+]
+
 interface Flags {
   list: boolean
   check: boolean
   only: Set<string>
+  onlyNeeds: Need | 'none' | null
   category: Category | null
   ci: boolean
   noPython: boolean
@@ -68,6 +84,7 @@ function parseFlags(argv: string[]): Flags {
     list: false,
     check: false,
     only: new Set<string>(),
+    onlyNeeds: null,
     category: null,
     ci: false,
     noPython: false,
@@ -96,6 +113,13 @@ function parseFlags(argv: string[]): Flags {
       const v = argv[++i]
       if (!v) throw new Error('--category requires a value')
       flags.category = v as Category
+    } else if (a === '--only-needs') {
+      const v = argv[++i]
+      if (!v) throw new Error('--only-needs requires a capability name or "none"')
+      if (v !== 'none' && !ALL_NEEDS.includes(v as Need)) {
+        throw new Error(`--only-needs: unknown capability "${v}" (expected none or one of ${ALL_NEEDS.join(', ')})`)
+      }
+      flags.onlyNeeds = v === 'none' ? 'none' : (v as Need)
     } else if (a === '--markdown') {
       const v = argv[++i]
       if (!v) throw new Error('--markdown requires a path')
@@ -304,6 +328,9 @@ const ALLOW = new Set([
   'NODE_PATH',
   'CI',
   'FORCE_COLOR',
+  // interpreter override + the resolved interpreter we hand to child suites
+  // (scripts use `process.env.PYTHON ?? 'python'`; `python` also resolves via PATH)
+  'PYTHON',
   // conda family — the runner uses conda run; CONDA_PREFIX/PATH help children resolve
   'CONDA_PREFIX',
   'CONDA_DEFAULT_ENV',
@@ -366,10 +393,19 @@ function dirStats(dir: string): { entries: number; bytes: number } {
 function buildPythonPath(caps: Capabilities): { env: NodeJS.ProcessEnv; extraPath: string } {
   const { env } = scrubbedEnv()
   const envBin = caps['torch-env'].envBin
+  // Expose the resolved interpreter to every child suite as PYTHON (single
+  // executable — scripts spawn it directly). An explicit PYTHON from the caller
+  // wins (it is allow-listed in scrubbedEnv). This is what makes the python
+  // suites work both under `conda run -n mlforge-dev` and in a plain pip CI env.
   if (envBin) {
     const prev = env.PATH ?? ''
     env.PATH = `${envBin}:${prev}`
+    if (!env.PYTHON) env.PYTHON = join(envBin, 'python')
     return { env, extraPath: envBin }
+  }
+  if (!env.PYTHON) {
+    const py = caps['torch-env'].pythonCmd
+    if (py === 'python') env.PYTHON = which('python') ?? 'python'
   }
   return { env, extraPath: '' }
 }
@@ -822,6 +858,10 @@ function selectSuites(flags: Flags): Suite[] {
     }
   }
   if (flags.category) xs = xs.filter((s) => s.category === flags.category)
+  if (flags.onlyNeeds !== null) {
+    const want = flags.onlyNeeds
+    xs = xs.filter((s) => (want === 'none' ? s.needs.length === 0 : s.needs.includes(want)))
+  }
   return xs
 }
 
