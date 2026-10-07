@@ -10,7 +10,8 @@ import { useVizStore } from './store'
 import type { NodeActivation, Weights, Preview } from './client'
 
 type EdgesPreview = Extract<Preview, { kind: 'edges' }>
-import { Heatmap, VectorBars, Histogram, TensorShape, NodeLinkGraph, Legend, LEGEND_DIVERGING, legendMono } from './primitives'
+import { Heatmap, VectorBars, Histogram, TensorShape, NodeLinkGraph, Legend } from './primitives'
+import { LEGEND_DIVERGING, legendMono } from './primitiveHelpers'
 import { explainFor } from './explainText'
 
 // The big "what happens in this layer" panel. Replaces the Inspector while

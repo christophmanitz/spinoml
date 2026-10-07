@@ -4,7 +4,6 @@
 import { useGraphStore } from '../src/canvas/GraphStore'
 import { generate, generateFromSnapshot } from '../src/codegen/generator'
 import { parseFile, serializeCurrent } from '../src/persistence/file'
-import type { GraphSnapshot } from '../src/canvas/GraphStore'
 
 let passed = 0
 let failed = 0

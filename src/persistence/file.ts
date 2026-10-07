@@ -44,7 +44,7 @@ export function serializeCurrent(): string {
 export function parseFile(text: string): GraphSnapshot {
   let obj: unknown
   try { obj = JSON.parse(text) }
-  catch (e) { throw new Error(`not valid JSON: ${(e as Error).message}`) }
+  catch (e) { throw new Error(`not valid JSON: ${(e as Error).message}`, { cause: e }) }
   if (!obj || typeof obj !== 'object') throw new Error('expected a JSON object')
   const file = obj as Partial<SpinoMLFile>
   if (file.format !== 'spinoml') throw new Error('not a spinoml file (missing format)')

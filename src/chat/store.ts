@@ -390,7 +390,7 @@ async function snapshotProject() {
     active_dataset_inspect = cached?.data ?? undefined
   }
 
-  let recent_notes: { name: string; excerpt: string }[] = []
+  const recent_notes: { name: string; excerpt: string }[] = []
   try {
     const list = await notesBackend.list()
     const top = list.slice(0, 3)

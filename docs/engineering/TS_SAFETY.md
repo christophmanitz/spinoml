@@ -50,6 +50,9 @@ once in a file must appear that many times; a stale row fails.
 | `src/workspace/FileExplorer.tsx:244` | `stack.pop()!` | SAFE | guarded by `while (stack.length)` at the top of the recursion. | keep |
 | `src/workspace/store.ts:355` | `stack.pop()!` | SAFE | guarded by `while (stack.length)` immediately above. | keep |
 | `src/workspace/tauri-fs.ts:16` | `window as unknown as { __TAURI_INTERNALS__?: unknown }` | SAFE | structural test for the Tauri runtime; no runtime data crosses the cast, only the static type widening does. | keep |
+| `src/canvasdoc/CanvasFileGate.tsx:31` | `// eslint-disable-next-line react-hooks/set-state-in-effect -- start-of-effect l` | SAFE | the file-open effect must show "loading" synchronously before `adapter.open` resolves, else it briefly renders the graph of the file being replaced; the async `.then/.catch` clears it. | keep |
+| `src/training/EvalRunModal.tsx:145` | `// eslint-disable-next-line react-hooks/set-state-in-effect -- dataset/manifest ` | SAFE | selecting a dataset/manifest seeds the editable adapter form from JSON-shaped derived data; computing it during render would re-run the seed on every keystroke. | keep |
+| `src/training/RunDetailModal.tsx:190` | `// eslint-disable-next-line react-hooks/set-state-in-effect -- reload() synchron` | SAFE | `reload()` resets the loading state synchronously before its async refetch; the effect also fires on open, so a render-time adjustment would race it. | keep |
 
 ## Fixed (no longer in `src/`)
 

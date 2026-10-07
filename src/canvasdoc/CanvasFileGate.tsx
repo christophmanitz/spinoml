@@ -8,18 +8,9 @@
 import { useEffect, useState } from 'react'
 import { isTauri } from '../workspace/tauri-fs'
 import { useWorkspaceStore } from '../workspace/store'
-import { useCanvasDocStore, type CanvasDocAdapter, type CanvasKind } from './store'
+import { useCanvasDocStore, type CanvasDocAdapter } from './store'
 import { fireAndForget } from '../errors/report'
-
-// `${kind}:${relpath}` already loaded this session — so switching canvas modes
-// doesn't reload (and clobber unsaved edits). Module-scoped on purpose.
-const hydrated = new Set<string>()
-
-/** Mark a (kind, relpath) as already loaded so the gate won't reload it — used
- *  when we bind a file FROM the current store (the store already holds it). */
-export function markCanvasHydrated(kind: CanvasKind, relpath: string): void {
-  hydrated.add(`${kind}:${relpath}`)
-}
+import { isCanvasHydrated, markCanvasHydrated } from './hydrate'
 
 export default function CanvasFileGate({ adapter, children }: { adapter: CanvasDocAdapter; children: React.ReactNode }) {
   const doc = useCanvasDocStore((s) => s.docs[adapter.kind])
@@ -33,13 +24,15 @@ export default function CanvasFileGate({ adapter, children }: { adapter: CanvasD
   useEffect(() => {
     // External owners (workspace .spinoml) load the file themselves — don't reload.
     if (!gated || !relpath || adapter.external) return
-    const key = `${adapter.kind}:${relpath}`
-    if (hydrated.has(key)) return
+    if (isCanvasHydrated(adapter.kind, relpath)) return
     let cancelled = false
+    // The gate must show "loading" synchronously before adapter.open resolves,
+    // otherwise it briefly renders the (stale) graph of the file being replaced.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- start-of-effect loading reset; cleared by the async .then/.catch below
     setLoading(true)
     setLoadError(null)
     adapter.open(relpath)
-      .then(() => { hydrated.add(key); if (!cancelled) setLoading(false) })
+      .then(() => { markCanvasHydrated(adapter.kind, relpath); if (!cancelled) setLoading(false) })
       .catch((e) => {
         // A bound file that no longer parses must be reported, not silently
         // dropped back to the chooser (which would imply "no file" rather than
@@ -146,7 +139,7 @@ function FileChooser({ adapter }: { adapter: CanvasDocAdapter }) {
     setBusy(true); setErr(null)
     try {
       await adapter.open(relpath)
-      hydrated.add(`${adapter.kind}:${relpath}`)
+      markCanvasHydrated(adapter.kind, relpath)
       setBound(adapter.kind, relpath)
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)) }
     finally { setBusy(false) }
@@ -157,7 +150,7 @@ function FileChooser({ adapter }: { adapter: CanvasDocAdapter }) {
     setBusy(true); setErr(null)
     try {
       const rel = await adapter.create(trimmed)
-      hydrated.add(`${adapter.kind}:${rel}`)
+      markCanvasHydrated(adapter.kind, rel)
       setBound(adapter.kind, rel)
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)) }
     finally { setBusy(false) }

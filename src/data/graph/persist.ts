@@ -25,7 +25,7 @@ export function serializeDataSnapshot(snapshot: DataGraphSnapshot): string {
 
 export function parseDataFile(text: string): DataGraphSnapshot {
   let obj: unknown
-  try { obj = JSON.parse(text) } catch (e) { throw new Error(`not valid JSON: ${(e as Error).message}`) }
+  try { obj = JSON.parse(text) } catch (e) { throw new Error(`not valid JSON: ${(e as Error).message}`, { cause: e }) }
   if (!obj || typeof obj !== 'object') throw new Error('expected a JSON object')
   const file = obj as Partial<SpinoDataFile>
   if (file.format !== 'spinodata') throw new Error('not a spinodata file (missing format)')

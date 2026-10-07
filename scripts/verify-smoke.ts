@@ -6,7 +6,7 @@
 // checkpoint/logs/metadata exist, and the run exits successfully.
 
 import { execSync } from 'node:child_process'
-import { writeFileSync, mkdtempSync, mkdirSync, readFileSync, existsSync, copyFileSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, readFileSync, existsSync, copyFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 

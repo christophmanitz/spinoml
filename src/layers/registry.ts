@@ -864,7 +864,7 @@ function coerceField(field: FieldSpec, value: unknown): unknown {
 function toIntArray(value: unknown): number[] {
   if (typeof value === 'number' && Number.isFinite(value)) return [Math.trunc(value)]
   if (typeof value === 'string') {
-    const parts = value.split(/[,\s\[\]]+/).filter(Boolean)
+    const parts = value.split(/[,\s[\]]+/).filter(Boolean)
     return parts
       .map((p) => parseInt(p, 10))
       .filter((n) => Number.isFinite(n))

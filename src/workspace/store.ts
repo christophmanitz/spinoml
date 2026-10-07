@@ -68,7 +68,7 @@ type State = {
 }
 
 function pyTwinPath(spinomlRel: string): string {
-  return spinomlRel.replace(/\.spinoml$/i, '').replace(/[^\w\/]+/g, '_') + '.py'
+  return spinomlRel.replace(/\.spinoml$/i, '').replace(/[^\w/]+/g, '_') + '.py'
 }
 
 function parentRelOf(relpath: string): string {

@@ -224,6 +224,10 @@ function ProjectHeader() {
   const status = useProjectStore((s) => s.status)
   const closeProject = useProjectStore((s) => s.closeProject)
   const currentId = useConnectionsStore((s) => s.currentId)
+  // Always subscribed (not behind the early return below): hook order must be
+  // identical on every render or React would remount/crash the header whenever
+  // status flips between loaded/not-loaded.
+  const listError = useTrainingStore((s) => s.listError)
   if (status.kind !== 'loaded') {
     // Phase 38 — error while loading the project (e.g. ssh lost during
     // project.load) must NOT look like "not connected"; show the failure so
@@ -255,7 +259,6 @@ function ProjectHeader() {
   // in violet as if connected. Use the training listError as a live
   // connectivity signal: a remote with a recent listError is "disconnected"
   // until the next successful poll.
-  const listError = useTrainingStore((s) => s.listError)
   const disconnected = conn.kind === 'remote-ssh' && !!listError
   return (
     <div className="flex items-center gap-2">

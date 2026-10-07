@@ -123,7 +123,7 @@ console.log('section: structurally invalid but valid-JSON files — fail closed'
     useGraphStore.getState().resetGraph()
     const baseline = serializeCurrentJson()
 
-    let parsed: GraphSnapshot | null = null
+    let parsed: GraphSnapshot | null
     try { parsed = parseFile(text) } catch { parsed = null }
     check(`parseFile accepts ${name} (JSON-level ok)`, parsed !== null)
 
@@ -157,7 +157,7 @@ console.log('section: never silently replace corrupt graph with empty graph')
   // reset to a non-trivial model, then try to open garbage — the graph must survive
   const full = buildModel()
   for (const [name, text] of [['empty', ''], ['bad JSON', '{{{'], ['structurally invalid', snap([{ id: 'x', layerType: 'Nope', params: {} }])]] as Array<[string, string]>) {
-    let rejected = false
+    let rejected: boolean
     try {
       const s = parseFile(text)
       rejected = !useGraphStore.getState().loadSnapshot(s)

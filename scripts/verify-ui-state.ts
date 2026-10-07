@@ -9,7 +9,6 @@
 // critical paths (training/SSH/SLURM/inference). Browser localStorage quota is
 // a known gap (localStorage silenced catch) but not the production Tauri path.
 
-import { execSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 

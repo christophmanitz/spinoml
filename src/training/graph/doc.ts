@@ -6,7 +6,7 @@ import { isTauri } from '../../workspace/tauri-fs'
 import { useWorkspaceStore } from '../../workspace/store'
 import { useTrainingGraphStore } from './store'
 import { useCanvasDocStore, boundRelpath, type CanvasDocAdapter } from '../../canvasdoc/store'
-import { markCanvasHydrated } from '../../canvasdoc/CanvasFileGate'
+import { markCanvasHydrated } from '../../canvasdoc/hydrate'
 import { listTrainingGraphs, loadTrainingGraph, createTrainingGraph, writeTrainingGraph, bindNewTrainingGraphFromCurrent } from './files'
 
 // True while LOADING a file into the store, so autosave doesn't write it back.

@@ -33,8 +33,7 @@ type Held = {
   body: { code: string; input_shapes: number[][]; input_dtypes?: string[] }
   resolve: (r: object) => void
 }
-let held: Held[] = []
-let parseCount = 0
+const held: Held[] = []
 const ORIG = globalThis.fetch
 
 function isMockable(url: string): boolean {
@@ -121,13 +120,12 @@ async function fin() {
 
 // install the mock BEFORE importing the store (import order matters: main()
 // is deferred; the store module import happens inside it via require())
-globalThis.fetch = (async (url: any, init?: any) => {
+globalThis.fetch = (async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
   const u = String(url)
   if (!isMockable(u)) return ORIG(url, init)
   if (u.includes('/health')) {
     return new Response(JSON.stringify({ ok: true }), { status: 200 })
   }
-  parseCount++
   const body = init?.body ? JSON.parse(String(init.body)) : { code: '' }
   let kind = 'unknown'
   if (body.code.includes('flatten')) kind = 'flatten'

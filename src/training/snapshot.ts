@@ -47,7 +47,7 @@ export async function buildRunSnapshot(
   modelSpinoml: string,
   modelPy: string,
 ): Promise<RunSnapshot> {
-  let graph: GraphSnapshot | null = null
+  let graph: GraphSnapshot | null
   try { graph = parseFile(modelSpinoml) } catch { graph = null }
   const [graph_sha256, model_py_sha256] = await Promise.all([
     sha256Hex(modelSpinoml),

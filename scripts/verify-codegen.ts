@@ -261,8 +261,9 @@ for (const c of cases) {
   try {
     const out = execSync(`python ${file}`, { encoding: 'utf-8' })
     console.log(`  ✓ runs:\n${out.split('\n').map((l) => '      ' + l).join('\n')}`)
-  } catch (e: any) {
-    console.log(`  ✗ python failed:\n${(e.stdout?.toString() ?? '') + (e.stderr?.toString() ?? '')}`)
+  } catch (e: unknown) {
+    const f = e as { stdout?: { toString(): string } | string; stderr?: { toString(): string } | string }
+    console.log(`  ✗ python failed:\n${(f.stdout?.toString() ?? '') + (f.stderr?.toString() ?? '')}`)
     failed++
   }
 }

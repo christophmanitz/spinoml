@@ -871,7 +871,13 @@ function TextInput({
   baseClass: string
 }) {
   const [draft, setDraft] = useState(value ?? '')
-  useEffect(() => { setDraft(value ?? '') }, [value])
+  // When the store value changes externally (LLM, undo, node switch) re-seed
+  // the draft; an in-progress user edit is preserved (draft !== lastValue).
+  const [lastValue, setLastValue] = useState(value)
+  if (value !== lastValue) {
+    setLastValue(value)
+    setDraft(value ?? '')
+  }
   const datalist = field.datalist
   const listId = datalist?.length ? `dl-${field.name}` : undefined
   return (
@@ -1181,7 +1187,11 @@ function IntInput({
   baseClass: string
 }) {
   const [draft, setDraft] = useState(String(value))
-  useEffect(() => { setDraft(String(value)) }, [value])
+  const [lastValue, setLastValue] = useState(value)
+  if (value !== lastValue) {
+    setLastValue(value)
+    setDraft(String(value))
+  }
   return (
     <input
       type="number"
@@ -1209,7 +1219,11 @@ function FloatInput({
   baseClass: string
 }) {
   const [draft, setDraft] = useState(String(value))
-  useEffect(() => { setDraft(String(value)) }, [value])
+  const [lastValue, setLastValue] = useState(value)
+  if (value !== lastValue) {
+    setLastValue(value)
+    setDraft(String(value))
+  }
   return (
     <input
       type="number"
@@ -1238,7 +1252,12 @@ function TupleIntInput({
 }) {
   const arr = (Array.isArray(value) ? value : field.default) as number[]
   const [drafts, setDrafts] = useState(() => arr.map((n) => String(n)))
-  useEffect(() => { setDrafts(arr.map((n) => String(n))) }, [arr.join(',')])
+  const canonical = arr.join(',')
+  const [lastCanonical, setLastCanonical] = useState(canonical)
+  if (canonical !== lastCanonical) {
+    setLastCanonical(canonical)
+    setDrafts(arr.map((n) => String(n)))
+  }
   return (
     <div className="flex gap-1">
       {Array.from({ length: field.arity }).map((_, i) => (
@@ -1272,7 +1291,11 @@ function ShapeInput({
   const arr = (Array.isArray(value) ? value : []) as number[]
   const canonical = arr.join(', ')
   const [draft, setDraft] = useState(canonical)
-  useEffect(() => { setDraft(canonical) }, [canonical])
+  const [lastCanonical, setLastCanonical] = useState(canonical)
+  if (canonical !== lastCanonical) {
+    setLastCanonical(canonical)
+    setDraft(canonical)
+  }
 
   const parsed = parseShape(draft)
   const valid = parsed !== null && parsed.length > 0
@@ -1326,7 +1349,11 @@ function IntListInput({
   const arr = (Array.isArray(value) ? value : []) as number[]
   const canonical = arr.join(', ')
   const [draft, setDraft] = useState(canonical)
-  useEffect(() => { setDraft(canonical) }, [canonical])
+  const [lastCanonical, setLastCanonical] = useState(canonical)
+  if (canonical !== lastCanonical) {
+    setLastCanonical(canonical)
+    setDraft(canonical)
+  }
 
   const parsed = parseIntList(draft)
   const valid = parsed !== null && parsed.length > 0

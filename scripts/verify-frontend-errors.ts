@@ -3,7 +3,7 @@
 // External operations should distinguish Loading / Success / Error / Timeout
 // / Cancelled / Unavailable, not just `loading=false`.
 
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 let failures = 0

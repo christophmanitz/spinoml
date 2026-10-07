@@ -87,6 +87,14 @@ export default function NewRunModal() {
 
   const [caps, setCaps] = useState<RemoteTrainingCapabilities | null>(null)
   const [capsError, setCapsError] = useState<string | null>(null)
+  // Switching connection invalidates the probe result: reset to "unknown"
+  // before the new probe lands (render-time so the probe effect stays clean).
+  const [lastProbeId, setLastProbeId] = useState(currentId)
+  if (currentId !== lastProbeId) {
+    setLastProbeId(currentId)
+    setCaps(null)
+    setCapsError(null)
+  }
   const [backendKind, setBackendKind] = useState<'local' | 'slurm'>('local')
   const [slurm, setSlurm] = useState<SlurmConfig>(remoteConn?.slurm ?? defaultSlurmConfig())
 
@@ -146,7 +154,11 @@ export default function NewRunModal() {
         setListErr(e instanceof Error ? e.message : String(e))
       }
     })()
-  }, [])
+    // Run-once list load: the modal is keyed by its prefill, and both
+    // `inspectDataset` (zustand action) and `prefill.datasetRelpath` are stable
+    // for the lifetime of the modal — adding them keeps the effect run-once in
+    // practice while satisfying the exhaustive-deps rule.
+  }, [inspectDataset, prefill?.datasetRelpath])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -157,11 +169,11 @@ export default function NewRunModal() {
   }, [close])
 
   // Probe the remote host once (sbatch? partitions? gpus?) so we only offer
-  // SLURM where it exists and can prefill the partition.
+  // SLURM where it exists and can prefill the partition. The reset-on-connection
+  // switch happens in render (previous state comparison) so the probe effect
+  // stays free of synchronous setState.
   useEffect(() => {
     let cancelled = false
-    setCaps(null)
-    setCapsError(null)
     void training.capabilities().then((c) => {
       if (cancelled) return
       setCaps(c)

@@ -43,7 +43,10 @@ export default function CodeField({
   const inlineRef = useRef<MonacoEditor | null>(null)
   const latest = useRef(value ?? '')          // live editor text (from onChange)
   const valueRef = useRef(value ?? '')        // last value we know the store holds
-  valueRef.current = value ?? ''
+  // Keep the store-value mirror in sync AFTER commit (not during render, where
+  // a concurrent/aborted render could leak an uncommitted prop value into a
+  // flush decision).
+  useEffect(() => { valueRef.current = value ?? '' }, [value])
   // Whether the CURRENT inline buffer came from a real user edit. A programmatic
   // setValue (isFlush === true) must never flip this — that is how an LLM/store
   // write under an uncontrolled editor could otherwise get auto-approved.

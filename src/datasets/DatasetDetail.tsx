@@ -4,6 +4,7 @@ import { useGraphStore } from '../canvas/GraphStore'
 import { iconFor, colorFor, formatSize } from './icons'
 import { NodeLinkGraph } from '../visualization/primitives'
 import { fireAndForget } from '../errors/report'
+import { normalizeManifest, type BranchMode, type BranchCfg, type ManifestCfg } from './manifestNormalize'
 import type {
   InspectResult, StatsResult, SmokeResult,
   TabularInspect, ImageFolderInspect, TensorInspect, ProteinInspect, MoleculeInspect, HuggingfaceInspect, PygInspect, GraphFolderInspect, ManifestInspect, GraphField,
@@ -151,7 +152,7 @@ function UseAsInputButton({ shape, label }: { shape: number[]; label?: string })
   )
 }
 
-function TabularOverview({ d, relpath: _relpath }: { d: TabularInspect; relpath: string }) {
+function TabularOverview({ d }: { d: TabularInspect; relpath: string }) {
   return (
     <div className="space-y-2">
       <div className="text-[#9aa1a8]">
@@ -187,7 +188,7 @@ function TabularOverview({ d, relpath: _relpath }: { d: TabularInspect; relpath:
   )
 }
 
-function ImageOverview({ d, relpath: _relpath }: { d: ImageFolderInspect; relpath: string }) {
+function ImageOverview({ d }: { d: ImageFolderInspect; relpath: string }) {
   const w = d.sample_size?.[0] ?? 64
   const h = d.sample_size?.[1] ?? 64
   return (
@@ -224,7 +225,7 @@ function ImageOverview({ d, relpath: _relpath }: { d: ImageFolderInspect; relpat
   )
 }
 
-function TensorOverview({ d, relpath: _relpath }: { d: TensorInspect; relpath: string }) {
+function TensorOverview({ d }: { d: TensorInspect; relpath: string }) {
   if (d.is_graph) {
     return (
       <div className="space-y-2">
@@ -282,7 +283,7 @@ function TensorOverview({ d, relpath: _relpath }: { d: TensorInspect; relpath: s
   )
 }
 
-function ProteinOverview({ d, relpath: _relpath }: { d: ProteinInspect; relpath: string }) {
+function ProteinOverview({ d }: { d: ProteinInspect; relpath: string }) {
   return (
     <div className="space-y-2">
       <div className="text-[#9aa1a8]">
@@ -305,7 +306,7 @@ function ProteinOverview({ d, relpath: _relpath }: { d: ProteinInspect; relpath:
   )
 }
 
-function MoleculeOverview({ d, relpath: _relpath }: { d: MoleculeInspect; relpath: string }) {
+function MoleculeOverview({ d }: { d: MoleculeInspect; relpath: string }) {
   return (
     <div className="space-y-2">
       <div className="text-[#9aa1a8]">
@@ -472,41 +473,6 @@ function PygOverview({ d }: { d: PygInspect }) {
 }
 
 // ── Graphical manifest editor: edit the .manifest JSON via a form, write to disk ──
-type BranchMode = 'molecule' | 'dir' | 'path'
-type BranchCfg = { name: string; column: string; mode: BranchMode; dir: string; match: 'exact' | 'contains'; ext: string }
-type ManifestCfg = { table: string; branches: BranchCfg[]; target: { column: string; type: 'regression' | 'classification' }; cache: boolean }
-
-export function normalizeManifest(raw: unknown): ManifestCfg {
-  // Trust boundary: a manifest is an arbitrary JSON document read from disk
-  // (or a JSON.parse of user input). Never throw — fall back to documented
-  // defaults so a torn/malformed file still yields a usable editor.
-  const isObj = (v: unknown): v is Record<string, unknown> =>
-    typeof v === 'object' && v !== null && !Array.isArray(v)
-  const root = isObj(raw) ? raw : {}
-  const pairs = isObj(root.pairs) ? root.pairs : {}
-  const branches: BranchCfg[] = Object.entries(pairs).map(([name, s]) => {
-    const so = isObj(s) ? s : {}
-    const dir = typeof so.dir === 'string' ? so.dir : ''
-    return {
-      name,
-      column: typeof so.column === 'string' ? so.column : '',
-      mode: so.kind === 'molecule' ? 'molecule' : dir ? 'dir' : 'path',
-      dir,
-      match: so.match === 'exact' ? 'exact' : 'contains',
-      ext: typeof so.ext === 'string' ? so.ext : '.pt',
-    }
-  })
-  const tgt = isObj(root.target) ? root.target : {}
-  return {
-    table: typeof root.table === 'string' ? root.table : '',
-    branches: branches.length ? branches : [{ name: 'graph', column: '', mode: 'molecule', dir: '', match: 'contains', ext: '.pt' }],
-    target: {
-      column: typeof tgt.column === 'string' ? tgt.column : '',
-      type: tgt.type === 'classification' ? 'classification' : 'regression',
-    },
-    cache: root.cache !== false, // default on
-  }
-}
 
 function buildManifestJson(cfg: ManifestCfg): unknown {
   const pairs: Record<string, unknown> = {}

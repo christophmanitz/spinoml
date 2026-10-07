@@ -17,6 +17,26 @@ function n(id: string, trainingType: string, params: Record<string, unknown> = {
   return { id, trainingType, params: { ...defaultTrainingParams(trainingType), ...params } }
 }
 
+interface SplitIntegrityEvent {
+  overlap: number
+  strategy: string
+  train_size: number
+  val_size: number
+}
+interface ConfigEnvEvent {
+  python: string
+  torch: string
+  device: string
+  dtype: string
+}
+interface DeterminismEvent {
+  seed: number
+  cudnn_deterministic: boolean
+  cudnn_benchmark: boolean
+  python_random: boolean
+  numpy_random: boolean
+}
+
 let failures = 0
 function check(name: string, cond: boolean, detail = '') {
   if (cond) {
@@ -142,27 +162,27 @@ if (!existsSync(template)) {
     // Phase 19: the split MUST be provably leak-free — disjoint subsets, strategy recorded.
     const si = events.find((e) => e.kind === 'split.integrity')
     check('split.integrity emitted (Phase 19)',
-      !!si && (si as any).overlap === 0 && (si as any).strategy === 'random'
-      && (si as any).train_size > 0 && typeof (si as any).val_size === 'number'
-      && (si as any).train_size + (si as any).val_size > 0,
+      !!si && (si as SplitIntegrityEvent).overlap === 0 && (si as SplitIntegrityEvent).strategy === 'random'
+      && (si as SplitIntegrityEvent).train_size > 0 && typeof (si as SplitIntegrityEvent).val_size === 'number'
+      && (si as SplitIntegrityEvent).train_size + (si as SplitIntegrityEvent).val_size > 0,
       JSON.stringify(si ?? 'no split.integrity event'))
     // Phase 21: the runtime environment is recorded once at launch — software
     // versions + device/dtype must be present for a real (non-mock) stack.
     const envEv = events.find((e) => e.kind === 'config.env')
     check('config.env records software + device (Phase 21)',
-      !!envEv && typeof (envEv as any).python === 'string'
-      && typeof (envEv as any).torch === 'string'
-      && typeof (envEv as any).device === 'string'
-      && typeof (envEv as any).dtype === 'string',
+      !!envEv && typeof (envEv as ConfigEnvEvent).python === 'string'
+      && typeof (envEv as ConfigEnvEvent).torch === 'string'
+      && typeof (envEv as ConfigEnvEvent).device === 'string'
+      && typeof (envEv as ConfigEnvEvent).dtype === 'string',
       JSON.stringify(envEv))
     // Phase 22: every random source is seeded and documented in run.determinism.
     const detEv = events.find((e) => e.kind === 'run.determinism')
     check('run.determinism documents all seed states (Phase 22)',
-      !!detEv && (detEv as any).seed === 7
-      && (detEv as any).cudnn_deterministic === true
-      && (detEv as any).cudnn_benchmark === false
-      && (detEv as any).python_random === true
-      && (detEv as any).numpy_random === true,
+      !!detEv && (detEv as DeterminismEvent).seed === 7
+      && (detEv as DeterminismEvent).cudnn_deterministic === true
+      && (detEv as DeterminismEvent).cudnn_benchmark === false
+      && (detEv as DeterminismEvent).python_random === true
+      && (detEv as DeterminismEvent).numpy_random === true,
       JSON.stringify(detEv))
     // The provenance split.strategy must match what was frozen into run.json
     const provEv = events.find((e) => e.kind === 'run.provenance')

@@ -49,7 +49,10 @@ function reconcileOne(sub: GraphSnapshot, sources: { sid: string; node: LayerNod
     const proxyOf = n.params._proxyOf as string | undefined
     if (!proxyOf || wantSids.has(proxyOf)) return n
     if (n.params._autoCreated) { removeIds.add(n.id); return n } // auto → drop node
-    const { _proxyOf, _autoCreated, ...rest } = n.params       // hand → back to editable
+    // hand-created proxy → release back to an editable input (drop the markers)
+    const rest = Object.fromEntries(
+      Object.entries(n.params).filter(([k]) => k !== '_proxyOf' && k !== '_autoCreated'),
+    )
     return { ...n, params: rest }
   })
   if (removeIds.size) {

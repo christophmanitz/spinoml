@@ -5,7 +5,7 @@
 // Section 2: real sidecar round-trip (skipped when sidecar unreachable)
 import { useGraphStore } from '../src/canvas/GraphStore'
 import { serializeCurrent } from '../src/persistence/file'
-import { verificationFromInferResult, type ModelVerification } from '../src/inference/verifier'
+import { verificationFromInferResult } from '../src/inference/verifier'
 import type { InferResult } from '../src/inference/client'
 
 let passed = 0

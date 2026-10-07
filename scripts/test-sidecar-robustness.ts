@@ -21,7 +21,6 @@ import net from 'node:net'
 
 const PORT = Number(process.env.SPINOML_TEST_PORT ?? '7441')
 const SIDECAR = `http://127.0.0.1:${PORT}`
-const T = 2.5 // seconds idle-tolerant timeout for a stalled connection (sidecar runs with 2s cap)
 
 type Body = Record<string, unknown>
 
@@ -36,10 +35,6 @@ function ok(name: string, cond: boolean, detail = '') {
     failed++
     console.log(`  ✗ ${name}${detail ? ` — ${detail}` : ''}`)
   }
-}
-
-function isErrBody(b: Body): b is Body & { ok: false; error: string; error_code: string } {
-  return b.ok === false && typeof b.error === 'string' && b.error.length > 0 && typeof b.error_code === 'string'
 }
 
 async function isUp(): Promise<boolean> {

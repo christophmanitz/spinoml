@@ -11,7 +11,7 @@
 // (ssh_list_training_runs → squeue/sacct/kill -0 + reconcile). This harness
 // proves that recovery path without a live cluster.
 
-import { execSync, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 

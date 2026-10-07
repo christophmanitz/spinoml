@@ -3,7 +3,7 @@
 // Asserts that passwords, private keys, tokens, OAuth secrets, and SSH credentials
 // are NEVER written to ordinary logs, experiment artifacts, or error traces.
 
-import { execSync, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -20,12 +20,12 @@ const SENSITIVE_PATTERNS: { name: string; regex: RegExp }[] = [
   { name: 'Private Key header', regex: /-----BEGIN\s+(?:[A-Z0-9_-]+\s+)?PRIVATE\s+KEY/i },
   { name: 'PuTTY Private Key', regex: /PuTTY-User-Key-File/i },
   { name: 'Embedded password in URL', regex: /(?:https?|ssh|ftp|sftp):\/\/[^:\s'"]+:([^@\s'"]+)@[^/\s'"]+/i },
-  { name: 'OpenAI / OpenCode secret key', regex: /\bsk-[a-zA-Z0-9_\-]{24,}\b/ },
-  { name: 'Anthropic API key', regex: /\bsk-ant-[a-zA-Z0-9_\-]{24,}\b/ },
+  { name: 'OpenAI / OpenCode secret key', regex: /\bsk-[a-zA-Z0-9_-]{24,}\b/ },
+  { name: 'Anthropic API key', regex: /\bsk-ant-[a-zA-Z0-9_-]{24,}\b/ },
   { name: 'GitHub personal access token', regex: /\bgh[pousr]_[A-Za-z0-9_]{36,}\b/ },
-  { name: 'GitLab personal access token', regex: /\bglpat-[A-Za-z0-9_\-]{20,}\b/ },
+  { name: 'GitLab personal access token', regex: /\bglpat-[A-Za-z0-9_-]{20,}\b/ },
   { name: 'HuggingFace user token', regex: /\bhf_[A-Za-z0-9]{34,}\b/ },
-  { name: 'Slack token', regex: /\bxox[baprs]-[A-Za-z0-9_\-]{10,}\b/ },
+  { name: 'Slack token', regex: /\bxox[baprs]-[A-Za-z0-9_-]{10,}\b/ },
   { name: 'AWS secret access key pattern', regex: /\bAKIA[0-9A-Z]{16}\b/ },
 ]
 

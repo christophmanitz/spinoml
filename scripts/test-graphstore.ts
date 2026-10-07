@@ -182,7 +182,6 @@ console.log('loadSnapshot: validate before commit')
 reset()
 {
   const g = () => useGraphStore.getState()
-  const beforeNodes = ids()
 
   check('valid snapshot loads', g().loadSnapshot(snap(
     [layerNode('i', 'Input'), layerNode('o', 'Output', { name: 'y' })],

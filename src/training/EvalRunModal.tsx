@@ -139,6 +139,10 @@ function EvalRunModalInner({ sourceRunId }: { sourceRunId: string }) {
     if (!datasetRel) return
     if (srcManifest && !externalIsManifest) {
       const seeded = seedBranchCfgs(srcManifest, datasetRel, res)
+      // Seeds the adapter form from the selected dataset/manifest. The seeds are
+      // plain data derived from props; they cannot be computed during render
+      // without re-running the (JSON-shaped) seed on every keystroke.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- dataset/manifest selection seeds the editable adapter form
       setBranches(seeded.branches); setTargetCol(seeded.targetColumn); setTable(seeded.table)
     } else if (contract && externalInspect?.ok) {
       const a = suggestAdapter(contract, externalInspect); setColMap(a.spec.column_map); setMode('hybrid')

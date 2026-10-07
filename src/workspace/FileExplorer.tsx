@@ -25,7 +25,7 @@ async function openGraphOnCanvas(kind: 'training' | 'data', relpath: string, loa
     await load()
     const [{ useCanvasDocStore }, { markCanvasHydrated }, { useViewModeStore }] = await Promise.all([
       import('../canvasdoc/store'),
-      import('../canvasdoc/CanvasFileGate'),
+      import('../canvasdoc/hydrate'),
       import('../training/graph/viewMode'),
     ])
     markCanvasHydrated(kind, relpath)

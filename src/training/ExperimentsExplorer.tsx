@@ -188,9 +188,14 @@ function FilterChip({ label, count, active, onClick }: { label: string; count: n
 function RemoteConfigStrip({ conn }: { conn: RemoteSshConnection }) {
   const updateRemote = useConnectionsStore((s) => s.updateRemote)
   const [draft, setDraft] = useState(remotePython(conn))
-
-  // resync when switching between remote connections
-  useEffect(() => { setDraft(remotePython(conn)) }, [conn.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Resync the draft when switching between remote connections (conn.id only —
+  // conn is a stable snapshot for the lifetime of the modal). Mirrors the
+  // previous effect but in render so no set-state-in-effect.
+  const [lastConnId, setLastConnId] = useState(conn.id)
+  if (conn.id !== lastConnId) {
+    setLastConnId(conn.id)
+    setDraft(remotePython(conn))
+  }
 
   const commit = () => {
     const v = draft.trim()

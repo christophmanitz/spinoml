@@ -6,7 +6,7 @@ import { isTauri } from '../../workspace/tauri-fs'
 import { useWorkspaceStore } from '../../workspace/store'
 import { useDataGraphStore } from './store'
 import { useCanvasDocStore, boundRelpath, type CanvasDocAdapter } from '../../canvasdoc/store'
-import { markCanvasHydrated } from '../../canvasdoc/CanvasFileGate'
+import { markCanvasHydrated } from '../../canvasdoc/hydrate'
 import { listDataGraphs, openDataGraph, createDataGraph, writeDataGraph, bindNewDataGraphFromCurrent } from './files'
 
 // True while we are LOADING a file into the store, so the autosave subscriber

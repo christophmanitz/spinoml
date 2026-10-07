@@ -25,7 +25,7 @@ export function serializeTrainingSnapshot(snapshot: TrainingGraphSnapshot): stri
 
 export function parseTrainingFile(text: string): TrainingGraphSnapshot {
   let obj: unknown
-  try { obj = JSON.parse(text) } catch (e) { throw new Error(`not valid JSON: ${(e as Error).message}`) }
+  try { obj = JSON.parse(text) } catch (e) { throw new Error(`not valid JSON: ${(e as Error).message}`, { cause: e }) }
   if (!obj || typeof obj !== 'object') throw new Error('expected a JSON object')
   const file = obj as Partial<SpinoTrainFile>
   if (file.format !== 'spinotrain') throw new Error('not a spinotrain file (missing format)')

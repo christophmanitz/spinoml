@@ -13,7 +13,8 @@ import StatusPill from './StatusPill'
 import LineChart from './charts/LineChart'
 import { lossSeries, lrSeries, metricSeries } from './charts/series'
 import { latestWinsGuard, parseFinalEvents } from './events'
-import { latestEval, latestEvalHeads, EvalDiagram } from './charts/Evaluation'
+import { latestEval, latestEvalHeads } from './charts/evaluation'
+import { EvalDiagram } from './charts/Evaluation'
 import { parseRunConfig } from './parseRunConfig'
 import { runConfigToTrainingSnapshot } from './graph/fromRun'
 import { useTrainingGraphStore } from './graph/store'
@@ -184,6 +185,9 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   // tail loop below stops the instant `active` flips false, so without this the
   // last update would sometimes be missing until the modal was reopened.
   useEffect(() => {
+    // reload() resets loading state synchronously before the async refetch; a
+    // render-time adjustment would race the effect because reload() also runs on open.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reload() synchronously resets loading before the async refetch
     void fireAndForget('reload', reload())
   }, [reload, status])
 
@@ -223,14 +227,15 @@ export default function RunDetailModal({ runId }: { runId: string }) {
     }
     void fireAndForget('tick', tick())
     return () => { stopped = true; clearTimeout(timer) }
-  }, [tab])
+  }, [tab, runId])
 
-  // Prefill the promote name from the run label once run.json is loaded.
-  useEffect(() => {
-    if (!promoteName && summary?.run_label) {
-      setPromoteName(summary.run_label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'model')
-    }
-  }, [summary?.run_label, promoteName])
+  // Prefill the promote name from the run label once run.json is loaded. Done in
+  // render (guarded by !promoteName) so it converges after the first commit
+  // without an effect.
+  const runLabel = summary?.run_label
+  if (!promoteName && runLabel) {
+    setPromoteName(runLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'model')
+  }
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') close(null) }

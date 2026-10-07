@@ -10,9 +10,9 @@
 import {
   parseRunConfig,
 } from '../src/training/parseRunConfig'
-import { normalizeManifest } from '../src/datasets/DatasetDetail'
+import { normalizeManifest } from '../src/datasets/manifestNormalize'
 import { errMessage, isFiniteNumber } from '../src/errors/report'
-import { isEvalSummary, latestEval } from '../src/training/charts/Evaluation'
+import { isEvalSummary, latestEval } from '../src/training/charts/evaluation'
 import { execFileSync } from 'node:child_process'
 
 let failures = 0
