@@ -22,6 +22,8 @@ where <sabotage_id> is one of:
   - missing-config-env         : the config.env event is stripped from events.jsonl
   - inject-pid-stderr-missing  : create a pid file + delete stderr.log after save
   - inject-pid-empty-logs      : executor-style launch: pid file + EMPTY stdout.log/stderr.log
+  - inject-pid-slurm-logs      : SLURM launch: pid `slurm:424242` + EMPTY slurm-424242.out/.err
+  - inject-pid-slurm-missing   : SLURM launch: pid `slurm:424242` but NO slurm-424242 logs
   - raise-in-gate              : patch _checkpoint_ok to raise (gate fails closed)
   - crash-after-epoch-0        : writes a model.py whose forward raises on call 9
   - crash-epoch-0-first        : writes a model.py whose forward raises on call 1
@@ -221,6 +223,18 @@ def _sabotage_pid_empty_logs(trainer, run_dir):
     (d / "stderr.log").write_text("", encoding="utf-8")
 
 
+def _sabotage_pid_slurm_logs(trainer, run_dir):
+    # SLURM executor: `printf 'slurm:%s\n' $jid > pid`; output goes to slurm-%j.out/.err.
+    d = pathlib.Path(run_dir)
+    (d / "pid").write_text("slurm:424242\n", encoding="utf-8")
+    (d / "slurm-424242.out").write_text("", encoding="utf-8")
+    (d / "slurm-424242.err").write_text("", encoding="utf-8")
+
+
+def _sabotage_pid_slurm_missing(trainer, run_dir):
+    (pathlib.Path(run_dir) / "pid").write_text("slurm:424242\n", encoding="utf-8")
+
+
 def _sabotage_raise_in_gate(trainer, run_dir):
     def boom(path):
         raise RuntimeError("simulated integrity-gate failure")
@@ -344,6 +358,8 @@ SABOTAGES = {
     "missing-config-env": _sabotage_missing_config_env,
     "inject-pid-stderr-missing": _sabotage_pid_stderr_missing,
     "inject-pid-empty-logs": _sabotage_pid_empty_logs,
+    "inject-pid-slurm-logs": _sabotage_pid_slurm_logs,
+    "inject-pid-slurm-missing": _sabotage_pid_slurm_missing,
     "raise-in-gate": _sabotage_raise_in_gate,
     "crash-after-epoch-0": _sabotage_crash_after_epoch_0,
     "crash-epoch-0-first": _sabotage_crash_epoch_0_first,

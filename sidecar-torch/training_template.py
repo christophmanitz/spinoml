@@ -1086,7 +1086,18 @@ def _verify_run_integrity(eval_only: bool) -> dict:
         # verify-* harnesses) have no pid file — record a note.
         pid_file = RUN_DIR / "pid"
         if pid_file.exists():
-            for name in ("stdout.log", "stderr.log"):
+            # A SLURM launch freezes `slurm:<jobid>` in the pid file and its output lands
+            # in slurm-<jobid>.out/.err (`#SBATCH --output/--error`), NOT stdout.log/stderr.log
+            # (found by the live cluster run: every SLURM run failed this gate).
+            try:
+                pid_text = pid_file.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                pid_text = ""
+                invalid.append(f"pid: unreadable ({type(exc).__name__})")
+            jid = pid_text[len("slurm:"):] if pid_text.startswith("slurm:") else ""
+            log_names = ((f"slurm-{jid}.out", f"slurm-{jid}.err")
+                         if jid.isdigit() else ("stdout.log", "stderr.log"))
+            for name in log_names:
                 p = RUN_DIR / name
                 if not p.exists():
                     missing.append(f"{name} (missing; required by executor launch)")

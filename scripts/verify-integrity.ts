@@ -264,6 +264,22 @@ section("2b'. pid file present + empty stdout.log/stderr.log -> gate ok (logs mu
   check('status file = done', status === 'done', status)
 }
 
+// ── 2b''. SLURM launch: pid `slurm:<jobid>` -> the logs are slurm-<jobid>.out/.err ──
+section("2b''. SLURM pid + empty slurm-<jobid>.out/.err -> gate ok; slurm pid + missing slurm logs -> FAIL")
+{
+  const dir = makeRunDir('pid-slurm-logs')
+  const r = runWrap(dir, 'inject-pid-slurm-logs')
+  const integ = readEvents(dir).find((e) => e.kind === 'run.integrity') as Record<string, unknown> | undefined
+  check('gate ok=true for a SLURM run (no stdout.log/stderr.log needed)', integ?.ok === true, JSON.stringify(integ))
+  check('trainer exits 0', r.exitCode === 0, r.stderr.slice(0, 200))
+  const dir2 = makeRunDir('pid-slurm-missing')
+  runWrap(dir2, 'inject-pid-slurm-missing')
+  const integ2 = readEvents(dir2).find((e) => e.kind === 'run.integrity') as Record<string, unknown> | undefined
+  check('gate FAILS when the SLURM logs are missing', integ2?.ok === false, JSON.stringify(integ2))
+  const msg = JSON.stringify(integ2?.missing ?? [])
+  check('message names slurm-424242.out/.err (not stdout.log)', /slurm-424242\.out/.test(msg) && /slurm-424242\.err/.test(msg) && !/stdout\.log/.test(msg), msg.slice(0, 200))
+}
+
 // ── 2c. NO pid + stderr.log missing → note (not fail) ──
 section('2c. no pid file + stderr.log missing -> only a note (not a failure)')
 {

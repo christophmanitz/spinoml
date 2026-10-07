@@ -934,6 +934,26 @@ pub async fn ssh_start_training_run(
     model_spinoml: String,
     model_py: String,
 ) -> Result<(), String> {
+    // The AppHandle is only needed to locate the bundled trainer; everything
+    // else lives in `start_training_run_with_template` so the live remote tests
+    // (live_tests.rs) can drive the REAL launch path without a window.
+    let template = crate::sidecar_root_pub(&app)
+        .join("sidecar-torch")
+        .join("training_template.py");
+    start_training_run_with_template(template, alias, root, run_id, python, run_json, model_spinoml, model_py).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn start_training_run_with_template(
+    template: std::path::PathBuf,
+    alias: String,
+    root: String,
+    run_id: String,
+    python: String,
+    run_json: String,
+    model_spinoml: String,
+    model_py: String,
+) -> Result<(), String> {
     validate_alias(&alias)?;
     validate_remote_root(&root)?;
     training::validate_run_id(&run_id)?;
@@ -982,9 +1002,6 @@ pub async fn ssh_start_training_run(
     write_remote_run_file(&alias, &dir, "model.py", model_py.as_bytes()).await?;
 
     // ship the shared trainer in as train.py (read from the local bundle)
-    let template = crate::sidecar_root_pub(&app)
-        .join("sidecar-torch")
-        .join("training_template.py");
     let trainer = std::fs::read_to_string(&template).map_err(|e| {
         format!(
             "training template missing at {} ({e}). SpinoML bundle may be incomplete.",
@@ -1315,17 +1332,18 @@ pub async fn ssh_read_training_run_file(
     ssh_exec(&alias, &format!("if [ -f {p_q} ]; then cat {p_q}; fi"), None).await
 }
 
-#[tauri::command]
-pub async fn ssh_stop_training_run(alias: String, root: String, run_id: String) -> Result<(), String> {
-    validate_alias(&alias)?;
-    validate_remote_root(&root)?;
-    training::validate_run_id(&run_id)?;
-    let dir_q = shell_quote_path(&remote_run_dir(&root, &run_id));
-    // Cooperative (status file, checked each epoch) + forceful (SIGTERM the whole
-    // process group via negative pid — setsid made python the group leader).
-    // Phase 30: only flip the status if it can still make progress — a terminal
-    // status (done/failed/cancelled) is FINAL and must not be overwritten.
-    let cmd = format!(
+/// Remote shell snippet behind `ssh_stop_training_run` (a free function so it can be run
+/// against a real `sh` in the unit tests).
+///
+/// Cooperative (status file, checked each epoch) + forceful (SIGTERM the whole process
+/// group via negative pid — setsid made python the group leader). Phase 30: only flip the
+/// status if it can still make progress — a terminal status (done/failed/cancelled) is FINAL
+/// and must not be overwritten. Stopping a run that already finished is a NO-OP: `kill` of a
+/// dead pid / `scancel` of a finished job exit non-zero and, being the last command, used to
+/// turn into "Remote SSH command failed (ssh exit 1)" (found by the live cluster run), hence
+/// the final `true`.
+fn build_stop_command(dir_q: &str) -> String {
+    format!(
         "d={dir_q}; if [ -d \"$d\" ]; then \
            cur=$(cat \"$d/status\" 2>/dev/null || true); \
            case \"$cur\" in done|failed|cancelled) ;; \
@@ -1337,8 +1355,17 @@ pub async fn ssh_stop_training_run(alias: String, root: String, run_id: String) 
              '') : ;; \
              *) kill -TERM -\"$pid\" 2>/dev/null; kill -TERM \"$pid\" 2>/dev/null ;; \
            esac; \
-         fi"
-    );
+         fi; true"
+    )
+}
+
+#[tauri::command]
+pub async fn ssh_stop_training_run(alias: String, root: String, run_id: String) -> Result<(), String> {
+    validate_alias(&alias)?;
+    validate_remote_root(&root)?;
+    training::validate_run_id(&run_id)?;
+    let dir_q = shell_quote_path(&remote_run_dir(&root, &run_id));
+    let cmd = build_stop_command(&dir_q);
     ssh_exec(&alias, &cmd, None).await.map(|_| ())
 }
 
@@ -1643,5 +1670,74 @@ mod alias_validation_tests {
         }
         assert!(validate_alias(&"a".repeat(129)).is_err());
         assert!(validate_alias(&"a".repeat(128)).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod stop_command_tests {
+    use super::*;
+    use std::fs;
+    use std::process::Command;
+
+    /// Run the REAL stop snippet in a real `sh` against a temp run dir. Returns
+    /// (exit code, status file after).
+    fn run_stop(status: Option<&str>, pid: Option<&str>) -> (i32, String) {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "spinoml-stop-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        if let Some(s) = status { fs::write(dir.join("status"), format!("{s}\n")).unwrap(); }
+        if let Some(p) = pid { fs::write(dir.join("pid"), format!("{p}\n")).unwrap(); }
+        let cmd = build_stop_command(&shell_quote_path(dir.to_str().unwrap()));
+        let out = Command::new("sh").arg("-c").arg(&cmd).output().unwrap();
+        let after = fs::read_to_string(dir.join("status")).unwrap_or_default().trim().to_string();
+        let _ = fs::remove_dir_all(&dir);
+        (out.status.code().unwrap_or(-1), after)
+    }
+
+    /// A pid that certainly does not exist any more.
+    fn dead_pid() -> String {
+        let mut c = Command::new("true").spawn().unwrap();
+        let pid = c.id();
+        c.wait().unwrap();
+        pid.to_string()
+    }
+
+    // Found by the live cluster run: stopping an already finished run made the remote
+    // snippet exit 1 (kill of a dead pid is the last command) -> "Remote SSH command failed".
+    #[test]
+    fn stopping_a_finished_run_is_a_noop_and_succeeds() {
+        for terminal in ["done", "failed", "cancelled"] {
+            let (code, after) = run_stop(Some(terminal), Some(&dead_pid()));
+            assert_eq!(code, 0, "stop of a `{terminal}` run must succeed");
+            assert_eq!(after, terminal, "a terminal status is FINAL");
+        }
+    }
+
+    #[test]
+    fn stopping_a_running_run_with_a_dead_pid_cancels_it_and_succeeds() {
+        let (code, after) = run_stop(Some("running"), Some(&dead_pid()));
+        assert_eq!(code, 0);
+        assert_eq!(after, "cancelled");
+    }
+
+    #[test]
+    fn stopping_a_slurm_run_succeeds_even_if_scancel_fails() {
+        // scancel is absent here / the job id is unknown: both must be swallowed.
+        let (code, after) = run_stop(Some("running"), Some("slurm:424242"));
+        assert_eq!(code, 0);
+        assert_eq!(after, "cancelled");
+    }
+
+    #[test]
+    fn stopping_a_missing_dir_or_missing_pid_succeeds() {
+        let (code, after) = run_stop(Some("queued"), None);
+        assert_eq!(code, 0);
+        assert_eq!(after, "cancelled");
+        let cmd = build_stop_command("'/nonexistent/spinoml-run'");
+        assert_eq!(Command::new("sh").arg("-c").arg(cmd).status().unwrap().code(), Some(0));
     }
 }

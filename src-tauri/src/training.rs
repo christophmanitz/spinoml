@@ -48,6 +48,7 @@ pub(crate) const READABLE: &[&str] = &[
     "run.json",
     "events.jsonl",
     "metrics.json",
+    "manifest.json", // Phase 74: RunDetailModal reads it on every open (resumable banner)
     "status",
     "stdout.log",
     "stderr.log",
@@ -650,6 +651,29 @@ pub fn delete_training_run(state: State<WorkspaceState>, run_id: String) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Cross-layer parity (found by the live cluster run): the Run-Detail UI read
+    // `manifest.json` on every open while this whitelist did not list it, so every
+    // run showed a read error and the resumable banner could never appear. Extract the
+    // literal file names the UI requests and require each to be readable.
+    #[test]
+    fn every_file_the_run_detail_ui_reads_is_readable() {
+        let ui = include_str!("../../src/training/RunDetailModal.tsx");
+        let mut names: Vec<&str> = Vec::new();
+        for part in ui.split("readRunFile(runId, '").skip(1) {
+            if let Some(end) = part.find('\'') {
+                names.push(&part[..end]);
+            }
+        }
+        assert!(names.len() >= 4, "extraction found only {names:?}: the call shape changed, update this test");
+        assert!(names.contains(&"manifest.json"), "{names:?}");
+        for n in &names {
+            assert!(is_readable(n), "the UI reads `{n}` but READABLE/is_readable rejects it");
+        }
+        // the log files the UI derives for a SLURM job (logFileNames)
+        assert!(is_readable("slurm-123.out") && is_readable("slurm-123.err"));
+        assert!(!is_readable("slurm-12x.out") && !is_readable("../etc/passwd"));
+    }
 
     // An externally-launched run: events.jsonl present, no metrics.json, run.json
     // carries a flat `epochs`. Loss + epochs must still surface (C-3 regression).
