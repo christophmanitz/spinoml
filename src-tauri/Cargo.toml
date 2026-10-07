@@ -44,3 +44,12 @@ time = "0.3"
 # a hard kill (dev restart / crash), preventing orphaned port holders.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+# Phase 81 — the live remote tests drive ssh::start_training_run_with_template
+# (which needs no AppHandle), so they need no test runtime beyond tokio.
+# `#[tokio::test]` requires rt + macros; `sync` (the only feature the normal
+# build uses) stays in [dependencies]. Cargo's resolver v2 (edition 2021) keeps
+# dev-dependency features out of the normal build, so the shipped binary is
+# unchanged.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }

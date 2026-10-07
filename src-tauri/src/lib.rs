@@ -15,6 +15,9 @@ mod remote_sidecar;
 mod sidecar_auth;
 mod training;
 
+#[cfg(test)]
+mod live_tests;
+
 pub(crate) const PROJECT_FILE: &str = "spinoml.project.json";
 pub(crate) const SUBDIRS: &[&str] = &["models", "datasets", "notes", "experiments"];
 

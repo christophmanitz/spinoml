@@ -611,19 +611,21 @@ export const SUITES: readonly Suite[] = [
   // ── remote ──────────────────────────────────────────────────────────
   {
     name: 'remote-live',
+    npmScript: 'test:remote-live',
     category: 'remote',
-    timeoutSec: 30,
+    timeoutSec: 3600,
     needs: ['ssh-host', 'slurm'],
-    why: 'no live-cluster suite exists; needs an ssh alias and SLURM',
+    why: 'live ssh + SLURM against a real cluster (Rust live_* tests); runs only with SPINOML_REMOTE_TESTS=1 and SPINOML_REMOTE_ALIAS',
   },
 
   // ── hardware ────────────────────────────────────────────────────────
   {
     name: 'hardware-cuda',
+    npmScript: 'test:hardware-cuda',
     category: 'hardware',
-    timeoutSec: 30,
+    timeoutSec: 1800,
     needs: ['cuda'],
-    why: 'no CUDA device / no dedicated CUDA suite',
+    why: 'CUDA vs CPU parity of the reference experiments, same-seed repeatability, amp; needs a CUDA device',
   },
 
   // ── infrastructure ──────────────────────────────────────────────────
@@ -674,5 +676,13 @@ export const SUITES: readonly Suite[] = [
     timeoutSec: 90,
     needs: ['llm-key'],
     why: 'LLM sidecar + opencode CLI reachable + a free model works',
+  },
+  {
+    name: 'test:llm-live',
+    npmScript: 'test:llm-live',
+    category: 'infrastructure',
+    timeoutSec: 600,
+    needs: ['llm-key'],
+    why: 'one real tool-calling turn per configured LLM provider (opencode/anthropic/openai-compat/subscription); needs SPINOML_LIVE_LLM=1 and credentials',
   },
 ]

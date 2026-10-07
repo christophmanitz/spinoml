@@ -229,6 +229,16 @@ function computeTestRanges(masked: string): Array<{ from: number; to: number }> 
   return ranges
 }
 
+/** Names of out-of-line test modules: `#[cfg(test)] mod name;` means `name.rs` is wholly test
+ *  code (an inline `mod tests { .. }` is handled by computeTestRanges). Without this a test-only
+ *  file such as live_tests.rs reported every `.expect(` of its assertions as a panic site. */
+function outOfLineTestModules(masked: string): string[] {
+  const names: string[] = []
+  const re = /#\[cfg\(test\)\]\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;/g
+  for (let m = re.exec(masked); m; m = re.exec(masked)) names.push(m[1]!)
+  return names
+}
+
 // ── detection ─────────────────────────────────────────────────────────────
 
 function findSites(src: string, rel: string, testRanges: Array<{ from: number; to: number }>): Site[] {
@@ -346,8 +356,23 @@ function selfTest(): number {
       console.log(`  X self-test '${c.name}': expected ${c.expected}, got ${sites.length} (${sites.map((s) => s.pattern).join(',')})`)
     }
   }
+  // out-of-line test modules: only `#[cfg(test)] mod name;` makes name.rs test code
+  const modCases: Array<{ name: string; src: string; expected: string[] }> = [
+    { name: 'cfg(test) mod declaration', src: '#[cfg(test)]\nmod live_tests;\nmod other;\n', expected: ['live_tests'] },
+    { name: 'pub(crate) cfg(test) mod', src: '#[cfg(test)]\npub(crate) mod t_a;\n', expected: ['t_a'] },
+    { name: 'plain mod is NOT test code', src: 'mod ssh;\nmod live;\n', expected: [] },
+    { name: 'inline cfg(test) mod is handled by ranges', src: '#[cfg(test)]\nmod tests {\n}\n', expected: [] },
+    { name: 'cfg(not(test)) is not test code', src: '#[cfg(not(test))]\nmod prod;\n', expected: [] },
+  ]
+  for (const c of modCases) {
+    const got = outOfLineTestModules(maskSource(c.src).masked)
+    if (JSON.stringify(got) !== JSON.stringify(c.expected)) {
+      failed++
+      console.log(`  X self-test '${c.name}': expected ${JSON.stringify(c.expected)}, got ${JSON.stringify(got)}`)
+    }
+  }
   if (failed) { console.log(`\n${failed} self-test case(s) failed`); return 1 }
-  console.log(`OK self-test: ${cases.length} cases passed`)
+  console.log(`OK self-test: ${cases.length + modCases.length} cases passed`)
   return 0
 }
 
@@ -363,10 +388,15 @@ function main(): number {
 
   const allSites: Site[] = []
   const fileText = new Map<string, string>()
+  const testOnlyFiles = new Set<string>()
+  for (const abs of files) {
+    for (const n of outOfLineTestModules(maskSource(readFileSync(abs, 'utf8')).masked)) testOnlyFiles.add(`${n}.rs`)
+  }
   for (const abs of files) {
     const src = readFileSync(abs, 'utf8')
     const rel = relative(ROOT, abs).split(sep).join('/')
     fileText.set(rel, src)
+    if (testOnlyFiles.has(abs.split(sep).pop() ?? '')) continue // declared `#[cfg(test)] mod x;`
     const { masked } = maskSource(src)
     const testRanges = computeTestRanges(masked)
     allSites.push(...findSites(src, rel, testRanges))
