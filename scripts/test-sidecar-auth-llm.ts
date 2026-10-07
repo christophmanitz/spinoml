@@ -32,6 +32,23 @@ import {
 } from './lib/auth-probe'
 import { LlmHarness } from './lib/llm-harness.ts'
 import type { FakeStep, ToolCallSpec } from './lib/fake-openai.ts'
+import { createServer as createHttpServer } from 'node:http'
+
+// The /chat probes below must reach the handler and START a turn, but a turn must never reach a
+// real provider. With no `llm` config the sidecar defaults to the `subscription` kind — the real
+// Claude CLI / OAuth: slow (~10 s per probe), network- and quota-dependent, and a hidden side effect
+// of a security test. So every probe names an `openai-compat` provider on a loopback server that
+// refuses at once with HTTP 401 (the SDK does not retry 401).
+const refusingProvider = createHttpServer((_req, res) => {
+  res.writeHead(401, { 'content-type': 'application/json' })
+  res.end('{"error":{"message":"refused by the test provider"}}')
+})
+await new Promise<void>((done) => refusingProvider.listen(0, '127.0.0.1', () => done()))
+const providerPort = (refusingProvider.address() as net.AddressInfo).port
+const CHAT_PROBE = JSON.stringify({
+  user: 'x',
+  llm: { kind: 'openai-compat', apiKey: 'sk-test-refused', baseUrl: `http://127.0.0.1:${providerPort}/v1`, model: 'm' },
+})
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = resolve(HERE, '..')
@@ -281,7 +298,7 @@ function runUnitTests(): void {
 
 // ── integration: token mode ─────────────────────────────────────────────────
 const ENDPOINTS: Array<{ method: string; path: string; body: string }> = [
-  { method: 'POST', path: '/chat', body: '{"user":"x"}' },
+  { method: 'POST', path: '/chat', body: CHAT_PROBE },
   { method: 'POST', path: '/respond', body: '{"askId":"nope"}' },
   { method: 'GET', path: '/opencode/models', body: '' },
   { method: 'POST', path: '/unknown-endpoint', body: '' },
@@ -346,7 +363,7 @@ async function testTokenMode(): Promise<void> {
 
     // reason = "missing" for an absent token.
     {
-      const res = await req(port, '/chat', { body: '{"user":"x"}' })
+      const res = await req(port, '/chat', { body: CHAT_PROBE })
       const body = json(res)
       record('401 reason for missing token', 'missing', String(body.reason ?? ''), body.reason === 'missing')
       record('401 no-Origin response has no CORS headers', 'none', corsHeaderNames(res.headers).join(',') || 'none', corsHeaderNames(res.headers).length === 0)
@@ -360,36 +377,36 @@ async function testTokenMode(): Promise<void> {
         { name: 'missing Host (HTTP/1.0)', opts: { token: TOKEN, host: null, version: '1.0' }, expect: 'bad_host' },
       ]
       for (const c of cases) {
-        const res = await req(port, '/chat', { ...c.opts, body: '{"user":"x"}' })
+        const res = await req(port, '/chat', { ...c.opts, body: CHAT_PROBE })
         const body = json(res)
         record(c.name, `403 ${c.expect}`, `${res.status} ${String(body.code ?? '')}`, res.status === 403 && body.code === c.expect)
       }
-      const okRes = await req(port, '/chat', { token: TOKEN, host: 'localhost:12345', body: '{"user":"x"}' })
+      const okRes = await req(port, '/chat', { token: TOKEN, host: 'localhost:12345', body: CHAT_PROBE })
       record('Host localhost:12345 OK', 'not 401/403', String(okRes.status), okRes.status !== 401 && okRes.status !== 403)
     }
 
     // Origin checks.
     {
-      const evil = await req(port, '/chat', { token: TOKEN, origin: 'https://evil.example', body: '{"user":"x"}' })
+      const evil = await req(port, '/chat', { token: TOKEN, origin: 'https://evil.example', body: CHAT_PROBE })
       const evilBody = json(evil)
       record('Origin https://evil.example', '403 bad_origin', `${evil.status} ${String(evilBody.code ?? '')}`, evil.status === 403 && evilBody.code === 'bad_origin')
       record('evil Origin has no ACAO', 'absent', evil.headers['access-control-allow-origin'] ? 'present' : 'absent', evil.headers['access-control-allow-origin'] === undefined)
       record('evil Origin has no CORS headers at all', 'none', corsHeaderNames(evil.headers).join(',') || 'none', corsHeaderNames(evil.headers).length === 0)
 
-      const nul = await req(port, '/chat', { token: TOKEN, origin: 'null', body: '{"user":"x"}' })
+      const nul = await req(port, '/chat', { token: TOKEN, origin: 'null', body: CHAT_PROBE })
       record('Origin null', '403 bad_origin', `${nul.status} ${String(json(nul).code ?? '')}`, nul.status === 403 && json(nul).code === 'bad_origin')
 
       for (const origin of DEFAULT_ORIGINS) {
-        const res = await req(port, '/chat', { token: TOKEN, origin, body: '{"user":"x"}' })
+        const res = await req(port, '/chat', { token: TOKEN, origin, body: CHAT_PROBE })
         const acao = res.headers['access-control-allow-origin']?.[0]
         const vary = res.headers['vary']?.join(',') ?? ''
         const pass = res.status === 200 && acao === origin && vary.includes('Origin') && acao !== '*'
         record(`Origin ${origin} echoed`, `ACAO=${origin}`, `status=${res.status} acao=${acao ?? '-'}`, pass)
       }
 
-      const extra = await req(port, '/chat', { token: TOKEN, origin: 'http://my.tool:9', body: '{"user":"x"}' })
+      const extra = await req(port, '/chat', { token: TOKEN, origin: 'http://my.tool:9', body: CHAT_PROBE })
       record('extra origin my.tool:9 OK', 'not 403', String(extra.status), extra.status !== 403)
-      const extraBad = await req(port, '/chat', { token: TOKEN, origin: 'http://my.tool:99', body: '{"user":"x"}' })
+      const extraBad = await req(port, '/chat', { token: TOKEN, origin: 'http://my.tool:99', body: CHAT_PROBE })
       record('near-miss origin my.tool:99', '403 bad_origin', `${extraBad.status} ${String(json(extraBad).code ?? '')}`, extraBad.status === 403 && json(extraBad).code === 'bad_origin')
     }
 
@@ -424,6 +441,14 @@ async function testTokenMode(): Promise<void> {
       const full = json(await req(port, '/health', { method: 'GET', token: TOKEN }))
       const fullOk = full.tokenOk === true && full.auth === 'token' && full.requiresAuth === true && full.ok === true
       record('/health right token full body', 'ok+auth+requiresAuth+tokenOk', `tokenOk=${String(full.tokenOk)}`, fullOk)
+      const limitedHasDiag = 'diag' in limited
+      const fullHasDiag = 'diag' in full
+      record(
+        '/health diag absent without token, present with',
+        'absent/present',
+        `${limitedHasDiag ? 'present' : 'absent'}/${fullHasDiag ? 'present' : 'absent'}`,
+        !limitedHasDiag && fullHasDiag,
+      )
     }
 
     // Bind address (Phase 78 "do not expose on 0.0.0.0"): the port must not accept
@@ -742,7 +767,7 @@ async function testDevMode(): Promise<void> {
     const port = sidecar.port
     console.log(`\nunauthenticated-dev sidecar on ${sidecar.url}`)
 
-    const chat = await req(port, '/chat', { body: '{"user":"x"}' })
+    const chat = await req(port, '/chat', { body: CHAT_PROBE })
     record('dev: /chat without token works', 'not 401/403', String(chat.status), chat.status !== 401 && chat.status !== 403)
 
     const health = json(await req(port, '/health', { method: 'GET' }))
@@ -753,10 +778,10 @@ async function testDevMode(): Promise<void> {
       health.ok === true
     record('dev: /health full body', 'auth=unauthenticated-dev', `auth=${String(health.auth)} requiresAuth=${String(health.requiresAuth)}`, healthOk)
 
-    const evilOrigin = await req(port, '/chat', { origin: 'https://evil.example', body: '{"user":"x"}' })
+    const evilOrigin = await req(port, '/chat', { origin: 'https://evil.example', body: CHAT_PROBE })
     record('dev: evil Origin still 403', '403 bad_origin', `${evilOrigin.status} ${String(json(evilOrigin).code ?? '')}`, evilOrigin.status === 403 && json(evilOrigin).code === 'bad_origin')
 
-    const evilHost = await req(port, '/chat', { host: 'evil.example', body: '{"user":"x"}' })
+    const evilHost = await req(port, '/chat', { host: 'evil.example', body: CHAT_PROBE })
     record('dev: evil Host still 403', '403 bad_host', `${evilHost.status} ${String(json(evilHost).code ?? '')}`, evilHost.status === 403 && json(evilHost).code === 'bad_host')
   } finally {
     await sidecar.stop()
@@ -944,6 +969,10 @@ async function main(): Promise<void> {
     for (const f of failures) console.log(`  ✗ ${f.case}: expected ${f.expected}, got ${f.got}`)
     process.exit(1)
   }
+  // The refusing-provider server would keep the event loop (and so the suite) alive forever.
+  refusingProvider.closeAllConnections()
+  refusingProvider.close()
+  process.exit(0)
 }
 
 void main()

@@ -3009,6 +3009,28 @@ Unreleased ports
 Unclosed files
 ```
 
+> **Implemented 2026-10-07 for the sidecars (Rust/UI not measured).** Both sidecars expose read-only
+> `diag` counters in the AUTHENTICATED `/health` body (never in the limited unauthenticated one): torch
+> `threads / open_fds / rss_kb / uptime_s / requests_total` from `/proc/self`, LLM `pending_asks /
+> mcp_sessions / active_turns / tracked_children / open_session_dirs / open_fds / rss_kb / ...` from the
+> module-level collections that gate child/ask/turn lifecycle. `npm run test:resource-leaks` (34 rows, real
+> processes, run 3 times): torch — 300 `/infer`, 80 `/dataset/inspect`, 20 `/activations`, 40 deliberately
+> invalid requests; LLM — 150 `/chat` turns (text, graph-mutating tool call, `ask_user` round trip, mid-stream
+> abort) + 30 opencode-path turns with the fake binary; after each family: fd delta ≤ 2 (measured 0 / -1),
+> thread delta ≤ 2 (0), child-process delta 0, `pending_asks / mcp_sessions / active_turns / tracked_children /
+> open_session_dirs` all 0, no new tmp entries, RSS growth below a bound derived from the worst of 3 measured
+> runs (torch ≈ 124 MB — a one-time CPython/torch high-water mark after the first ~300 requests, flat in a 1200-request
+> probe; LLM ≈ 64–65 MB; bounds 270 MB / 172 MB). Mutations red: LLM turn cleanup skipping
+> `activeTurnControllers.delete` (`active_turns = 166`) and a torch handler leaking one fd per `/infer`
+> (`fd delta = 320`). No leak was found in the sidecars. **Found by running the suite through the runner:** the
+> existing `test:sidecar-auth-llm` posted `/chat` with no `llm` config ~12 times, i.e. it silently drove the
+> REAL Claude CLI / OAuth `subscription` path (≈ 9.5 s per probe, network- and quota-dependent, and the reason
+> the suite sometimes exceeded its timeout) — it now points every probe at a loopback provider that refuses
+> with HTTP 401 (suite time 104 s → 67 s). The runner also left detached test sidecars running after a
+> TIMEOUT (the suites start them in their own process group); it now sweeps every new process whose command line
+> is under this repo, including after a timeout. Not covered: memory/CPU of the Tauri shell and the webview,
+> open-workspace/close-workspace cycles (UI), GPU memory.
+
 ---
 
 # 53. PHASE 52 – LONG-RUNNING TEST
@@ -3033,6 +3055,19 @@ Process count
 Errors
 State consistency
 ```
+
+> **Implemented 2026-10-07 (short soak in CI; the long run is an operator command).** `npm run test:soak`
+> (`scripts/soak.ts`, default 90 s, `-- --seconds 3600` for the real one) drives a torch and an LLM sidecar (token
+> mode) with mixed `/infer`, `/dataset/inspect`, fake-provider `/chat` turns and, every ~15 s, a REAL run of the
+> standalone trainer that must end `done` with a valid manifest/integrity block; every 5 s it samples RSS / fds /
+> threads / child count of both sidecars and the soak process, fits a least-squares slope to the post-warm-up RSS
+> and FAILS on: projected growth > 200 MB/h, an upward fd/thread trend, any unexpected 5xx, a training run that
+> did not end `done`, or a dead process. Writes `<out>/soak-<timestamp>.json` + a Markdown table. Three 90 s runs:
+> torch fd/thread slope 0.000, 5 training runs `done` each, no 5xx, no process died; LLM projected 25 / 61 / 75 MB/h
+> (RSS read after a forced GC — the V8 sawtooth made the raw slope flaky; the harness runs the sidecar with
+> `--expose-gc`). **Honest reading:** 90 s cannot tell a 20 MB/h leak from heap noise — the LLM figure is an
+> upper estimate on a short window, run an hour before trusting it. GPU memory is `SKIPPED  CUDA` (no CUDA here);
+> the Rust/UI side (saves, metric polling, the webview) is not exercised.
 
 ---
 

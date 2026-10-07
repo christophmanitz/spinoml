@@ -101,6 +101,8 @@ const trackedChildren = new Set()
 // (a SIGKILL cannot be handled, so an empty tmp dir may still remain in that case).
 const openSessionDirs = new Set()
 const activeTurnControllers = new Set()
+// Phase 51: thread-safe-enough (single event loop) request counter for /health.diag.
+let requestCount = 0
 
 function trackChild(child) {
   if (!child) return
@@ -3016,7 +3018,47 @@ function handleSdkMessage(m, emit) {
 
 const HEALTH_FULL_BODY = { ok: true }
 
+// Phase 51 — read-only diagnostic counters for the resource-leak / soak harnesses.
+// Reads the module-level collections that already gate child/ask/turn lifecycle
+// plus /proc/self. Every field is null when the platform cannot provide it
+// (non-Linux) — it never throws. ONLY the full /health body carries `diag`;
+// the limited unauthenticated body must not (process/thread/fd counts are info).
+function diagSnapshot() {
+  // When the process runs with --expose-gc (the soak/resource-leak harnesses do
+  // this) collapse the V8 heap first, so rss_kb reports retained memory rather
+  // than an arbitrary point on the sawtooth. No-op without the flag.
+  if (typeof global.gc === 'function') global.gc()
+  const readProcCount = (path) => {
+    try {
+      return readdirSync(path).length
+    } catch (e) {
+      console.error(`[spinoml-llm] diag: cannot list ${path}: ${e && e.message ? e.message : e}`)
+      return null
+    }
+  }
+  let rssKb = null
+  try {
+    const text = readFileSync('/proc/self/status', 'utf8')
+    const m = /^VmRSS:\s+(\d+)/m.exec(text)
+    if (m) rssKb = Number(m[1])
+  } catch (e) {
+    console.error(`[spinoml-llm] diag: cannot read /proc/self/status: ${e && e.message ? e.message : e}`)
+  }
+  return {
+    pending_asks: pendingAsks.size,
+    mcp_sessions: mcpSessions.size,
+    active_turns: activeTurnControllers.size,
+    tracked_children: trackedChildren.size,
+    open_session_dirs: openSessionDirs.size,
+    open_fds: readProcCount('/proc/self/fd'),
+    rss_kb: rssKb,
+    uptime_s: Math.round(process.uptime() * 1000) / 1000,
+    requests_total: requestCount,
+  }
+}
+
 const server = createServer(async (req, res) => {
+  requestCount++
   // Per docs/engineering/SIDECAR_AUTH.md § 'Per-request enforcement order':
   // Host → Origin → OPTIONS → GET /health → token → otherwise. The auth
   // gate runs BEFORE any body is read so a malformed credential cannot
@@ -3039,7 +3081,7 @@ const server = createServer(async (req, res) => {
     return
   }
   if (req.method === 'GET' && req.url === '/health') {
-    return sendJson(res, 200, healthBody(AUTH_CONFIG, HEALTH_FULL_BODY, decision.tokenOk))
+    return sendJson(res, 200, healthBody(AUTH_CONFIG, { ...HEALTH_FULL_BODY, diag: diagSnapshot() }, decision.tokenOk))
   }
   if (req.method === 'POST' && req.url === '/respond') {
     let body = ''

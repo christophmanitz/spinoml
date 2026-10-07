@@ -290,6 +290,22 @@ export const SUITES: readonly Suite[] = [
     why: 'Every repo path / npm script / link referenced in docs/engineering, FEATURES.md and CLAUDE.md exists (documentation must describe the real system)',
   },
   {
+    name: 'test:resource-leaks',
+    npmScript: 'test:resource-leaks',
+    category: 'integration',
+    timeoutSec: 600,
+    needs: ['torch-env'],
+    why: 'Both sidecars under 300+ requests / 150 chat turns: fd, thread, child-process and in-process-state deltas bounded (diag counters in /health), measured RSS bounds; mutations red',
+  },
+  {
+    name: 'test:soak',
+    npmScript: 'test:soak',
+    category: 'integration',
+    timeoutSec: 400,
+    needs: ['torch-env'],
+    why: 'Short soak (default 90 s; `npm run test:soak -- --seconds 3600` for the real one): mixed requests + real trainer runs, RSS slope / fd / thread trend, state consistency; GPU memory SKIPPED (no CUDA)',
+  },
+  {
     name: 'verify:rust-panics',
     npmScript: 'verify:rust-panics',
     category: 'unit',

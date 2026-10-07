@@ -138,6 +138,13 @@ restart/crash — no GUI here). The descendant walk reads `/proc/<pid>/task/*/ch
 `CONFIG_PROC_CHILDREN`); elsewhere children of the LLM sidecar that are not in its process group can survive.
 A SIGKILL of a sidecar cannot be handled: its tracked children (torch: own sessions) can outlive it.
 
+**Resource growth (Phase 51/52).** Measured for the two sidecars only (`test:resource-leaks`, `test:soak`): the torch
+sidecar's RSS plateaus ≈ 124 MB above its start after the first few hundred requests (a high-water mark from lazy
+imports, not a per-request leak — checked up to 1200 requests), the LLM sidecar ≈ 65 MB; fd/thread/child counts
+return to baseline. The short soak (90 s) cannot resolve slow leaks: its LLM RSS slope projects to 25–75 MB/h, which
+is within heap noise of a window that short — run `npm run test:soak -- --seconds 3600` for a statement worth
+trusting. Not measured at all: memory/CPU of the Tauri shell and the webview, GPU memory, workspace open/close cycles.
+
 **Dependencies (Phase 79).** Point-in-time audit only (evidence file in `docs/engineering/evidence/`); nothing runs
 it on a schedule and CI has never run. Residue: 2 low `dompurify` advisories (via the now-bundled `monaco-editor`), the
 `rkyv` lock entry (never compiled), 7 unmaintained + 2 unsound transitive Rust crates that Tauri pulls in on

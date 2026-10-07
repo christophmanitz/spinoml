@@ -295,6 +295,9 @@ npm run test:codegen-golden         # 40 byte-exact generated-Python cases + cov
 npm run test:process-lifecycle      # both sidecars: port busy/invalid port/SIGTERM without orphans/start-stop cycles (inside the conda env)
 npm run verify:silent-except-py     # Python swallowing-except guard (inside the conda env); verify:rust-panics = Rust twin
 npm run verify:ts-safety            # ratchet: no new any / unchecked cast / non-null assertion / floating promise in src/
+npm run test:resource-leaks         # fd/thread/RSS/child/in-process-state bounds under sustained use (inside the conda env)
+npm run test:soak -- --seconds 3600 # long mixed-load run with real trainer runs (default 90 s is what CI runs)
+npm run verify:doc-refs             # every path / npm script / link in docs/engineering, FEATURES.md, CLAUDE.md exists
 npm run test:webview-csp            # real headless Chromium on dist/ with the CSP of tauri.conf.json (SKIPPED without a browser)
 npm run verify:opencode             # LLM sidecar must be up; asserts /opencode/models
                                     # + a real opencode chat + clean bogus-model error

@@ -289,6 +289,14 @@ async function testTokenMode(ws: string): Promise<void> {
       const full = json(await req(port, '/health', { method: 'GET', token: TOKEN }))
       const fullOk = full.tokenOk === true && full.auth === 'token' && full.requiresAuth === true && typeof full.torch === 'string' && typeof full.scope === 'object'
       record('/health right token full body', 'torch+scope+tokenOk', `tokenOk=${String(full.tokenOk)}`, fullOk)
+      const limitedHasDiag = 'diag' in limited
+      const fullHasDiag = 'diag' in full
+      record(
+        '/health diag absent without token, present with',
+        'absent/present',
+        `${limitedHasDiag ? 'present' : 'absent'}/${fullHasDiag ? 'present' : 'absent'}`,
+        !limitedHasDiag && fullHasDiag,
+      )
     }
 
     // Bind address (Phase 78 "do not expose on 0.0.0.0"): the port must not accept

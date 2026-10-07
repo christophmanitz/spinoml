@@ -76,6 +76,8 @@
     "test:sidecar-auth-torch": "tsx scripts/test-sidecar-auth-torch.ts",
     "test:sidecar-auth-llm": "tsx scripts/test-sidecar-auth-llm.ts",
     "test:opencode-lifecycle": "tsx scripts/test-opencode-lifecycle.ts",
+    "test:resource-leaks": "tsx scripts/test-resource-leaks.ts",
+    "test:soak": "tsx scripts/soak.ts",
     "gen:layer-catalog": "tsx scripts/gen-layer-catalog.ts",
     "sidecar:torch": "python sidecar-torch/main.py",
     "sidecar:llm": "node sidecar-llm/main.mjs",

@@ -108,6 +108,72 @@ MAX_INPUT_ELEMS = 1 << 30  # 1G elems ≈ 4–8 GB fp32 — already too big for 
 REQUEST_TIMEOUT = float(os.environ.get("SPINOML_TORCH_TIMEOUT", "30"))
 
 
+# ── Diagnostic counters (Phase 51) ────────────────────────────────────────
+# Read-only /proc/self + process introspection for the resource-leak and soak
+# harnesses. Never raises: a missing /proc field is reported as None. Only the
+# FULL /health body carries `diag` (the limited unauthenticated body must NOT —
+# see _health_body), because process/thread/fd counts are information.
+_STARTED_AT = time.monotonic()
+_request_lock = threading.Lock()
+_request_count = 0
+
+
+def _count_request() -> None:
+    global _request_count
+    with _request_lock:
+        _request_count += 1
+
+
+def _read_status_fields() -> dict:
+    """Parse the /proc/self/status fields diag needs. Returns {} when unreadable."""
+    try:
+        with open("/proc/self/status", "r") as fh:
+            text = fh.read()
+    except OSError as e:
+        print(f"[spinoml-torch] diag: cannot read /proc/self/status: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        return {}
+    fields = {}
+    for line in text.splitlines():
+        if line.startswith("VmRSS:"):
+            parts = line.split()
+            if len(parts) >= 2:
+                try:
+                    fields["rss_kb"] = int(parts[1])
+                except ValueError:
+                    fields["rss_kb"] = None
+        elif line.startswith("Threads:"):
+            parts = line.split()
+            if len(parts) >= 2:
+                try:
+                    fields["threads"] = int(parts[1])
+                except ValueError:
+                    fields["threads"] = None
+    return fields
+
+
+def _count_open_fds():
+    try:
+        return len(os.listdir("/proc/self/fd"))
+    except OSError as e:
+        print(f"[spinoml-torch] diag: cannot list /proc/self/fd: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        return None
+
+
+def _diag() -> dict:
+    """Small, additive, read-only health payload. Every field is None when the
+    platform cannot provide it (non-Linux) — never an exception."""
+    fields = _read_status_fields()
+    with _request_lock:
+        total = _request_count
+    return {
+        "threads": fields.get("threads"),
+        "open_fds": _count_open_fds(),
+        "rss_kb": fields.get("rss_kb"),
+        "uptime_s": round(time.monotonic() - _STARTED_AT, 3),
+        "requests_total": total,
+    }
+
+
 # ── Tracked subprocess + signal cleanup (Phase 13) ────────────────────────
 # Every long-running subprocess is started in its OWN process group
 # (`start_new_session=True` in `_run_tracked`) so SIGTERM to the sidecar
@@ -1097,6 +1163,7 @@ class Handler(BaseHTTPRequestHandler):
         """Run ``auth.decide`` BEFORE the body is read, remember the validated
         Origin for the response, and emit the rejection if any. Returns the
         Decision on success, or None when a rejection was already sent."""
+        _count_request()
         self._origin = None
         decision = auth.decide(method, self.path, self._headers_get, AUTH)
         self._origin = decision.origin
@@ -1117,9 +1184,11 @@ class Handler(BaseHTTPRequestHandler):
         otherwise the existing full body plus the same three keys."""
         if not AUTH.require_token:
             return {"ok": True, "torch": torch.__version__, "scope": scope.scope_status(),
+                    "diag": _diag(),
                     "auth": "unauthenticated-dev", "requiresAuth": False, "tokenOk": True}
         if decision.token_ok:
             return {"ok": True, "torch": torch.__version__, "scope": scope.scope_status(),
+                    "diag": _diag(),
                     "auth": "token", "requiresAuth": True, "tokenOk": True}
         return {"ok": True, "auth": "token", "requiresAuth": True, "tokenOk": False}
 
