@@ -29,9 +29,16 @@
   echoes only an allowed Origin. Spec: `docs/engineering/SIDECAR_AUTH.md`. Residual, in order
   of importance:
   1. **The webview is trusted.** Any script that runs in the app origin can call
-     `sidecar_token` and every other Tauri command. `tauri.conf.json` has `"csp": null` and
-     `@monaco-editor/react` loads Monaco from `cdn.jsdelivr.net` at runtime (R052). A strict
-     CSP + bundled Monaco is open work and needs a real-webview test.
+     `sidecar_token` and every other Tauri command. R052 is closed in this respect: Monaco is
+     bundled (no CDN at runtime, the editors also work offline) and the built app ships a strict
+     CSP (`script-src 'self'`, `connect-src` = IPC + the three sidecar ports, `worker-src 'self'
+     blob:`, `object-src 'none'`; `style-src` needs `'unsafe-inline'` for Monaco/xterm/React
+     styles only). Verified in a REAL Chromium (`npm run test:webview-csp`: the app renders, an
+     editor mounts, no violation, no request to any other host, inline script and foreign fetch
+     are blocked) — NOT in the Tauri/WebKitGTK window, which could not be run here. If the
+     installed app shows a blank window or a failing editor, set `app.security.csp` to `null`
+     in `src-tauri/tauri.conf.json` (the previous behaviour) and report it. `tauri dev` keeps
+     `devCsp: null`. Still true: a bug in the app's own code that injects HTML would run with IPC.
   2. **A process of the same OS user wins** (`/proc/<pid>/environ` of a sidecar, the app's
      memory). The token only separates *other* origins, *other* users (shared HPC login
      node: the remote loopback port and the local ssh-tunnel port 7424 are reachable by
@@ -132,7 +139,7 @@ restart/crash — no GUI here). The descendant walk reads `/proc/<pid>/task/*/ch
 A SIGKILL of a sidecar cannot be handled: its tracked children (torch: own sessions) can outlive it.
 
 **Dependencies (Phase 79).** Point-in-time audit only (evidence file in `docs/engineering/evidence/`); nothing runs
-it on a schedule and CI has never run. Residue: 2 low `dompurify` advisories (via `monaco-editor`, R052), the
+it on a schedule and CI has never run. Residue: 2 low `dompurify` advisories (via the now-bundled `monaco-editor`), the
 `rkyv` lock entry (never compiled), 7 unmaintained + 2 unsound transitive Rust crates that Tauri pulls in on
 Linux. The Claude subscription provider (OAuth) could not be driven after the MCP SDK update (`sidecar-llm`
 transitive bump 1.29 -> 1.32); only the import and the fake-provider suites ran. Python was audited with

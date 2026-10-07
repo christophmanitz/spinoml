@@ -138,10 +138,10 @@ test (`scripts/verify-remote-deploy-files.ts`) computes the local-import closure
 1. A process of the same OS user can read the token (`/proc/<pid>/environ`, the app's
    memory) — same-user compromise is out of scope.
 2. The webview can call `sidecar_token` and every other Tauri command: any script running
-   in the app origin (XSS, a compromised CDN script) wins. `tauri.conf.json` has
-   `"csp": null` and `@monaco-editor/react` loads Monaco from `cdn.jsdelivr.net` at
-   runtime (R052). A strict CSP needs a real-webview test and bundled Monaco → TODO, not
-   done here.
+   in the app origin (XSS) wins. Since R052 no script is loaded from a CDN (Monaco is
+   bundled) and the built app ships a strict CSP (`script-src 'self'`); that is verified in a
+   real Chromium (`test:webview-csp`), not in the Tauri window. A bug in the app's own code
+   that injects HTML is still game over.
 3. The token is per launch; there is no rotation inside a session and no revocation.
 4. Browser-dev mode (`npm run dev` + manually started sidecars) runs `unauthenticated-dev`
    unless the developer exports a token; Host/Origin checks still apply.

@@ -404,7 +404,7 @@ canvas) and the blocked training launch open the dialog via
   are random UUIDs.
 - **Proof**: `test:sidecar-auth-torch`, `test:sidecar-auth-llm`, `test:sidecar-auth-frontend`,
   `test:opencode-lifecycle`, `verify:sidecar-fetch`, `verify:remote-deploy-files`, `cargo test`.
-  Limits (webview trust, same-user processes, CSP/Monaco CDN): LIMITATIONS.md §2, R052.
+  Limits (webview trust, same-user processes): LIMITATIONS.md §2; Monaco is bundled and the built app has a strict CSP (R052, `npm run test:webview-csp`).
 
 ## 9. Common tasks (how to do X)
 
@@ -419,6 +419,7 @@ canvas) and the blocked training launch open the dialog via
 
 ## Changelog (append one dated line per feature; newest first)
 
+- 2026-10-07 — **Bundled Monaco + strict CSP (R052)**: the code editors no longer load from a CDN (they now work offline / on a login node) and the built app ships a strict Content-Security-Policy; verified in a real Chromium (`npm run test:webview-csp`), not yet in the Tauri window (fallback: `app.security.csp: null`).
 - 2026-10-06 — **Sidecar process lifecycle (Phase 13)**: both sidecars exit 3 with one clear line when their port is taken, 2 on an invalid port, and on SIGTERM/SIGINT shut down cleanly (no orphaned scripts/opencode/pip children, port released at once); `npm run ci` now uses a private `TMPDIR` (`--keep-tmp` keeps it) instead of littering `/tmp`.
 - 2026-10-06 — **Rust panic/swallow audit (Phase 48 + 50 Rust half)**: no `unwrap`/`panic` in non-test Rust, 112 best-effort sites classified and guarded (`npm run verify:rust-panics`); fixes: u32-epoch overflow in the run list, a false "no runs" list on a permission error, terminal-session id collisions.
 - 2026-10-06 — **Codegen golden tests + MultiheadAttention fix (Phase 6)**: the generated Python of 40 reference graphs (model, training, data) is pinned byte for byte (`npm run test:codegen-golden`, `scripts/golden/`; a new layer/node needs a golden case or an explicit exclusion); the `MultiheadAttention` layer now generates a valid self-attention call (`self.mha(x, x, x, need_weights=False)[0]`) — before, the layer raised a TypeError.

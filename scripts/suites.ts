@@ -250,6 +250,14 @@ export const SUITES: readonly Suite[] = [
     why: 'Both sidecars vs real processes: port busy (exit 3), invalid port (exit 2), SIGTERM/SIGINT cleanup incl. orphan children and grandchildren, 25 start/stop cycles without fd/port/process leaks, restart on the same port',
   },
   {
+    name: 'test:webview-csp',
+    npmScript: 'test:webview-csp',
+    category: 'integration',
+    timeoutSec: 300,
+    needs: [],
+    why: 'Real headless Chromium (CDP) on the built dist/ with the CSP from tauri.conf.json: renders, Monaco mounts offline, no violations, only self + sidecar hosts, negative probes blocked (prints SKIPPED when no browser exists)',
+  },
+  {
     name: 'verify:rust-panics',
     npmScript: 'verify:rust-panics',
     category: 'unit',

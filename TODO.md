@@ -3798,11 +3798,24 @@ unless there is an explicit reason.
 > `ModuleNotFoundError` (`scope`, `safe_load`, `deps_policy`; the ESPF codebook was never shipped
 > either). One `SIDECAR_FILES` constant now drives `deploy()` and `verify:remote-deploy-files`
 > checks it against the import closure (R053; not exercised against a real login node).
-> **Not done / honest limits:** no CSP (needs a real-webview test and bundled Monaco — R052),
+> **Not done / honest limits:** (CSP/Monaco: closed afterwards, see the R052 note below), 
 > browser-dev stays tokenless, no rotation, same-user processes can read the token
 > (LIMITATIONS.md §2). Verified: `test:sidecar-auth-torch` (143 rows, token/Origin/Host mutations
 > red), `test:sidecar-auth-llm` (125 rows, 4 mutations red), `test:sidecar-auth-frontend`,
 > `verify:sidecar-fetch`, `verify:remote-deploy-files`, `cargo test` (37).
+
+> **R052 closed afterwards (2026-10-07): bundled Monaco + strict CSP.** The editor runtime was fetched from
+> `cdn.jsdelivr.net` at run time (every code editor broke offline / on a login node, and a compromised CDN
+> script would have run with full Tauri IPC) and `csp` was `null`. Now `src/editor/monacoSetup.ts` bundles
+> Monaco 0.57 (only the editor features, the languages the app uses and the JSON worker; same-origin Vite
+> workers) and `tauri.conf.json` carries a strict production CSP (`devCsp: null` keeps `tauri dev` as it was).
+> `npm run test:webview-csp` builds `dist/`, serves it with the exact CSP header from `tauri.conf.json` and
+> drives a real headless Chromium over CDP (no new dependency): the app renders, an editor mounts with
+> tokenised text, no CSP violation, every request goes to self or a sidecar port (never the CDN), the worker
+> comes from self, and negative probes prove the policy is active (inline script blocked, foreign `fetch`
+> rejected with no network attempt). Mutations red: `csp: null`, `connect-src` without a sidecar port, the
+> setup import removed (the editor then tries the CDN). **Not verified:** the Tauri/WebKitGTK window itself —
+> if the installed app misbehaves, `app.security.csp: null` restores the old behaviour (LIMITATIONS §2).
 
 ---
 
@@ -3842,7 +3855,7 @@ Update
 > suites, build, full `npm run ci`). Not blindly upgraded: no `package.json`/direct-dependency bump, no
 > `cargo update` of unrelated crates. **Not done / limits:** the subscription provider (OAuth) could not be
 > exercised after the MCP SDK bump (`import` + the fake-provider suites pass); 2 low dompurify advisories remain
-> (Monaco is loaded from a CDN anyway — R052); 7 unmaintained / 2 unsound transitive crates (GTK3 bindings,
+> (the editor is bundled now — R052); 7 unmaintained / 2 unsound transitive crates (GTK3 bindings,
 > `unic-*`, `proc-macro-error`, `anyhow` unsoundness in `downcast_mut`, `glib`) come with Tauri on Linux and are
 > not fixable here; the audit is a point-in-time check — there is no scheduled audit job (CI has never run).
 
