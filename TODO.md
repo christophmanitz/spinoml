@@ -472,9 +472,23 @@ are not written to ordinary logs or experiment artifacts.
 > `SPINOML_LLM_PORT`) and an unawaited temp-dir cleanup — both fixed. The real opencode CLI
 > (1.18.15) was exercised once by hand against a token-mode sidecar with a ScaDS model (the free
 > `opencode/*` tier refuses non-OpenCode callers with 403): the `environment` secret reached the
-> bridge and `add_layer` produced an `action`. NOT done: provider selection / model handling tests
-> (default Big Pickle, unknown model), an automated real-CLI suite (needs a live model —
-> `verify:opencode` stays BLOCKED), Anthropic/subscription paths.
+> bridge and `add_layer` produced an `action`. **Completed 2026-10-07:** `npm run test:llm-providers` (70 rows) with a printed
+> coverage table that maps every §0.12 bullet (19) to a row of its own or to the suite that already covers it:
+> configuration (opencode is the default with `opencode/big-pickle`; selection and model persist across a simulated reload;
+> hostile persisted state — `null`, arrays, wrong types, unknown provider id, a model with spaces or a leading dash — falls back
+> to the default and never throws; API keys are not copied anywhere else), provider routing (each `kind` reaches its OWN backend
+> by a backend-specific outcome: the fake OpenAI server saw the configured model/header, the fake opencode was spawned with
+> `--model <exact value>`, `anthropic` without a key and with a refusing base URL give provider-specific explicit errors; an
+> unknown `kind` is an explicit 400 — it used to fall back silently to the `subscription` path), request handling (invalid
+> JSON / missing `user` / wrong types / oversize body / provider unavailable / missing opencode binary → explicit error, stream
+> ends, no child) and model handling. **Defect found and fixed (same class as Phase 44):** the model string reached
+> `opencode run --model <value>` unvalidated, so `--print-logs`, `-h` or a value with spaces/control characters could be
+> parsed as an option; `sidecar-llm/model-name.mjs` `validateModelName` now rejects every name outside
+> `^[A-Za-z0-9][A-Za-z0-9._+:/@-]{0,199}$` with an explicit error BEFORE any process is spawned (13 hostile-model rows red
+> without it; the frontend store applies the same rule — duplicated with a parity assertion because the sidecar module is
+> Node-only). Mutations red: validation bypass, unknown-kind fallback, persisted selection ignored. The `subscription`
+> provider (real Claude CLI / OAuth) is an explicit SKIPPED row and the real opencode CLI is not driven by any suite
+> (`verify:opencode` stays BLOCKED without a live model).
 
 ---
 

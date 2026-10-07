@@ -306,6 +306,14 @@ export const SUITES: readonly Suite[] = [
     why: 'Short soak (default 90 s; `npm run test:soak -- --seconds 3600` for the real one): mixed requests + real trainer runs, RSS slope / fd / thread trend, state consistency; GPU memory SKIPPED (no CUDA)',
   },
   {
+    name: 'test:llm-providers',
+    npmScript: 'test:llm-providers',
+    category: 'contract',
+    timeoutSec: 300,
+    needs: [],
+    why: 'TODO 0.12: provider config/persistence, every kind reaches its own backend, invalid request / provider unavailable, hostile model names rejected before spawning opencode (coverage table of all 19 bullets)',
+  },
+  {
     name: 'verify:rust-panics',
     npmScript: 'verify:rust-panics',
     category: 'unit',

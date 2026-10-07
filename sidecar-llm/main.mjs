@@ -44,6 +44,7 @@ import OpenAI from 'openai'
 import { splitArgs, quoteArgv, checkDownloadUrl, checkSshTarget, safeFetch } from './shell-safety.mjs'
 import { resolveInWorkspace, loadSymlinkTargets } from './path-scope.mjs'
 import { validateNodeParams, wouldCreateCycle, redactSecrets, nodeKind } from './tool-validation.mjs'
+import { validateModelName, validateJsonModelName } from './model-name.mjs'
 import { randomUUID } from 'node:crypto'
 import {
   loadConfig as loadAuthConfig,
@@ -1920,7 +1921,9 @@ async function runAnthropicApi(specs, systemPrompt, history, user, emit, opts, a
     ...(history ?? []).filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, content: m.content })),
     { role: 'user', content: user },
   ]
-  const model = opts.model || 'claude-opus-4-8'
+  const mj = validateJsonModelName(opts.model)
+  if (!mj.ok) throw new Error(`invalid model name: ${mj.error}`)
+  const model = mj.name || 'claude-opus-4-8'
 
   let steps = 0
   while (true) {
@@ -1966,7 +1969,9 @@ async function runOpenAiCompat(specs, systemPrompt, history, user, emit, opts, a
     ...(history ?? []).filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, content: m.content })),
     { role: 'user', content: user },
   ]
-  const model = opts.model || 'gpt-4o'
+  const mj = validateJsonModelName(opts.model)
+  if (!mj.ok) throw new Error(`invalid model name: ${mj.error}`)
+  const model = mj.name || 'gpt-4o'
   const stallSeconds = Math.round(UPSTREAM_TIMEOUT_MS / 1000)
 
   let steps = 0
@@ -2208,7 +2213,16 @@ async function listOpenCodeModels() {
 // (unlike the other providers where this file orchestrates the loop); we only
 // translate events and enforce budgets/timeouts/abort.
 async function runOpenCode(specs, systemPrompt, history, user, emit, opts, requestId, turnAbort, mcpSecret) {
-  const model = opts?.model || OPENCODE_DEFAULT_MODEL
+  // The model string is interpolated into argv (`spawn(... '--model', model ...)`);
+  // a leading `-` or whitespace would be parsed by opencode as an OPTION, not the
+  // model. Reject BEFORE any child process is spawned — `opts?.model` empty/absent
+  // keeps the documented default.
+  const m = validateModelName(opts?.model)
+  if (!m.ok) {
+    emit({ type: 'status', value: 'error', message: `invalid model name: ${m.error}` })
+    return ''
+  }
+  const model = m.name || OPENCODE_DEFAULT_MODEL
   const prompt = `${systemPrompt}\n\n${formatHistoryAsPrompt(history ?? [], user)}`
   const bridgePath = new URL('./mcp-bridge.mjs', import.meta.url).pathname
 
@@ -2749,23 +2763,60 @@ function formatHistoryAsPrompt(messages, latestUser) {
 }
 
 async function handleChat(req, res) {
+  // Cap the request body. A normal /chat payload (system prompt + a long
+  // history + a few graph/training/data nodes) is well under 256 KiB; 1 MiB
+  // leaves headroom for unusually large system prompts while preventing an
+  // unbounded stream from wedging the event loop or blowing memory.
+  const MAX_BODY_BYTES = 1_048_576
   let body = ''
-  for await (const chunk of req) body += chunk
+  let bodyBytes = 0
+  for await (const chunk of req) {
+    bodyBytes += chunk.length
+    if (bodyBytes > MAX_BODY_BYTES) {
+      return sendJson(res, 413, { error: `request body too large (>${MAX_BODY_BYTES} bytes)` })
+    }
+    body += chunk
+  }
   let payload
   try { payload = JSON.parse(body || '{}') }
   catch (e) { return sendJson(res, 400, { error: `invalid json: ${e.message}` }) }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return sendJson(res, 400, { error: 'body must be a JSON object' })
+  }
 
   const { user, messages, graph, training_graph, data_graph, error, project, llm, autoMode, docMode } = payload
   if (typeof user !== 'string' || !user.trim()) {
     return sendJson(res, 400, { error: 'missing "user" string' })
   }
+  // Type guards for the structural payload fields — the LLM is untrusted input
+  // and a non-array `messages` would otherwise explode inside formatHistory.
+  if (messages !== undefined && !Array.isArray(messages)) {
+    return sendJson(res, 400, { error: '"messages" must be an array' })
+  }
+  if (graph !== undefined && (graph === null || typeof graph !== 'object' || Array.isArray(graph))) {
+    return sendJson(res, 400, { error: '"graph" must be an object' })
+  }
   // FEAT-3 Auto-Modus: shell run_script auto-approves (SLURM still confirms).
   // FEAT-4 Doku-Modus: 'verbose' | 'compact' | 'off' (default verbose).
   const autoApproveShell = autoMode === true
   const docModeVal = docMode === 'off' || docMode === 'compact' ? docMode : 'verbose'
-  // Default to the subscription (OAuth) path when no provider is supplied —
-  // fully backward-compatible with older frontends.
-  const kind = llm?.kind ?? 'subscription'
+  // Resolve the provider kind. A MISSING `llm`/`llm.kind` keeps the documented
+  // default (`subscription` — the OAuth/CLI path) so older frontends stay
+  // green. An UNKNOWN string kind must NOT silently fall back to subscription
+  // (Phase 44/77 invariant: every failure becomes an explicit application
+  // state — silently swapping providers would make a misconfigured frontend
+  // appear to work). A wrong type is also an explicit error.
+  const ALLOWED_KINDS = new Set(['opencode', 'subscription', 'anthropic', 'openai-compat'])
+  let kind
+  if (llm === undefined || llm === null || llm.kind === undefined || llm.kind === null || llm.kind === '') {
+    kind = 'subscription'
+  } else if (typeof llm.kind !== 'string') {
+    return sendJson(res, 400, { error: `invalid llm.kind: expected string, got ${typeof llm.kind}` })
+  } else if (!ALLOWED_KINDS.has(llm.kind)) {
+    return sendJson(res, 400, { error: `unknown llm.kind: ${JSON.stringify(llm.kind)} (allowed: ${[...ALLOWED_KINDS].join(', ')})` })
+  } else {
+    kind = llm.kind
+  }
 
   applyCors(res)
   res.writeHead(200, {

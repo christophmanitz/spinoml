@@ -72,6 +72,7 @@
     "test:silent-except-py": "python scripts/verify-silent-except-py.py --self-test",
     "test:llm-safety": "tsx scripts/test-llm-safety.ts",
     "test:llm-validation-parity": "tsx scripts/test-llm-validation-parity.ts",
+    "test:llm-providers": "tsx scripts/test-llm-providers.ts",
     "test:webview-csp": "tsx scripts/test-webview-csp.ts",
     "test:sidecar-auth-torch": "tsx scripts/test-sidecar-auth-torch.ts",
     "test:sidecar-auth-llm": "tsx scripts/test-sidecar-auth-llm.ts",

@@ -13,6 +13,13 @@ import { create } from 'zustand'
 // Config (incl. API keys) is persisted to localStorage — same approach as the
 // connections store. Keys live in the desktop app's webview storage only.
 
+// MODEL_NAME_RE — duplicated from sidecar-llm/model-name.mjs to keep the
+// Vite bundle free of sidecar Node imports. The shape and limits are
+// documented there; a parity assertion in scripts/test-llm-providers.ts
+// asserts this regex equals sidecar-llm/model-name.mjs/MODEL_NAME_RE.
+export const MODEL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._+:/@-]{0,199}$/
+export const MODEL_NAME_MAX_LEN = 200
+
 export type LlmKind = 'opencode' | 'subscription' | 'anthropic' | 'openai-compat'
 
 export type ProviderSpec = {
@@ -106,13 +113,36 @@ function loadPersisted(): Persisted {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return { currentId: PROVIDERS[0].id, configs: {} }
-    const parsed = JSON.parse(raw)
+    const parsed: unknown = JSON.parse(raw)
+    const obj = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {}
     const currentId =
-      typeof parsed?.currentId === 'string' && PROVIDERS.some((p) => p.id === parsed.currentId)
-        ? parsed.currentId
+      typeof obj.currentId === 'string' && PROVIDERS.some((p) => p.id === obj.currentId)
+        ? obj.currentId
         : PROVIDERS[0].id
-    const configs =
-      parsed?.configs && typeof parsed.configs === 'object' ? (parsed.configs as Record<string, ProviderConfig>) : {}
+    const configsRaw = obj.configs !== null && typeof obj.configs === 'object' && !Array.isArray(obj.configs)
+      ? (obj.configs as Record<string, unknown>)
+      : {}
+    // Sanitise each provider config: only known STRING fields survive, and the
+    // model must satisfy the same MODEL_NAME_RE the sidecar enforces before it
+    // ever reaches `spawn(opencode, …, '--model', model, …)`. A hostile
+    // persisted value (null entry, array entry, non-string model, model with
+    // spaces / leading dash / control chars, oversized strings) falls back to
+    // the provider default instead of being sent.
+    const configs: Record<string, ProviderConfig> = {}
+    for (const p of PROVIDERS) {
+      const c = configsRaw[p.id]
+      if (c === null || typeof c !== 'object' || Array.isArray(c)) continue
+      const rec = c as Record<string, unknown>
+      const out: ProviderConfig = {}
+      if (typeof rec.apiKey === 'string') out.apiKey = rec.apiKey
+      if (typeof rec.baseUrl === 'string') out.baseUrl = rec.baseUrl
+      if (typeof rec.model === 'string' && rec.model.length <= MODEL_NAME_MAX_LEN && MODEL_NAME_RE.test(rec.model)) {
+        out.model = rec.model
+      }
+      configs[p.id] = out
+    }
     return { currentId, configs }
   } catch {
     return { currentId: PROVIDERS[0].id, configs: {} }
@@ -147,7 +177,21 @@ export const useProviderStore = create<State>((set, get) => ({
   },
 
   setConfig: (id, patch) => {
-    const configs = { ...get().configs, [id]: { ...get().configs[id], ...patch } }
+    // Sanitise the model field against MODEL_NAME_RE so the persisted value is
+    // always one the sidecar will accept. A hostile / oversized / leading-dash
+    // string is dropped (the provider default then takes over on read); a
+    // non-string is normalised to undefined. API keys and baseUrls pass
+    // through; the sidecar re-validates them.
+    const next: ProviderConfig = { ...get().configs[id] }
+    if ('model' in patch) {
+      const m = patch.model
+      if (typeof m === 'string' && m.length === 0) delete next.model
+      else if (typeof m === 'string' && m.length <= MODEL_NAME_MAX_LEN && MODEL_NAME_RE.test(m)) next.model = m
+      else delete next.model
+    }
+    if (typeof patch.apiKey === 'string') next.apiKey = patch.apiKey
+    if (typeof patch.baseUrl === 'string') next.baseUrl = patch.baseUrl
+    const configs = { ...get().configs, [id]: next }
     set({ configs })
     persist({ currentId: get().currentId, configs })
   },
@@ -166,10 +210,16 @@ export function getCurrentLlmRequest(): LlmRequest {
   const p = providerById(currentId)
   if (p.kind === 'subscription') return { kind: 'subscription' }
   const cfg = configs[p.id] ?? {}
-  return {
-    kind: p.kind,
-    model: cfg.model?.trim() || p.defaultModel,
-    apiKey: cfg.apiKey?.trim() || undefined,
-    baseUrl: cfg.baseUrl?.trim() || p.baseUrl || undefined,
+  const model = cfg.model?.trim() && MODEL_NAME_RE.test(cfg.model.trim()) ? cfg.model.trim() : p.defaultModel
+  // Only emit apiKey for providers that actually need one — opencode reads no
+  // auth from the request, and a stray key in the payload would just leak into
+  // logs / process args on the way through.
+  const out: LlmRequest = { kind: p.kind, model }
+  if (p.needsKey) {
+    const key = cfg.apiKey?.trim()
+    if (key) out.apiKey = key
   }
+  const base = cfg.baseUrl?.trim() || p.baseUrl
+  if (base) out.baseUrl = base
+  return out
 }
