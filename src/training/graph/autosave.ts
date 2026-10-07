@@ -30,9 +30,11 @@ export function readTrainingAutosave(): TrainingGraphSnapshot | null {
   try {
     const text = localStorage.getItem(KEY)
     if (!text) return null
-    const snap = JSON.parse(text) as TrainingGraphSnapshot
-    if (!snap || !Array.isArray(snap.nodes) || !Array.isArray(snap.edges)) return null
-    return snap
+    const raw: unknown = JSON.parse(text)
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+    const o = raw as Record<string, unknown>
+    if (!Array.isArray(o.nodes) || !Array.isArray(o.edges)) return null
+    return o as unknown as TrainingGraphSnapshot
   } catch {
     // Training-graph autosave is best-effort recovery: missing and corrupt both
     // mean "nothing to restore", and the canvas makes no restored-state claim.

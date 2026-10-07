@@ -39,8 +39,13 @@ export type CanvasDocAdapter = {
 const KEY = 'spinoml.canvasdoc.bound.v1'
 
 function loadBound(): Partial<Record<CanvasKind, string>> {
-  try { return JSON.parse(localStorage.getItem(KEY) || '{}') }
-  catch {
+  try {
+    const raw = localStorage.getItem(KEY)
+    if (!raw) return {}
+    const v: unknown = JSON.parse(raw)
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+    return v as Partial<Record<CanvasKind, string>>
+  } catch {
     // localStorage unavailable/corrupt: no persisted bindings, so each canvas
     // simply starts on its chooser (no false claim about a bound file).
     return {}

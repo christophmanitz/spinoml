@@ -9,7 +9,9 @@ import { useDatasetsStore } from '../datasets/store'
 import type { DatasetFingerprint } from '../datasets/types'
 import { training } from './backend'
 import { buildRunSnapshot } from './snapshot'
+import { parseRunConfig } from './parseRunConfig'
 import { assertTrusted } from '../trust/guard'
+import { fireAndForget } from '../errors/report'
 import {
   type RunSummary,
   type RunConfig,
@@ -142,7 +144,7 @@ function syncPolling(get: () => TrainingState) {
   if (pollTimer !== null) return // a tick is already pending
   pollTimer = setTimeout(() => {
     pollTimer = null
-    void get().refresh()
+    void fireAndForget('store.refresh', get().refresh())
   }, pollDelay())
 }
 
@@ -264,7 +266,7 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
     try {
       modelPy = await training.readFile(input.sourceRunId, 'model.py')
       modelSpinoml = await training.readFile(input.sourceRunId, 'model.spinoml')
-      const srcCfg = JSON.parse(await training.readFile(input.sourceRunId, 'run.json')) as RunConfig
+      const srcCfg = parseRunConfig(JSON.parse(await training.readFile(input.sourceRunId, 'run.json')))
       srcTraining = srcCfg.training
     } catch (e) {
       throw new Error(`could not read source run '${input.sourceRunId}': ${e instanceof Error ? e.message : String(e)}`, { cause: e })

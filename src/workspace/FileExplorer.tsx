@@ -9,6 +9,7 @@ import StatusPill from '../training/StatusPill'
 import PyCodeModal, { type PyPreview } from './PyCodeModal'
 import FileViewerModal from './FileViewerModal'
 import { confirmDialog } from '../ui/confirm'
+import { fireAndForget } from '../errors/report'
 
 const DRAG_MIME = 'application/spinoml-workspace-entry'
 
@@ -83,7 +84,7 @@ export default function FileExplorer() {
       const file = input.files?.[0]
       if (!file) return
       try {
-        importFromText(parentId, file.name, await file.text())
+        await importFromText(parentId, file.name, await file.text())
       } catch (e) {
         alert(`Couldn't import ${file.name}:\n${(e as Error).message}`)
       }
@@ -102,8 +103,9 @@ export default function FileExplorer() {
     const file = e.dataTransfer.files?.[0]
     if (!file) return
     file.text().then((text) => {
-      try { importFromText(ROOT_ID, file.name, text) }
-      catch (err) { alert(`Couldn't import ${file.name}:\n${(err as Error).message}`) }
+      importFromText(ROOT_ID, file.name, text).catch((err) => {
+        alert(`Couldn't import ${file.name}:\n${(err as Error).message}`)
+      })
     })
   }
 
@@ -288,7 +290,7 @@ function DataSection() {
   const select = useDatasetsStore((s) => s.select)
   const setTab = useSidebarStore((s) => s.setTab)
 
-  useEffect(() => { if (entries.length === 0) void refresh() }, [refresh]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (entries.length === 0) void fireAndForget('refresh', refresh()) }, [refresh]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const open = (rel: string) => { select(rel); setTab('datasets') }
 
@@ -323,7 +325,7 @@ function RunsSection() {
   const select = useTrainingStore((s) => s.select)
   const setTab = useSidebarStore((s) => s.setTab)
 
-  useEffect(() => { if (runs.length === 0) void refresh() }, [refresh]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (runs.length === 0) void fireAndForget('refresh', refresh()) }, [refresh]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const open = (runId: string) => { select(runId); setTab('experiments') }
 

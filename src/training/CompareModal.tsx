@@ -61,7 +61,12 @@ export default function CompareModal() {
         catch (e) { eventsError = e instanceof Error ? e.message : String(e) }
         try {
           const raw = await training.readFile(runId, 'run.json')
-          if (raw) config = JSON.parse(raw)
+          if (raw) {
+            const parsed: unknown = JSON.parse(raw)
+            config = (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+              ? parsed as Record<string, unknown>
+              : null
+          }
         } catch (e) { configError = e instanceof Error ? e.message : String(e) }
         return {
           runId,

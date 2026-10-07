@@ -291,6 +291,11 @@ npm run test:sidecar-auth-frontend  # sidecarFetch retry/401/403/health states v
 npm run verify:sidecar-fetch        # no bare fetch( in src/ outside src/sidecars/auth.ts
 npm run verify:remote-deploy-files  # Rust SIDECAR_FILES covers the sidecar-torch import closure + espf data
 npm run test:opencode-lifecycle     # opencode provider vs a fake opencode binary (bridge auth e2e, exit/abort/timeout)
+npm run test:codegen-golden         # 40 byte-exact generated-Python cases + coverage guard (`--update` for deliberate changes)
+npm run test:process-lifecycle      # both sidecars: port busy/invalid port/SIGTERM without orphans/start-stop cycles (inside the conda env)
+npm run verify:silent-except-py     # Python swallowing-except guard (inside the conda env); verify:rust-panics = Rust twin
+npm run verify:ts-safety            # ratchet: no new any / unchecked cast / non-null assertion / floating promise in src/
+npm run test:webview-csp            # real headless Chromium on dist/ with the CSP of tauri.conf.json (SKIPPED without a browser)
 npm run verify:opencode             # LLM sidecar must be up; asserts /opencode/models
                                     # + a real opencode chat + clean bogus-model error
 ```

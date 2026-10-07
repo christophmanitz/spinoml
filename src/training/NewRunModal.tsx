@@ -186,7 +186,7 @@ export default function NewRunModal() {
   }
 
   // default label from model name when nothing typed yet
-  const effectiveLabel = label || (modelRelpath ? modelRelpath.split('/').pop()!.replace(/\.spinoml$/i, '') : '')
+  const effectiveLabel = label || (modelRelpath ? (modelRelpath.split('/').pop() ?? modelRelpath).replace(/\.spinoml$/i, '') : '')
 
   const axes = sweeps
     .map((s) => ({ key: s.key, values: parseValues(s.raw) }))
@@ -306,10 +306,10 @@ export default function NewRunModal() {
             )}
           </Field>
 
-          {isMultitask && (
+          {isMultitask && cfg.heads && (
             <Field label="Multitask-Heads (aus dem Graph)">
               <div className="space-y-1 rounded border border-[#1f2429] bg-[#0b0e11] p-2">
-                {cfg.heads!.map((h, i) => (
+                {cfg.heads.map((h, i) => (
                   <div key={i} className="flex items-center gap-2 font-mono text-[11px] text-[#cfd3d8]">
                     <span className="rounded bg-[var(--accent-sel)] px-1.5 py-0.5 text-[10px] text-[var(--accent)]">{h.output || 'out'}</span>
                     <span className="text-[#6f767e]">→</span>
@@ -388,10 +388,10 @@ export default function NewRunModal() {
                   dessen <code>best.pt</code> und trainiert „Epochs" weitere Epochen. Das Modell oben muss dieselbe Architektur
                   haben wie der gewählte Run.
                 </Hint>
-                {mismatch && (
+                {mismatch && chosen && (
                   <span className="mt-1 block text-[10px] text-[#ff7a85]">
-                    ⚠ Dieser Run trainierte <code>{chosen!.model_path.split('/').pop()}</code>, oben gewählt ist
-                    <code> {modelRelpath.split('/').pop()}</code>. Bei abweichender Architektur schlägt das Laden fehl.
+                    ⚠ Dieser Run trainierte <code>{chosen.model_path.split('/').pop()}</code>, oben gewählt ist
+                    <code> {modelRelpath.split('/').pop() ?? ''}</code>. Bei abweichender Architektur schlägt das Laden fehl.
                   </span>
                 )}
               </Field>
@@ -458,7 +458,10 @@ export default function NewRunModal() {
               <div className="space-y-1.5 rounded border border-[#1f2429] bg-[#0b0e11] p-2">
                 <div className="flex items-baseline gap-2 text-[10px]">
                   <span className="font-mono text-[#9aa1a8]">
-                    {axes.map((a) => `${a.values.length} ${SWEEP_FIELDS.find((f) => f.key === a.key)!.label}`).join('  ×  ')}
+                    {axes.map((a) => {
+                      const field = SWEEP_FIELDS.find((f) => f.key === a.key)
+                      return `${a.values.length} ${field ? field.label : a.key}`
+                    }).join('  ×  ')}
                   </span>
                   <span className={`ml-auto font-medium ${sweepCount > 64 ? 'text-[#ff7a85]' : 'text-[var(--accent)]'}`}>
                     = {sweepCount} Run{sweepCount === 1 ? '' : 's'}{sweepCount > 64 ? ' · zu viele (max 64)' : ''}

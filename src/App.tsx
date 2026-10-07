@@ -30,6 +30,8 @@ import RunDetailModal from './training/RunDetailModal'
 import CompareModal from './training/CompareModal'
 import { useViewModeStore } from './training/graph/viewMode'
 import ModeToggle from './training/graph/ModeToggle'
+import DiagnosticsBanner from './errors/DiagnosticsBanner'
+import { fireAndForget } from './errors/report'
 import TrainingPalette from './training/graph/TrainingPalette'
 import TrainingCanvas from './training/graph/TrainingCanvas'
 import TrainingInspector from './training/graph/TrainingInspector'
@@ -51,8 +53,8 @@ function useTorchAuthMode(): 'token' | 'unauthenticated-dev' | null {
       const h = await sidecarHealthState()
       if (alive) setAuth(h.auth ?? null)
     }
-    void probe()
-    const t = setInterval(() => { void probe() }, 5000)
+    void fireAndForget('useTorchAuthMode.probe', probe())
+    const t = setInterval(() => { void fireAndForget('useTorchAuthMode.poll', probe()) }, 5000)
     return () => { alive = false; clearInterval(t) }
   }, [])
   return auth
@@ -135,7 +137,7 @@ function RemoteSidecarBadge() {
   const hint = busy ? title : `${title ? title + ' — ' : ''}Klicken: neu verbinden`
   return (
     <button
-      onClick={() => { if (!busy) void ensure(sshTarget(conn), conn.root, true) }}
+        onClick={() => { if (!busy) void fireAndForget('RemoteSidecarBadge.reconnect', ensure(sshTarget(conn), conn.root, true)) }}
       disabled={busy}
       className={`rounded px-2 py-0.5 ${color} ${busy ? '' : 'cursor-pointer hover:brightness-125'}`}
       title={hint}
@@ -341,7 +343,7 @@ export default function App() {
   const refresh = useProjectStore((s) => s.refresh)
 
   useEffect(() => {
-    void refresh()
+    void fireAndForget('app.refresh', refresh())
   }, [refresh])
 
   // Workspace switched → drop caches keyed to the OLD root and reload the
@@ -437,6 +439,7 @@ export default function App() {
       {selectedRun && <RunDetailModal runId={selectedRun} />}
       {compareOpen && <CompareModal />}
       <ApproveCodeDialog />
+      <DiagnosticsBanner />
     </div>
   )
 }

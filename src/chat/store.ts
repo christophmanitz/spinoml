@@ -90,8 +90,9 @@ function loadPersistedMessages(): ChatMessage[] {
   try {
     const raw = window.localStorage.getItem(CHAT_KEY)
     if (!raw) return []
-    const arr = JSON.parse(raw) as ChatMessage[]
-    if (!Array.isArray(arr)) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    const arr = parsed as ChatMessage[]
     // Coerce any message that was mid-stream when we were interrupted to a final
     // state so it doesn't render as a stuck spinner.
     const msgs = arr.map((m) =>

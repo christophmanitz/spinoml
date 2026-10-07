@@ -14,6 +14,7 @@ import { useApproveDialog } from '../trust/useApproveDialog'
 import { trust } from '../trust/trustStore'
 import { collectCodeBlobs, hashBlob, type CodeKind } from '../trust/codeBlobs'
 import { listUntrusted } from '../trust/guard'
+import { fireAndForget } from '../errors/report'
 
 // Phase 43 — a user edit inside the Inspector is one of the few legitimate
 // approval origins. This runs ONLY from the field inputs' own React handlers
@@ -246,7 +247,7 @@ function GraphNodeBindingPanel({ node }: { node: { id: string; data: { params: R
   // or a path was missing). Surface it instead of the misleading "not a graph?".
   const inspectError = (!data && cached?.error) ? cached.error : null
 
-  useEffect(() => { if (datasetRel) void inspectAction(datasetRel) }, [datasetRel, inspectAction])
+  useEffect(() => { if (datasetRel) void fireAndForget('inspectAction', inspectAction(datasetRel)) }, [datasetRel, inspectAction])
 
   // Branches (manifest) + the fields for THIS graph (prefixed by branch in a
   // manifest, bare otherwise). Normalize to {name, shape, dtype}.
@@ -329,7 +330,7 @@ function GraphNodeBindingPanel({ node }: { node: { id: string; data: { params: R
         <div className="space-y-1 text-[10px]">
           <div className="text-rose-400">Dataset konnte nicht gelesen werden: {inspectError}</div>
           <button
-            onClick={() => datasetRel && void inspectAction(datasetRel, true)}
+            onClick={() => datasetRel && void fireAndForget('inspectAction.refresh', inspectAction(datasetRel, true))}
             className="rounded border border-[#1f2429] px-1.5 py-0.5 text-[#9aa1a8] hover:border-[#3a4148] hover:text-[#e6e8eb]"
           >Erneut versuchen</button>
         </div>
@@ -361,7 +362,7 @@ function ManifestNodePanel({ node }: { node: { id: string; data: { params: Recor
   const datasetRel = String(node.data.params.dataset ?? '')
   const inspectAction = useDatasetsStore((s) => s.inspect)
   const cached = useDatasetsStore((s) => (datasetRel ? s.inspects[datasetRel] : undefined))
-  useEffect(() => { if (datasetRel) void inspectAction(datasetRel) }, [datasetRel, inspectAction])
+  useEffect(() => { if (datasetRel) void fireAndForget('inspectAction', inspectAction(datasetRel)) }, [datasetRel, inspectAction])
   const data = cached?.data ?? null
 
   if (!datasetRel) {
@@ -383,7 +384,8 @@ function ManifestNodePanel({ node }: { node: { id: string; data: { params: Recor
     const br = dot > 0 ? s.field.slice(0, dot) : s.field
     const fld = dot > 0 ? s.field.slice(dot + 1) : s.field
     if (!byBranch.has(br)) byBranch.set(br, [])
-    byBranch.get(br)!.push({ field: fld, shape: s.shape, dtype: s.dtype })
+    const arr = byBranch.get(br)
+    if (arr) arr.push({ field: fld, shape: s.shape, dtype: s.dtype })
   }
   // Branches the sidecar tokenizes as ESPF substructures (kind:"espf") — read off
   // the inspect notes, since an ESPF slot looks like a plain 1-D int Sequence slot.
@@ -452,7 +454,7 @@ function GraphBindingPanel({ node }: { node: { id: string; data: { params: Recor
   const inspectAction = useDatasetsStore((s) => s.inspect)
   const data = useDatasetsStore((s) => (datasetRel ? s.inspects[datasetRel]?.data : null))
 
-  useEffect(() => { if (datasetRel) void inspectAction(datasetRel) }, [datasetRel, inspectAction])
+  useEffect(() => { if (datasetRel) void fireAndForget('inspectAction', inspectAction(datasetRel)) }, [datasetRel, inspectAction])
 
   const isManifest = !!(data && data.ok && data.kind === 'manifest')
   const graphFields: GraphField[] | null =
@@ -870,7 +872,8 @@ function TextInput({
 }) {
   const [draft, setDraft] = useState(value ?? '')
   useEffect(() => { setDraft(value ?? '') }, [value])
-  const listId = field.datalist?.length ? `dl-${field.name}` : undefined
+  const datalist = field.datalist
+  const listId = datalist?.length ? `dl-${field.name}` : undefined
   return (
     <>
       <input
@@ -888,9 +891,9 @@ function TextInput({
         }}
         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
       />
-      {listId && (
+      {listId && datalist && (
         <datalist id={listId}>
-          {field.datalist!.map((o) => <option key={o} value={o} />)}
+          {datalist.map((o) => <option key={o} value={o} />)}
         </datalist>
       )}
     </>
@@ -1046,8 +1049,8 @@ function DatasetRefInput({
   })
 
   useEffect(() => {
-    if (isTauri() && entries.length === 0) void refresh()
-    if (value) void inspect(value)
+    if (isTauri() && entries.length === 0) void fireAndForget('refresh', refresh())
+    if (value) void fireAndForget('inspect.value', inspect(value))
   }, [refresh, inspect, value, entries.length])
 
   const meta = value ? inspects[value]?.data : null

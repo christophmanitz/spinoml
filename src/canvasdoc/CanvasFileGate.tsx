@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react'
 import { isTauri } from '../workspace/tauri-fs'
 import { useWorkspaceStore } from '../workspace/store'
 import { useCanvasDocStore, type CanvasDocAdapter, type CanvasKind } from './store'
+import { fireAndForget } from '../errors/report'
 
 // `${kind}:${relpath}` already loaded this session — so switching canvas modes
 // doesn't reload (and clobber unsaved edits). Module-scoped on purpose.
@@ -103,7 +104,10 @@ function FileHeader({
       {adapter.save && (
         <button
           className="rounded border border-[#1f2429] px-1.5 py-0.5 text-[10px] text-[#9aa1a8] hover:border-[#3a4148] hover:text-[#e6e8eb]"
-          onClick={() => void adapter.save!()}
+          onClick={() => {
+            const save = adapter.save
+            if (save) void fireAndForget('canvas.save', save())
+          }}
           title="Jetzt speichern"
         >Speichern</button>
       )}

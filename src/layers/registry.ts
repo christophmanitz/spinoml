@@ -761,7 +761,7 @@ export const LAYERS: Record<string, LayerSpec> = {
     summary: (p) => {
       const cls = String(get(p, 'class_name', 'SubModule')) || 'SubModule'
       const sg = get(p, 'subgraph', undefined) as { nodes?: unknown[] } | undefined
-      const n = Array.isArray(sg?.nodes) ? sg!.nodes!.length : 0
+      const n = sg && Array.isArray(sg.nodes) ? sg.nodes.length : 0
       return `${cls} · ${n} Knoten`
     },
   },

@@ -16,6 +16,40 @@ export type ChatEvent =
   | { type: 'ask'; id: string; kind: AskKind; prompt: string; options?: string[] | null; payload?: Record<string, unknown> | null }
   | { type: 'done' }
 
+// Trust boundary: every SSE chunk from the LLM sidecar is an untrusted JSON
+// document. Returning a permissive shape (the LLM can send a property the
+// runtime doesn't know) is OK; returning a malformed document (wrong `type`,
+// missing required fields) means the stream is corrupt — abort the turn.
+function isChatEvent(v: unknown): v is ChatEvent {
+  if (typeof v !== 'object' || v === null) return false
+  const o = v as Record<string, unknown>
+  const t = o.type
+  if (typeof t !== 'string') return false
+  switch (t) {
+    case 'status':
+      return o.value === 'thinking' || o.value === 'done' || o.value === 'error'
+    case 'text':
+    case 'log':
+      return typeof o.value === 'string'
+    case 'tool_use':
+      return typeof o.id === 'string' && typeof o.name === 'string'
+        && typeof o.args === 'object' && o.args !== null
+    case 'tool_result':
+      return typeof o.id === 'string' && typeof o.ok === 'boolean'
+    case 'action':
+      return typeof o.op === 'string'
+        && typeof o.payload === 'object' && o.payload !== null
+    case 'ask':
+      return typeof o.id === 'string'
+        && (o.kind === 'confirm' || o.kind === 'select' || o.kind === 'text')
+        && typeof o.prompt === 'string'
+    case 'done':
+      return true
+    default:
+      return false
+  }
+}
+
 export type ChatRequest = {
   user: string
   messages: { role: 'user' | 'assistant'; content: string }[]
@@ -138,7 +172,11 @@ export async function streamChat(
       if (!json) continue
       let ev: ChatEvent
       try {
-        ev = JSON.parse(json) as ChatEvent
+        const parsed: unknown = JSON.parse(json)
+        if (!isChatEvent(parsed)) {
+          throw new Error(`bad SSE frame: unknown type=${JSON.stringify((parsed as { type?: unknown })?.type)}`)
+        }
+        ev = parsed
       } catch (e) {
         // A frame that fails to parse means the stream is corrupt: abort the turn
         // (surfaced as an error) instead of silently skipping content and later

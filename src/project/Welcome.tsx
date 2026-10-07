@@ -453,11 +453,12 @@ function RemoteConnectionForm({
             {editMode ? (
               <Button
                 primary
-                disabled={!validAlias || !validUser || !validRoot || busy || !label.trim()}
+                disabled={!validAlias || !validUser || !validRoot || busy || !label.trim() || !initial}
                 onClick={() => {
                   setError(null)
                   try {
-                    onUpdate(initial!.id, {
+                    if (!initial) return
+                    onUpdate(initial.id, {
                       label: label.trim(),
                       alias: alias.trim(),
                       user: user.trim() || undefined,

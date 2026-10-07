@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { isTauri } from '../workspace/tauri-fs'
 import { useDatasetsStore } from './store'
 import { iconFor, colorFor, guessKindFromName, formatSize } from './icons'
+import { fireAndForget } from '../errors/report'
 
 export default function DatasetExplorer() {
   const entries = useDatasetsStore((s) => s.entries)
@@ -13,7 +14,7 @@ export default function DatasetExplorer() {
   const inspects = useDatasetsStore((s) => s.inspects)
 
   useEffect(() => {
-    if (isTauri()) void refresh()
+    if (isTauri()) void fireAndForget('refresh', refresh())
   }, [refresh])
 
   if (!isTauri()) {
@@ -29,7 +30,7 @@ export default function DatasetExplorer() {
       <div className="flex items-center justify-between border-b border-[#1f2429] px-3 py-2 text-xs uppercase tracking-wider text-[#6f767e]">
         <span>Datasets</span>
         <button
-          onClick={() => void refresh()}
+          onClick={() => void fireAndForget('refresh', refresh())}
           className="rounded px-1.5 py-0.5 text-[#9aa1a8] hover:bg-[#1a1e22]"
           title="reload datasets/ folder"
         >

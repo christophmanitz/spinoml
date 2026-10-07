@@ -2899,6 +2899,27 @@ Persistence
 Remote jobs
 ```
 
+> **Implemented 2026-10-07.** Strict mode was already effective (TypeScript reports implicit-any / null errors
+> without a flag); the explicit holes were small and are now inventoried and ratcheted
+> (`docs/engineering/TS_SAFETY.md`): explicit `any` 3 → **0**, `as unknown as` 3 → 3 SAFE (each guarded one line
+> above), non-null assertions: **30 remain, all SAFE** (algorithmic invariants, one-line reason each), **13 FIXED** where the
+> value can really be absent (e.g. a bootstrap crash on a missing `#root`, `split('/').pop()!`, `tauriFs.currentDir()!`
+> mid-startup, `find(...)!` in codegen), **7 trust boundaries** that cast unvalidated JSON now narrow from `unknown`
+> (`run.json` ×3 via `parseRunConfig`, the `.spinoml`/training/chat/workspace/canvas/palette localStorage reads,
+> sidecar `eval.summary`, SSE `ChatEvent`, the manifest descriptor `normalizeManifest(raw: unknown)` — all fuzzed with
+> junk, `__proto__` keys and wrong types, they never throw), and the floating promises go through ONE helper
+> (`src/errors/report.ts` `fireAndForget`/`reportError`/`errMessage`) into an in-memory `useDiagnostics` store.
+> New: a global `unhandledrejection`/`error` listener (`src/errors/globalHandlers.ts`) and a small dismissible rose
+> banner (`DiagnosticsBanner`, duplicates collapse with a count) — an unhandled rejection used to vanish into the
+> console. Found in review: the first version would have raised that banner for every intentional `AbortError` and for
+> the browsers' harmless "ResizeObserver loop" error; both are now filtered (tested). **Ratchet:**
+> `npm run verify:ts-safety` (TypeScript compiler API; self-test `test:ts-safety-selftest`, 15 cases) fails any new
+> `any` / `as any` / `as unknown as` / non-null assertion / `@ts-ignore` / `eslint-disable` / floating promise without
+> an allow-list row + reason; mutations red (`as any`, a bare `fetch(...)` statement, a removed row). Regression tests:
+> `npm run test:ts-safety` (54 assertions). Limits: `void`-prefixed promises that are not routed through
+> `fireAndForget` count as floating unless allow-listed; the guard cannot see rejections inside third-party code; the
+> banner is only as good as the context strings passed to `fireAndForget`.
+
 ---
 
 # 51. PHASE 50 – SILENT EXCEPTION AUDIT

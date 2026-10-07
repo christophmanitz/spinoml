@@ -13,6 +13,12 @@ export type EvalSummary =
 /** A multitask eval.summary carries one entry per output head. */
 export type HeadEval = { output: string } & EvalSummary
 
+export function isEvalSummary(v: unknown): v is EvalSummary {
+  if (typeof v !== 'object' || v === null) return false
+  const o = v as Record<string, unknown>
+  return typeof o.task === 'string'
+}
+
 /** Latest eval.summary snapshot (the trainer re-emits one on each new best).
  *  Single-task: the EvalSummary itself. Multitask: null here — use latestEvalHeads. */
 export function latestEval(events: TrainingEvent[]): EvalSummary | null {
@@ -21,7 +27,7 @@ export function latestEval(events: TrainingEvent[]): EvalSummary | null {
     if (e.kind === 'eval.summary') {
       // multitask payloads carry a `heads` array instead of a top-level task.
       if (Array.isArray((e as Record<string, unknown>).heads)) return null
-      return e as unknown as EvalSummary
+      return isEvalSummary(e) ? e : null
     }
   }
   return null

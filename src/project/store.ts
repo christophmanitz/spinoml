@@ -104,7 +104,11 @@ export const useProjectStore = create<State>((set, get) => ({
   init: async (name, description, goal) => {
     const meta = await projectBackend.init(name, description, goal)
     const conn = getCurrentConnection()
-    const root = conn.kind === 'remote-ssh' ? conn.root : (await tauriFs.currentDir())!
+    const root = conn.kind === 'remote-ssh' ? conn.root : await tauriFs.currentDir()
+    if (!root) {
+      set({ status: { kind: 'error', error: 'Tauri-Laufwerk konnte nicht gelesen werden — Ordner geöffnet?' } })
+      return
+    }
     set({ status: { kind: 'loaded', root, meta } })
     if (conn.kind !== 'remote-ssh') setActiveWorkspace(root)
     await bootstrapWorkspace(root)
@@ -116,7 +120,11 @@ export const useProjectStore = create<State>((set, get) => ({
   migrate: async (name, description, goal) => {
     // Legacy migration only makes sense for local — remote starts fresh.
     const meta = await projectBackend.migrateLocal(name, description, goal)
-    const current = (await tauriFs.currentDir())!
+    const current = await tauriFs.currentDir()
+    if (!current) {
+      set({ status: { kind: 'error', error: 'Tauri-Laufwerk konnte nicht gelesen werden — Ordner geöffnet?' } })
+      return
+    }
     set({ status: { kind: 'loaded', root: current, meta } })
     setActiveWorkspace(current)
     await bootstrapWorkspace(current)

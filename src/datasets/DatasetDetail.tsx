@@ -3,6 +3,7 @@ import { useDatasetsStore, type SmokeHistoryEntry } from './store'
 import { useGraphStore } from '../canvas/GraphStore'
 import { iconFor, colorFor, formatSize } from './icons'
 import { NodeLinkGraph } from '../visualization/primitives'
+import { fireAndForget } from '../errors/report'
 import type {
   InspectResult, StatsResult, SmokeResult,
   TabularInspect, ImageFolderInspect, TensorInspect, ProteinInspect, MoleculeInspect, HuggingfaceInspect, PygInspect, GraphFolderInspect, ManifestInspect, GraphField,
@@ -60,7 +61,7 @@ export default function DatasetDetail({ relpath }: { relpath: string }) {
               key={t}
               onClick={() => {
                 setTab(t)
-                if (t === 'stats') void loadStats(relpath)
+                if (t === 'stats') void fireAndForget('loadStats', loadStats(relpath))
               }}
               className={`px-4 py-2 ${
                 tab === t ? 'border-b border-[var(--accent)] text-[#e6e8eb]' : 'text-[#6f767e] hover:text-[#9aa1a8]'
@@ -475,20 +476,35 @@ type BranchMode = 'molecule' | 'dir' | 'path'
 type BranchCfg = { name: string; column: string; mode: BranchMode; dir: string; match: 'exact' | 'contains'; ext: string }
 type ManifestCfg = { table: string; branches: BranchCfg[]; target: { column: string; type: 'regression' | 'classification' }; cache: boolean }
 
-function normalizeManifest(raw: any): ManifestCfg {
-  const branches: BranchCfg[] = Object.entries(raw?.pairs ?? {}).map(([name, s]: [string, any]) => ({
-    name,
-    column: String(s?.column ?? ''),
-    mode: s?.kind === 'molecule' ? 'molecule' : s?.dir ? 'dir' : 'path',
-    dir: String(s?.dir ?? ''),
-    match: s?.match === 'exact' ? 'exact' : 'contains',
-    ext: String(s?.ext ?? '.pt'),
-  }))
+export function normalizeManifest(raw: unknown): ManifestCfg {
+  // Trust boundary: a manifest is an arbitrary JSON document read from disk
+  // (or a JSON.parse of user input). Never throw — fall back to documented
+  // defaults so a torn/malformed file still yields a usable editor.
+  const isObj = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v)
+  const root = isObj(raw) ? raw : {}
+  const pairs = isObj(root.pairs) ? root.pairs : {}
+  const branches: BranchCfg[] = Object.entries(pairs).map(([name, s]) => {
+    const so = isObj(s) ? s : {}
+    const dir = typeof so.dir === 'string' ? so.dir : ''
+    return {
+      name,
+      column: typeof so.column === 'string' ? so.column : '',
+      mode: so.kind === 'molecule' ? 'molecule' : dir ? 'dir' : 'path',
+      dir,
+      match: so.match === 'exact' ? 'exact' : 'contains',
+      ext: typeof so.ext === 'string' ? so.ext : '.pt',
+    }
+  })
+  const tgt = isObj(root.target) ? root.target : {}
   return {
-    table: String(raw?.table ?? ''),
+    table: typeof root.table === 'string' ? root.table : '',
     branches: branches.length ? branches : [{ name: 'graph', column: '', mode: 'molecule', dir: '', match: 'contains', ext: '.pt' }],
-    target: { column: String(raw?.target?.column ?? ''), type: raw?.target?.type === 'classification' ? 'classification' : 'regression' },
-    cache: raw?.cache !== false, // default on
+    target: {
+      column: typeof tgt.column === 'string' ? tgt.column : '',
+      type: tgt.type === 'classification' ? 'classification' : 'regression',
+    },
+    cache: root.cache !== false, // default on
   }
 }
 
@@ -529,7 +545,7 @@ function ManifestEditor({ relpath }: { relpath: string }) {
 
   // Column suggestions from the referenced table (inspected as tabular).
   const tableRel = cfg?.table ? `datasets/${cfg.table}` : ''
-  useEffect(() => { if (tableRel) void inspectAction(tableRel) }, [tableRel, inspectAction])
+  useEffect(() => { if (tableRel) void fireAndForget('inspectAction.table', inspectAction(tableRel)) }, [tableRel, inspectAction])
   const tIns = tableRel ? inspects[tableRel]?.data : null
   const columns: string[] = tIns && tIns.ok && tIns.kind === 'tabular' ? tIns.columns : []
   const tableOptions = datasets.filter((e) => /\.(csv|tsv|parquet)$/i.test(e.name)).map((e) => e.name)
@@ -547,7 +563,7 @@ function ManifestEditor({ relpath }: { relpath: string }) {
       const { fs } = await import('../connections/backend')
       await fs.write(relpath, JSON.stringify(buildManifestJson(cfg), null, 2) + '\n')
       setStatus('gespeichert ✓')
-      void inspectAction(relpath, true) // refresh the slots view below
+      void fireAndForget('inspectAction.refresh', inspectAction(relpath, true)) // refresh the slots view below
     } catch (e) {
       setStatus(`Fehler: ${e instanceof Error ? e.message : String(e)}`)
     }
@@ -624,7 +640,8 @@ function ManifestOverview({ d, relpath }: { d: ManifestInspect; relpath: string 
     if (s.field === 'target') continue
     const branch = s.field.split('.')[0]
     if (!byBranch.has(branch)) byBranch.set(branch, [])
-    byBranch.get(branch)!.push(s)
+    const arr = byBranch.get(branch)
+    if (arr) arr.push(s)
   }
   return (
     <div className="space-y-2">
@@ -862,7 +879,7 @@ function SmokeBody({
   const historyError = useDatasetsStore((s) => s.historyError)
   const loadHistory = useDatasetsStore((s) => s.loadHistory)
 
-  useEffect(() => { void loadHistory() }, [loadHistory])
+  useEffect(() => { void fireAndForget('loadHistory', loadHistory()) }, [loadHistory])
 
   const datasetHistory = history.filter((h) => h.dataset === relpath).slice(0, 12)
   return (

@@ -107,7 +107,8 @@ export function generateTrainingCode(plan: TrainingPlan | null): string {
   if (amp) L.push('scaler = torch.cuda.amp.GradScaler()')
   L.push('')
   if (hasEarlyStop) {
-    const es = callbacks.find((c) => c.kind === 'EarlyStopping')!
+    const es = callbacks.find((c) => c.kind === 'EarlyStopping')
+    if (!es) throw new Error('codegen: hasEarlyStop true but no EarlyStopping callback')
     const patience = typeof es.patience === 'number' ? es.patience : 10
     L.push(`# ${pyComment(`EarlyStopping: stoppt wenn val_loss ${pyInt(patience, 10)} Epochen nicht besser wird`)}`)
     L.push('best_val, bad_epochs = float(\'inf\'), 0')

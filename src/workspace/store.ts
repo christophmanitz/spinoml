@@ -150,18 +150,61 @@ function hydrate(): { entries: Record<string, Entry>; activeFileId: string | nul
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return emptyWorkspace()
-    const parsed = JSON.parse(raw) as Persisted
-    if (!parsed.entries || !parsed.entries[ROOT_ID]) return emptyWorkspace()
+    const parsed = normalizePersisted(JSON.parse(raw))
+    if (!parsed.entries[ROOT_ID]) return emptyWorkspace()
     return {
       entries: parsed.entries,
-      activeFileId: parsed.activeFileId ?? null,
-      expanded: new Set(parsed.expanded ?? [ROOT_ID]),
+      activeFileId: parsed.activeFileId,
+      expanded: new Set(parsed.expanded.length ? parsed.expanded : [ROOT_ID]),
     }
   } catch {
     // localStorage unreadable/corrupt in browser dev: start from an empty
     // virtual workspace (no disk to lose; Tauri mode never uses this path).
     return emptyWorkspace()
   }
+}
+
+// Trust boundary: a value pulled from localStorage is `unknown`. The legacy
+// code did `JSON.parse(raw) as Persisted`, which silently turned a torn file
+// (or one written by an older version with a different schema) into an Entry
+// graph full of malformed children. Narrow defensively: every shape field is
+// optional, every Entry only keeps what still parses, and corrupt entries are
+// dropped rather than promoted.
+function normalizePersisted(raw: unknown): Persisted {
+  const isObj = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v)
+  const r = isObj(raw) ? raw : {}
+  const entriesRaw = isObj(r.entries) ? r.entries : {}
+  const entries: Record<string, Entry> = {}
+  for (const [id, e] of Object.entries(entriesRaw)) {
+    const en = normalizeEntry(e)
+    if (en) entries[id] = en
+  }
+  const activeFileId = typeof r.activeFileId === 'string' ? r.activeFileId : null
+  const expanded = Array.isArray(r.expanded) ? r.expanded.filter((s): s is string => typeof s === 'string') : []
+  return { entries, activeFileId, expanded }
+}
+
+function normalizeEntry(e: unknown): Entry | null {
+  const isObj = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v)
+  if (!isObj(e)) return null
+  const id = typeof e.id === 'string' ? e.id : ''
+  if (!id) return null
+  const parentId = typeof e.parentId === 'string' ? e.parentId : null
+  const name = typeof e.name === 'string' ? e.name : ''
+  if (e.kind === 'folder') {
+    const childIds = Array.isArray(e.childIds) ? e.childIds.filter((s): s is string => typeof s === 'string') : []
+    return { kind: 'folder', id, name, parentId, childIds }
+  }
+  if (e.kind === 'file') {
+    return {
+      kind: 'file', id, name, parentId,
+      content: typeof e.content === 'string' ? e.content : '',
+      savedAt: typeof e.savedAt === 'string' ? e.savedAt : '',
+    }
+  }
+  return null
 }
 
 function persist(state: State) {
@@ -444,7 +487,7 @@ export const useWorkspaceStore = create<State>((set, get) => ({
       // dirty=true so the save+edit race does not silently lose edits.
       if (revAtStart !== useGraphStore.getState().revision) {
         const now = fingerprintCurrent()
-        const fileFp = fingerprintFile({ content } as unknown as File)
+        const fileFp = fingerprintFile({ kind: 'file', id: '', name: '', parentId: null, content, savedAt: '' })
         if (fileFp !== null && now !== fileFp) {
           useWorkspaceStore.setState({ dirty: true })
         }

@@ -6,6 +6,7 @@ import { useDatasetsStore } from '../../datasets/store'
 import { compileTrainingGraph } from '../../codegen/trainingGenerator'
 import { useTrainingGraphStore } from './store'
 import { TRAINING_NODES, type TrainingFieldSpec } from './registry'
+import { fireAndForget } from '../../errors/report'
 
 const INPUT = 'w-full rounded border border-[#1f2429] bg-[#0b0e11] px-2 py-1 text-[12px] text-[#e6e8eb] focus:border-[var(--accent)] focus:outline-none'
 
@@ -151,11 +152,11 @@ function DatasetRef({ value, onChange }: { value: string; onChange: (v: unknown)
   const refresh = useDatasetsStore((s) => s.refresh)
   const inspect = useDatasetsStore((s) => s.inspect)
   useEffect(() => {
-    if (isTauri() && entries.length === 0) void refresh()
-    if (value) void inspect(value)
+    if (isTauri() && entries.length === 0) void fireAndForget('refresh', refresh())
+    if (value) void fireAndForget('inspect.value', inspect(value))
   }, [refresh, inspect, value, entries.length])
   return (
-    <select value={value} onChange={(e) => { onChange(e.target.value); if (e.target.value) void inspect(e.target.value) }} className={INPUT}>
+    <select value={value} onChange={(e) => { onChange(e.target.value); if (e.target.value) void fireAndForget('inspect.target', inspect(e.target.value)) }} className={INPUT}>
       <option value="">— Datensatz —</option>
       {entries.map((e) => <option key={e.relpath} value={e.relpath}>{e.name}</option>)}
     </select>
@@ -189,7 +190,7 @@ function ModelRef({ value, onChange }: { value: string; onChange: (v: unknown) =
 function useColumns(dataset: string): string[] {
   const data = useDatasetsStore((s) => (dataset ? s.inspects[dataset]?.data : undefined))
   const inspect = useDatasetsStore((s) => s.inspect)
-  useEffect(() => { if (dataset) void inspect(dataset) }, [dataset, inspect])
+  useEffect(() => { if (dataset) void fireAndForget('inspect.dataset', inspect(dataset)) }, [dataset, inspect])
   if (!data || !data.ok) return []
   if (data.kind === 'tabular') return data.columns
   if (data.kind === 'manifest') return data.columns ?? []

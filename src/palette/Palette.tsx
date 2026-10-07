@@ -10,7 +10,9 @@ function loadCollapsed(): Set<string> {
     const raw = localStorage.getItem(STORAGE_KEY)
     // No saved preference yet → start with every group collapsed.
     if (raw == null) return new Set(LAYER_GROUPS.map((g) => g.name))
-    return new Set(JSON.parse(raw) as string[])
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return new Set(LAYER_GROUPS.map((g) => g.name))
+    return new Set(parsed.filter((s): s is string => typeof s === 'string'))
   } catch { return new Set(LAYER_GROUPS.map((g) => g.name)) }
 }
 

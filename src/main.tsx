@@ -14,6 +14,7 @@ import { startDataAutosaveToFile } from './data/graph/doc'
 import { startArchitectureDocSync } from './canvas/doc'
 import { useGraphStore } from './canvas/GraphStore'
 import { useWorkspaceStore } from './workspace/store'
+import './errors/globalHandlers'
 
 const ws = useWorkspaceStore.getState()
 const activeFile = ws.activeFileId ? ws.entries[ws.activeFileId] : null
@@ -34,7 +35,9 @@ startDataAutosaveToFile()
 // so its header/chooser stay correct (the workspace owns load/save).
 startArchitectureDocSync()
 
-createRoot(document.getElementById('root')!).render(
+const rootEl = document.getElementById('root')
+if (!rootEl) throw new Error('SpinoML bootstrap failed: #root element missing from index.html')
+createRoot(rootEl).render(
   <StrictMode>
     <ErrorBoundary>
       <App />

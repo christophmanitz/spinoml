@@ -91,8 +91,10 @@ export function getActiveFile(root: string): string | null {
   try {
     const raw = window.localStorage.getItem(ACTIVE_FILE_KEY)
     if (!raw) return null
-    const v = JSON.parse(raw) as { root?: string; relpath?: string }
-    return v && v.root === root && typeof v.relpath === 'string' ? v.relpath : null
+    const v: unknown = JSON.parse(raw)
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+    const o = v as { root?: unknown; relpath?: unknown }
+    return o.root === root && typeof o.relpath === 'string' ? o.relpath : null
   } catch {
     // localStorage unavailable/corrupt: no remembered open file; the canvas
     // falls back to its chooser rather than reopening the wrong file.

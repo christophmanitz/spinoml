@@ -9,6 +9,7 @@ import { useProjectStore } from '../project/store'
 import { useWorkspaceStore } from '../workspace/store'
 import { datasets as datasetsBackend, experiments as experimentsBackend } from '../connections/backend'
 import { assertTrusted, UntrustedCodeError } from '../trust/guard'
+import { fireAndForget } from '../errors/report'
 
 type Cached<T> = {
   loading: boolean
@@ -95,7 +96,7 @@ export const useDatasetsStore = create<DatasetsState>((set, get) => ({
   select: (relpath) => {
     set({ selectedRel: relpath })
     if (relpath) {
-      void get().inspect(relpath)
+      void fireAndForget('store.inspect', get().inspect(relpath))
     }
   },
 

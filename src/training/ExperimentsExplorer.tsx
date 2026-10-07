@@ -6,6 +6,7 @@ import { useTrainingStore } from './store'
 import { isTerminal } from './types'
 import { confirmDialog } from '../ui/confirm'
 import StatusPill from './StatusPill'
+import { fireAndForget } from '../errors/report'
 
 export default function ExperimentsExplorer() {
   const runs = useTrainingStore((s) => s.runs)
@@ -29,7 +30,7 @@ export default function ExperimentsExplorer() {
   const [statusFilter, setStatusFilter] = useState<string>('all')
 
   useEffect(() => {
-    if (isTauri()) void refresh()
+    if (isTauri()) void fireAndForget('refresh', refresh())
   }, [refresh, currentId])
 
   if (!isTauri()) {
@@ -58,7 +59,7 @@ export default function ExperimentsExplorer() {
       <div className="flex shrink-0 items-center gap-2 border-b border-[#1f2429] px-2 py-1.5">
         <span className="flex-1 text-[11px] uppercase tracking-wide text-[#6f767e]">Runs</span>
         <button
-          onClick={() => void refresh()}
+          onClick={() => void fireAndForget('refresh', refresh())}
           className="rounded px-1.5 py-0.5 text-[11px] text-[#6f767e] hover:bg-[#1a1e22] hover:text-[#e6e8eb]"
           title="Refresh"
         >

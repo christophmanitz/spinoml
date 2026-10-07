@@ -15,6 +15,7 @@ import {
   type RunConfig, type Head, type RunBackend, type SlurmConfig, type RemoteTrainingCapabilities,
   defaultSlurmConfig,
 } from './types'
+import { parseRunConfig } from './parseRunConfig'
 import type { InspectResult } from '../datasets/types'
 
 const SELECT = 'w-full rounded border border-[#1f2429] bg-[#14181c] px-2 py-1 text-[12px] text-[#e6e8eb] focus:border-[var(--accent)] focus:outline-none'
@@ -47,7 +48,12 @@ const SOURCE_LABELS: Record<BranchCfg['source'], string> = {
  *  plus per-output selection and local/SLURM execution. Tabular models get a plain
  *  column mapping. */
 export default function EvalRunModal() {
-  const sourceRunId = useTrainingStore((s) => s.evalSourceId)!
+  const sourceRunId = useTrainingStore((s) => s.evalSourceId)
+  if (!sourceRunId) return null
+  return <EvalRunModalInner sourceRunId={sourceRunId} />
+}
+
+function EvalRunModalInner({ sourceRunId }: { sourceRunId: string }) {
   const close = useTrainingStore((s) => s.closeEvalRun)
   const startEvalRun = useTrainingStore((s) => s.startEvalRun)
   const inspectDataset = useDatasetsStore((s) => s.inspect)
@@ -85,7 +91,7 @@ export default function EvalRunModal() {
   useEffect(() => {
     void (async () => {
       try {
-        const cfg = JSON.parse(await training.readFile(sourceRunId, 'run.json')) as RunConfig
+        const cfg = parseRunConfig(JSON.parse(await training.readFile(sourceRunId, 'run.json')))
         setSrcCfg(cfg)
         const hs = sourceHeads(cfg)
         setHeads(hs); setSelected(new Set(hs.map((h) => h.output)))

@@ -29,8 +29,9 @@ export default function TrainingGraphBar() {
   function launch() {
     if (!compile.plan) return
     const plan = compile.plan
+    const basename = plan.modelRelpath.split('/').pop() ?? plan.modelRelpath
     openNewRun({
-      label: plan.modelRelpath.split('/').pop()!.replace(/\.spinoml$/i, ''),
+      label: basename.replace(/\.spinoml$/i, ''),
       modelRelpath: plan.modelRelpath,
       datasetRelpath: plan.datasetRelpath,
       targetColumn: plan.target,

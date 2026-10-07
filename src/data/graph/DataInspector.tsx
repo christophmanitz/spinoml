@@ -9,6 +9,7 @@ import { hashBlob } from '../../trust/codeBlobs'
 import { trust } from '../../trust/trustStore'
 import { useDataGraphStore } from './store'
 import { DATA_NODES, type DataFieldSpec } from './registry'
+import { fireAndForget } from '../../errors/report'
 
 const INPUT = 'w-full rounded border border-[#1f2429] bg-[#0b0e11] px-2 py-1 text-[12px] text-[#e6e8eb] focus:border-[var(--accent)] focus:outline-none'
 
@@ -207,7 +208,7 @@ function DatasetRef({ value, onChange }: { value: string; onChange: (v: unknown)
   const entries = useDatasetsStore((s) => s.entries)
   const refresh = useDatasetsStore((s) => s.refresh)
   useEffect(() => {
-    if (isTauri() && entries.length === 0) void refresh()
+    if (isTauri() && entries.length === 0) void fireAndForget('refresh', refresh())
   }, [refresh, entries.length])
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} className={INPUT}>

@@ -7,6 +7,7 @@ import { useDatasetsStore } from '../datasets/store'
 import { useProjectStore } from '../project/store'
 import { getCurrentConnection } from '../connections/store'
 import { assertTrusted, UntrustedCodeError } from '../trust/guard'
+import { fireAndForget } from '../errors/report'
 
 // Ephemeral "Explain" state — what flows through the model when one example is
 // pushed through. Kept OUT of GraphStore (heavy + non-structural; would pollute
@@ -81,7 +82,7 @@ export const useVizStore = create<VizState>((set, get) => ({
 
   setWeightsRun: (runId) => {
     set({ weightsRunId: runId })
-    if (Object.keys(get().byNode).length) get().run()
+    if (Object.keys(get().byNode).length) void fireAndForget('viz.setWeightsRun.run', get().run())
   },
 
   clear: () => {

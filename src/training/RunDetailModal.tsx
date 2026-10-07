@@ -14,11 +14,13 @@ import LineChart from './charts/LineChart'
 import { lossSeries, lrSeries, metricSeries } from './charts/series'
 import { latestWinsGuard, parseFinalEvents } from './events'
 import { latestEval, latestEvalHeads, EvalDiagram } from './charts/Evaluation'
+import { parseRunConfig } from './parseRunConfig'
 import { runConfigToTrainingSnapshot } from './graph/fromRun'
 import { useTrainingGraphStore } from './graph/store'
 import { useViewModeStore } from './graph/viewMode'
 import { getCurrentConnection } from '../connections/store'
 import { confirmDialog } from '../ui/confirm'
+import { fireAndForget } from '../errors/report'
 
 type Tab = 'overview' | 'charts' | 'events' | 'predictions' | 'hardware' | 'logs' | 'script'
 
@@ -68,7 +70,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   // fails to parse is reported, never silently treated as "no config".
   const parsed = useMemo(() => {
     if (!runJson) return { cfg: null as RunConfig | null, error: null as string | null }
-    try { return { cfg: JSON.parse(runJson) as RunConfig, error: null } }
+    try { return { cfg: parseRunConfig(JSON.parse(runJson)), error: null } }
     catch (e) { return { cfg: null, error: e instanceof Error ? e.message : String(e) } }
   }, [runJson])
   const cfgError = parsed.error
@@ -96,7 +98,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   const openOnCanvas = () => {
     if (!runJson) return
     try {
-      const config = JSON.parse(runJson) as RunConfig
+      const config = parseRunConfig(JSON.parse(runJson))
       const snapshot = runConfigToTrainingSnapshot(config)
       useTrainingGraphStore.getState().loadSnapshot(snapshot)
       useViewModeStore.getState().setMode('training')
@@ -182,7 +184,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   // tail loop below stops the instant `active` flips false, so without this the
   // last update would sometimes be missing until the modal was reopened.
   useEffect(() => {
-    void reload()
+    void fireAndForget('reload', reload())
   }, [reload, status])
 
   // Tail while the run is alive — NON-overlapping (await before scheduling the
@@ -219,7 +221,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
       }
       if (!stopped) timer = setTimeout(tick, delay)
     }
-    void tick()
+    void fireAndForget('tick', tick())
     return () => { stopped = true; clearTimeout(timer) }
   }, [tab])
 
@@ -635,7 +637,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
             ) : evalHeads || predHeads ? (
               // Multitask: one section per output head (diagram + sample table).
               <div className="space-y-6">
-                {(evalHeads ?? predHeads!.map((p) => ({ output: p.output, task: p.task } as typeof p))).map((h) => {
+                {(evalHeads ?? (predHeads ?? []).map((p) => ({ output: p.output, task: p.task } as typeof p))).map((h) => {
                   const ph = predHeads?.find((p) => p.output === h.output)
                   return (
                     <div key={h.output} className="space-y-3">
