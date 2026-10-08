@@ -108,6 +108,18 @@ drives a folder on your laptop or a scratch directory on an HPC cluster.
 
 > Everything runs inside the `spinoml-dev` conda env (node 20, rust stable, python 3.12).
 
+**Fresh machine?** One command builds that env (conda-forge python/node/rust, torch + the pinned
+Python deps, `npm ci` for the app and `sidecar-llm`) and checks the Tauri system libraries:
+
+```bash
+git clone https://github.com/christophmanitz/spinoml.git && cd spinoml
+bash scripts/setup-dev.sh            # add --cuda for a GPU box, --apt to install system libs, --smoke to self-test
+conda activate spinoml-dev && npm run ci
+```
+
+Needs [conda](https://github.com/conda-forge/miniforge#install) only; logins, SSH aliases and API keys stay manual
+(the script prints the checklist). Manual route:
+
 ```bash
 conda activate spinoml-dev
 npm install

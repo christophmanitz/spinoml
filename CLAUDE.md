@@ -261,6 +261,9 @@ substitution to `"$HOME"`.
 
 ## Verification commands you should run
 
+New machine / missing env: `bash scripts/setup-dev.sh` (conda env + torch + pip + npm ci; `--help` for flags).
+The dev box's env is still named `mlforge-dev`; a fresh setup creates `spinoml-dev`.
+
 ```bash
 conda activate spinoml-dev          # always start here
 npm run build                       # tsc + vite, must be green
