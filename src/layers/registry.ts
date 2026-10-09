@@ -51,6 +51,10 @@ export type LayerSpec = {
    *  (output, weights). Codegen emits `var = self.attr(x, x, x, need_weights=False)[0]`
    *  (nn.MultiheadAttention). A single-argument call is a TypeError at run time. */
   selfAttention?: boolean
+  /** Cross-attention module: forward needs (query, key, value) with TWO distinct
+   *  incoming streams — first edge = query [B,Na,E], second = context (key=value) [B,Nb,E].
+   *  Codegen emits `var = self.attr(query, context, context, need_weights=False)[0]`. */
+  crossAttention?: boolean
   /** Message-passing module whose forward takes (x, edge_index). Codegen emits
    *  `var = self.attr(pred, edge_index)`, resolving edge_index from an Input
    *  node named 'edge_index'. e.g. GCNConv/GATConv/SAGEConv. */
@@ -146,7 +150,7 @@ export const LAYERS: Record<string, LayerSpec> = {
   Output: {
     type: 'Output', category: 'IO', pytorchModule: '', kind: 'output',
     fields: [
-      { name: 'name', type: 'select', options: ['out', 'logits', 'embedding', 'mu', 'sigma', 'aux'], default: 'out' } as FieldSpec,
+      { name: 'name', type: 'select', options: ['out', 'logits', 'embedding', 'mu', 'sigma', 'aux', 'eps_hat'], default: 'out' } as FieldSpec,
     ],
     summary: (p) => `→ ${get(p, 'name', 'out')}`,
   },
@@ -382,6 +386,16 @@ export const LAYERS: Record<string, LayerSpec> = {
       f.bool('batch_first', true),
     ],
     summary: (p) => `mha d=${get(p, 'embed_dim', 512)} h=${get(p, 'num_heads', 8)}`,
+  },
+  CrossAttention: {
+    type: 'CrossAttention', category: 'Attention', pytorchModule: 'nn.MultiheadAttention', crossAttention: true,
+    fields: [
+      f.int('embed_dim', 512, { min: 1 }),
+      f.int('num_heads', 8, { min: 1 }),
+      f.float('dropout', 0.0, { min: 0, max: 1, step: 0.05 }),
+      f.bool('batch_first', true),
+    ],
+    summary: (p) => `xattn d=${get(p, 'embed_dim', 512)} h=${get(p, 'num_heads', 8)} (query=1st edge, context=2nd)`,
   },
   TransformerEncoderLayer: {
     type: 'TransformerEncoderLayer', category: 'Attention', pytorchModule: 'nn.TransformerEncoderLayer',

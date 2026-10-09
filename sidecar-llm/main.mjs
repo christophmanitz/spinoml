@@ -1225,7 +1225,10 @@ function buildToolSpecs(ctx, trainingCtx, dataCtx, actions, workspace, askUser, 
       + 'value, simply don\'t contribute — exactly the masked joint loss). Each head reports per-task metrics + an '
       + 'eval.summary (confusion matrix for classification heads, scatter for regression heads). '
       + 'A runnable graph needs at least: DatasetSource, ModelSource(+model), Optimizer, TrainLoop, and EITHER a Loss(+target on DatasetSource) '
-      + 'for single-task OR ≥1 Head for multitask — wire each into the TrainLoop.',
+      + 'for single-task OR ≥1 Head for multitask — wire each into the TrainLoop. '
+      + 'DIFFUSION (score/VE, epsilon-prediction): one Head with {output:"eps_hat", target_kind:"score", '
+      + 'diff_branch:"<manifest branch with the CLEAN point set>", sigma_min:<float, default 0.05>, sigma_max:<float, default 6>, n_rep:<int>=4}; '
+      + 'it then needs NO target column and MUST be the only Head — the trainer corrupts that branch itself (x = w + sigma*eps).',
       {
         node_type: z.string(),
         after: z.string().optional().describe('Optional source training-node id to connect from'),
@@ -2685,13 +2688,13 @@ function buildSystemPrompt(snapshot, error, project, trainingSnapshot, dataSnaps
     '',
     'Training node types and their key params:',
     ' - DatasetSource {dataset: "datasets/<file>", target: "<column>", features: [<columns>] (empty = all numeric)}. For a PAIRED GRAPH model (dual-encoder), set dataset to a ".manifest" file — it carries its own target + pairs the per-branch graphs, so target/features are ignored.',
-    ' - Split {val_ratio: 0..0.9, seed}',
+    ' - Split {strategy: random|grouped, val_ratio: 0..0.9, seed, group_column} — strategy "grouped" needs group_column: every row sharing that value (e.g. one patient) stays in ONE partition, so nothing leaks train↔val.',
     ' - DataLoader {batch_size, shuffle, num_workers, drop_last}',
     ' - ModelSource {model: "models/<file>.spinoml"}',
     ' - Loss {kind: CrossEntropyLoss|BCEWithLogitsLoss|MSELoss|L1Loss, label_smoothing}',
     ' - Optimizer {kind: Adam|AdamW|SGD|RMSprop, lr, weight_decay, momentum}',
     ' - Scheduler {kind: none|StepLR|CosineAnnealingLR|ReduceLROnPlateau, step_size, gamma, patience}',
-    ' - Metric {kind: accuracy|f1|precision|recall|mse|mae|r2}  (add several for multiple metrics)',
+    ' - Metric {kind: accuracy|f1|precision|recall|mse|mae|r2|auroc|auprc|ef}  (add several for multiple metrics; auroc/auprc/ef are ranking metrics for a BINARY head)',
     ' - EarlyStopping {monitor: val_loss|val_acc|train_loss, patience, mode: min|max}',
     ' - GradientClipping {max_norm}',
     ' - MixedPrecision {dtype: fp16|bf16}',

@@ -136,6 +136,14 @@ export const SUITES: readonly Suite[] = [
     why: 'splitArgs+quoteArgv round-trip vs real sh + SSRF + ssh target policy',
   },
   {
+    name: 'verify:figures',
+    npmScript: 'verify:figures',
+    category: 'unit',
+    timeoutSec: 60,
+    needs: [],
+    why: 'Pure SVG renderer: print theme (literal colours, no var, embedded legend, 7pt), screen theme (var), determinism, XML well-formed',
+  },
+  {
     name: 'verify:paths',
     npmScript: 'verify:paths',
     category: 'unit',
@@ -184,6 +192,14 @@ export const SUITES: readonly Suite[] = [
     timeoutSec: 60,
     needs: ['torch-env'],
     why: 'Real malicious-pickle attempts vs safe_torch_load',
+  },
+  {
+    name: 'test:diffusion',
+    npmScript: 'test:diffusion',
+    category: 'contract',
+    timeoutSec: 240,
+    needs: ['torch-env'],
+    why: 'Score-head diffusion training + sampling run through the real trainer',
   },
   {
     name: 'test:scope',

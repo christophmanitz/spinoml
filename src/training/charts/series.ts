@@ -1,11 +1,16 @@
 import type { TrainingEvent } from '../types'
 import type { Series } from './LineChart'
+import { OKABE_ITO } from '../../figures/lineFigure'
 
 // A small, stable palette so the same logical series gets the same colour
 // across charts and across runs in compare-mode.
+// Screen theme uses CSS variables (first entry is --accent); print theme uses
+// OKABE_ITO literal hexes via lineFigure.ts.
 export const CHART_COLORS = [
   'var(--accent)', '#5fd39a', '#e6c34a', '#ff7a85', '#b98cff', '#4ec9c9', '#ff9f5a', '#9aa1a8',
 ]
+
+export { OKABE_ITO }
 
 export function parseEventLines(text: string): TrainingEvent[] {
   const out: TrainingEvent[] = []

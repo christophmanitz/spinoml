@@ -22,6 +22,8 @@ import { useViewModeStore } from './graph/viewMode'
 import { getCurrentConnection } from '../connections/store'
 import { confirmDialog } from '../ui/confirm'
 import { fireAndForget } from '../errors/report'
+import { lineFigureSvg, type Series } from '../figures/lineFigure'
+import { fs } from '../connections/backend'
 
 type Tab = 'overview' | 'charts' | 'events' | 'predictions' | 'hardware' | 'logs' | 'script'
 
@@ -63,6 +65,7 @@ export default function RunDetailModal({ runId }: { runId: string }) {
   // a silent "no resumable flag" claim.
   const [manifestJson, setManifestJson] = useState('')
   const [manifestError, setManifestError] = useState<string | null>(null)
+  const [exportMsg, setExportMsg] = useState<string | null>(null)
 
   const status = summary?.status ?? 'unknown'
   const active = RUNNING_STATES.has(status) || (summary?.alive ?? false)
@@ -108,6 +111,29 @@ export default function RunDetailModal({ runId }: { runId: string }) {
       // A corrupt/frozen config must not make the button appear to do nothing.
       setActionError(`run.json konnte nicht geöffnet werden: ${e instanceof Error ? e.message : String(e)}`)
     }
+  }
+
+  const exportChartSvg = async (chartName: string, series: Series[], opts: { yLog?: boolean; yFormat?: (v: number) => string; xDomain?: [number, number] } = {}) => {
+    try {
+      await fs.mkdir(`experiments/runs/${runId}/figures`)
+    } catch {
+      // directory may already exist
+    }
+    const svg = lineFigureSvg(series, {
+      theme: 'print',
+      width: 240,
+      height: 170,
+      xLabel: 'epoch',
+      yLabel: chartName === 'lr' ? 'lr' : chartName === 'loss' ? 'loss' : 'value',
+      title: chartName.charAt(0).toUpperCase() + chartName.slice(1),
+      yLog: opts.yLog,
+      yFormat: opts.yFormat,
+      xDomain: opts.xDomain,
+    })
+    const relPath = `experiments/runs/${runId}/figures/${chartName}.svg`
+    await fs.write(relPath, svg)
+    setExportMsg(`Gespeichert: ${relPath}`)
+    setTimeout(() => setExportMsg(null), 3000)
   }
 
   // A SLURM run's stdout/stderr land in slurm-<jobid>.out/.err (the #SBATCH
@@ -398,6 +424,12 @@ export default function RunDetailModal({ runId }: { runId: string }) {
           </div>
         )}
 
+        {exportMsg && (
+          <div className="border-b border-emerald-900/40 bg-emerald-950/30 px-4 py-1.5 text-[10px] text-emerald-300">
+            {exportMsg}
+          </div>
+        )}
+
         {isEvalRun && validate && (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-[#1f2429] bg-[var(--accent-sel)]/20 px-4 py-1.5 text-[10px] text-[#9aa1a8]">
             <span className="rounded bg-[var(--accent-sel)] px-1.5 py-0.5 font-semibold text-[var(--accent)]">EXTERNE VALIDIERUNG</span>
@@ -576,24 +608,55 @@ export default function RunDetailModal({ runId }: { runId: string }) {
                 <ChartCard
                   title="Loss"
                   right={
-                    <button
-                      onClick={() => setLossLog((v) => !v)}
-                      className={`rounded px-1.5 py-0.5 text-[10px] ${lossLog ? 'bg-[var(--accent-sel)] text-[var(--accent)]' : 'text-[#6f767e] hover:bg-[#1a1e22]'}`}
-                    >
-                      log
-                    </button>
+                    <>
+                      <button
+                        onClick={() => setLossLog((v) => !v)}
+                        className={`rounded px-1.5 py-0.5 text-[10px] mr-1 ${lossLog ? 'bg-[var(--accent-sel)] text-[var(--accent)]' : 'text-[#6f767e] hover:bg-[#1a1e22]'}`}
+                      >
+                        log
+                      </button>
+                      <button
+                        onClick={() => exportChartSvg('loss', lossSeries(events), { yLog: lossLog, xDomain: epochDomain })}
+                        className="rounded px-1.5 py-0.5 text-[10px] text-[#6f767e] hover:bg-[#1a1e22]"
+                        title="Als SVG exportieren"
+                      >
+                        SVG
+                      </button>
+                    </>
                   }
                 >
                   <LineChart series={lossSeries(events)} yLog={lossLog} xLabel="epoch" xDomain={epochDomain} />
                 </ChartCard>
 
                 {metricSeries(events).length > 0 && (
-                  <ChartCard title="Metriken">
+                  <ChartCard
+                    title="Metriken"
+                    right={
+                      <button
+                        onClick={() => exportChartSvg('metrics', metricSeries(events), { xDomain: epochDomain })}
+                        className="rounded px-1.5 py-0.5 text-[10px] text-[#6f767e] hover:bg-[#1a1e22]"
+                        title="Als SVG exportieren"
+                      >
+                        SVG
+                      </button>
+                    }
+                  >
                     <LineChart series={metricSeries(events)} xLabel="epoch" xDomain={epochDomain} />
                   </ChartCard>
                 )}
 
-                <ChartCard title="Learning rate">
+                <ChartCard
+                  title="Learning rate"
+                  right={
+                    <button
+                      onClick={() => exportChartSvg('lr', lrSeries(events), { xDomain: epochDomain, yFormat: (v) => v.toExponential(1) })}
+                      className="rounded px-1.5 py-0.5 text-[10px] text-[#6f767e] hover:bg-[#1a1e22]"
+                      title="Als SVG exportieren"
+                    >
+                      SVG
+                    </button>
+                  }
+                >
                   <LineChart series={lrSeries(events)} xLabel="epoch" xDomain={epochDomain} yFormat={(v) => v.toExponential(1)} />
                 </ChartCard>
               </div>

@@ -144,6 +144,16 @@ function FieldInput({
       return <ColumnSingle value={String(value ?? '')} dataset={boundDataset} onChange={onChange} />
     case 'columns-multi':
       return <ColumnsMulti value={(value as string[]) ?? []} dataset={boundDataset} onChange={onChange} />
+    case 'text':
+      return (
+        <input
+          type="text"
+          placeholder={field.placeholder}
+          value={String(value ?? field.default)}
+          onChange={(e) => onChange(e.target.value)}
+          className={INPUT}
+        />
+      )
   }
 }
 

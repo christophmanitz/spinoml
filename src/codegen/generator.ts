@@ -422,7 +422,14 @@ function buildClass(
     const preds = (pred.get(id) ?? []).map((pid) => varName.get(pid)).filter((v): v is string => !!v)
     if (k === 'module' && spec.pytorchModule) {
       if (preds.length === 0) { issues.push(`Node ${id} (${n.layerType}) has no upstream value.`); continue }
-      if (preds.length > 1) {
+      if (spec.crossAttention) {
+        if (preds.length !== 2) {
+          issues.push(`Node ${id} (${n.layerType}): CrossAttention needs exactly 2 inputs (query first, context second); got ${preds.length}.`)
+        } else {
+          forwardLines.push(`        ${varName.get(id)} = self.${attrName.get(id)}(${preds[0]}, ${preds[1]}, ${preds[1]}, need_weights=False)[0]`)
+        }
+        continue
+      } else if (preds.length > 1) {
         issues.push(`Node ${id} (${n.layerType}): module layer received ${preds.length} inputs — using first. Use a Merge layer (Concat/Add) to combine streams.`)
       }
       if (spec.needsEdgeIndex) {

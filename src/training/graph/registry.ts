@@ -17,6 +17,8 @@ export type TrainingFieldSpec =
   | { name: string; type: 'column-single'; default: string }
   /** Multiple columns from the graph's bound DatasetSource. */
   | { name: string; type: 'columns-multi'; default: string[] }
+  /** Single-line free text, stored verbatim (e.g. a manifest branch name). */
+  | { name: string; type: 'text'; default: string; placeholder?: string }
 
 /** Connection role — drives palette grouping + edge validation in the editor. */
 export type TrainingCategory =
@@ -67,6 +69,7 @@ export const TRAINING_NODES: Record<string, TrainingNodeSpec> = {
       f.select('strategy', ['random', 'stratified', 'grouped', 'time-based', 'predefined'], 'random'),
       f.float('val_ratio', 0.2, { min: 0, max: 0.9, step: 0.05 }),
       f.int('seed', 42, { min: 0 }),
+      { name: 'group_column', type: 'column-single', default: '' },
     ],
     summary: (p) => {
       const s = String(get(p, 'strategy', 'random'))
@@ -105,13 +108,33 @@ export const TRAINING_NODES: Record<string, TrainingNodeSpec> = {
     fields: [
       // `output` matches a model Output node's name (the dict key forward()
       // returns). Same option set as the architecture Output node.
-      f.select('output', ['out', 'logits', 'embedding', 'mu', 'sigma', 'aux'], 'out'),
+      f.select('output', ['out', 'logits', 'embedding', 'mu', 'sigma', 'aux', 'eps_hat'], 'out'),
       { name: 'target', type: 'column-single', default: '' },
       f.select('loss', ['CrossEntropyLoss', 'BCEWithLogitsLoss', 'MSELoss', 'L1Loss'], 'CrossEntropyLoss'),
       f.float('weight', 1, { min: 0, step: 0.1 }),
       f.float('label_smoothing', 0, { min: 0, max: 0.9, step: 0.01 }),
+      // Diffusion (VE, epsilon-prediction): target_kind='score' turns this head
+      // into the denoising score-matching head. The trainer does the corruption
+      // — the model stays an ordinary canvas model — so it must be the ONLY
+      // head (no target column needed: `target`/`loss` are ignored for score).
+      f.select('target_kind', ['column', 'score'], 'column'),
+      // Manifest branch holding the CLEAN point set (x = w + sigma*eps).
+      { name: 'diff_branch', type: 'text', default: '', placeholder: 'wat' },
+      f.float('sigma_min', 0.05, { min: 0, step: 0.01 }),
+      f.float('sigma_max', 6.0, { min: 0, step: 0.01 }),
+      f.int('n_rep', 4, { min: 1, step: 1 }),
     ],
-    summary: (p) => `${get(p, 'output', 'out')} → ${get(p, 'target', '?') || '?'} · ${get(p, 'loss', 'CrossEntropyLoss')}`,
+    summary: (p) => {
+      const out = get(p, 'output', 'out')
+      const kind = String(p.target_kind ?? 'column')
+      if (kind === 'score') {
+        const sm = get(p, 'sigma_min', 0.05)
+        const sM = get(p, 'sigma_max', 6.0)
+        const n = get(p, 'n_rep', 4)
+        return `${out} · score σ${sm}-${sM} ×${n}`
+      }
+      return `${out} → ${get(p, 'target', '?') || '?'} · ${get(p, 'loss', 'CrossEntropyLoss')}`
+    },
   },
   Optimizer: {
     type: 'Optimizer', category: 'Objective',
@@ -135,7 +158,7 @@ export const TRAINING_NODES: Record<string, TrainingNodeSpec> = {
   },
   Metric: {
     type: 'Metric', category: 'Metric', multi: true,
-    fields: [f.select('kind', ['accuracy', 'f1', 'precision', 'recall', 'mse', 'mae', 'r2'], 'accuracy')],
+    fields: [f.select('kind', ['accuracy', 'f1', 'precision', 'recall', 'mse', 'mae', 'r2', 'auroc', 'auprc', 'ef'], 'accuracy')],
     summary: (p) => String(get(p, 'kind', 'accuracy')),
   },
   EarlyStopping: {
@@ -195,6 +218,7 @@ function coerceField(field: TrainingFieldSpec, value: unknown): unknown {
     case 'dataset-ref':
     case 'model-ref':
     case 'column-single':
+    case 'text':
       return typeof value === 'string' ? value : field.default
     case 'columns-multi':
       return Array.isArray(value) ? value.map((v) => String(v)) : field.default

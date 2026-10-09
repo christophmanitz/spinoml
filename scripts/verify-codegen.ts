@@ -228,6 +228,33 @@ const cases: Case[] = [
     edges: [{ id: 'e1', source: 'input', target: 'n1' }],
     expectIssues: 1,
   },
+  {
+    name: 'cross-attention (two inputs: query, context)',
+    nodes: [
+      mkNode('a_query', 'Input', { name: 'query', shape: [2, 5, 16], dtype: 'float32' }),
+      mkNode('b_context', 'Input', { name: 'context', shape: [2, 7, 16], dtype: 'float32' }),
+      mkNode('xattn', 'CrossAttention', { embed_dim: 16, num_heads: 4, dropout: 0.0, batch_first: true }),
+      mkNode('out', 'Output', { name: 'attended' }),
+    ],
+    edges: [
+      { id: 'e1', source: 'a_query', target: 'xattn' },
+      { id: 'e2', source: 'b_context', target: 'xattn' },
+      { id: 'e3', source: 'xattn', target: 'out' },
+    ],
+  },
+  {
+    name: 'cross-attention with one input (expect 1 issue)',
+    nodes: [
+      mkNode('query', 'Input', { name: 'query', shape: [2, 5, 16], dtype: 'float32' }),
+      mkNode('xattn', 'CrossAttention', { embed_dim: 16, num_heads: 4, dropout: 0.0, batch_first: true }),
+      mkNode('out', 'Output', { name: 'attended' }),
+    ],
+    edges: [
+      { id: 'e1', source: 'query', target: 'xattn' },
+      { id: 'e2', source: 'xattn', target: 'out' },
+    ],
+    expectIssues: 1,
+  },
 ]
 
 const tmp = mkdtempSync(join(tmpdir(), 'spinoml-codegen-'))

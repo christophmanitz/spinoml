@@ -59,6 +59,9 @@ model by `kind`:
 - **`module`** — standard `nn.*` layers (Conv/Linear/Norm/Activation/Pool/Attention/
   Recurrent) + GNN (`GCNConv`/`GATConv`/`SAGEConv`/`GraphConv`/`GraphTransformer`,
   `GlobalMean/Max/AddPool`). GNN layers act on node features `[N, in_ch]` (no batch).
+- **`CrossAttention`** (category Attention) — two-stream attention on `nn.MultiheadAttention`:
+  FIRST incoming edge = query `[B,Na,E]`, SECOND = context (key=value) `[B,Nb,E]` → `[B,Na,E]`
+  (e.g. ligand atoms attending over protein residues). Flag `crossAttention` in `registry.ts`.
 - **`merge`** (`Concat`/`Add`/`Multiply`/`Stack`) — N→1; **`function`**
   (`Reshape`/`View`/`Permute`/`Transpose`, global pools) — 1→1.
 - **`custom`** — free-form `nn.Module` from source. **`group`** (`Subgraph`) — nested
@@ -73,7 +76,7 @@ uniform; multi-input/branching layers need teaching `generator.ts`.
 ## 3. Training Strategy & Integrity (Phase 19)
 
 The Split node's `strategy` (`random`/`stratified`/`grouped`/`time-based`/
-`predefined`) is frozen into `run.json` (`training.split_strategy`) at launch and
+`predefined`; only `random` and `grouped` are implemented) is frozen into `run.json` (`training.split_strategy`) at launch and
 **never silently changed**. The trainer only implements `random` today; any other
 strategy in run.json produces an immediate loud failure rather than a silent random
 fallback. After splitting, the trainer asserts zero overlap between train and
@@ -277,6 +280,25 @@ must match the model).
 - Verify: `npm run verify:traingen` (case 5: train → eval-only on a RENAMED dataset
   → asserts no training loop, trained-class confusion, `metrics.json` eval_only).
 
+## 6c. Diffusion (score head + sampling run)
+
+Generic VE epsilon-prediction diffusion for a point set conditioned on a graph (reference: WaterDiff).
+The model is an ORDINARY canvas model; the trainer does the corruption, so nothing new on the
+architecture canvas. Source of truth: the "diffusion" section of `sidecar-torch/training_template.py`
+(`diff_setup`/`diff_corrupt`/`diff_reverse` — the ONLY definition of sigma range and sampler) and
+`scripts/test-diffusion.py` (`npm run test:diffusion`).
+- **Data**: a manifest with a conditioning branch (graph with `pos`) and the CLEAN point-set branch (a
+  PyG Data whose `pos` = the points, variable count per row), each bound to a Graph input.
+- **Train**: Head node `target_kind = score` (+ `diff_branch`, `sigma_min`, `sigma_max`, `n_rep`); it must be
+  the ONLY head. The trainer swaps the clean branch for a Batch with `pos` = x_t, per-point `sigma`, `batch`;
+  the model returns `{"eps_hat": [P,3]}` (loss = squared error to the true noise). Validation noise is seeded.
+  Epoch metrics `dsm_err/s<lo>-<hi>` = validation error per log-sigma bin.
+- **Sample**: run.json `sample = {checkpoint_from, n_rows, n_steps, n_particles, anchor_branch, traj_sigmas, seed}`
+  runs the same train.py in eval-only form and writes `samples.pt` (pos, batch, row_idx, cond_pos, cond_batch)
+  and `trajectory_<sigma>.pt`. Prior = random anchor-branch positions + N(0, sigma_max^2); not WaterDiff's N/O anchors.
+- Not yet: launching a sampling run from the UI, trajectory/3D view, sigma-consistency check, water-water coupling
+  (`k_w`), `val`-row selection for sampling, WaterDiff template.
+
 ## 7. The in-app chatbot (`sidecar-llm/main.mjs`)
 
 SSE server on :7422. Four provider paths (`opencode` [DEFAULT] / `subscription` /
@@ -423,6 +445,10 @@ canvas) and the blocked training launch open the dialog via
   `agent/`, run via `run_script`; write outputs under `datasets/`.
 
 ## Changelog (append one dated line per feature; newest first)
+
+- 2026-10-09 — **Diffusion (score head + sampling run)**: Head `target_kind=score` trains epsilon-prediction DSM on a clean point-set manifest branch (trainer-side corruption, per-sigma-bin metrics, seeded validation); a `sample` run writes `samples.pt`/`trajectory_*.pt`; compiled from the Training canvas into `training.diffusion`. Verify: `npm run test:diffusion`. UI launch of sampling, trajectory view and WaterDiff template are the next step (§6c).
+
+- 2026-10-09 — **Paper-eval basics + figure export + CrossAttention** (from the council plan): (1) Split `strategy: grouped` + `group_column` — whole groups (e.g. scaffold/protein cluster column, computed beforehand by a DataOp) go to validation, `split.integrity` carries group counts and fails closed on group overlap; (2) ranking metrics `auroc`/`auprc`/`ef` (top 5 %) for binary heads (`compute_metrics`); (3) `src/figures/lineFigure.ts` — ONE pure SVG renderer shared by the on-screen `LineChart` (screen theme) and the "SVG" export button in Run Detail (print theme: white, Okabe-Ito literal colours, 7 pt, embedded legend; writes `experiments/runs/<id>/figures/*.svg`; `npm run verify:figures`); (4) `CrossAttention` layer. Not done yet: seed bands, architecture/eval figure export, PDF.
 
 - 2026-10-07 — **FIRST live cluster / CUDA / GitHub-CI results + three run-pipeline fixes**: GitHub CI is green in all three jobs; `npm run test:remote-live` passed once against a real SLURM cluster (connection, direct and SLURM runs, cancel, recovery, GPU run; the in-window bootstrap stays manual) and `npm run test:hardware-cuda` passed once on an RTX 2080 Ti (reference experiments CPU-vs-CUDA, same-seed repeat). Fixed: the Run-Detail `manifest.json`/resumable info is readable again, executor and SLURM runs no longer fail the integrity gate on empty logs, and stopping an already finished remote run is a no-op (see §6).
 - 2026-10-07 — **Undo no longer crosses documents + store hardening (R060/R018)**: opening a file, File → New or an autosave restore starts a fresh undo history (the first undo after opening a file used to restore the previous file's graph into it); undo/redo history no longer shares params with the live graph; a corrupt persisted workspace (cycles, orphans, mismatched ids) is repaired into a tree on load instead of hanging the tab (`npm run test:history-store`, `npm run test:workspace-store`).

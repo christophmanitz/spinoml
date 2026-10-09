@@ -97,8 +97,22 @@ export function compileTrainingGraph(snapshot: TrainingGraphSnapshot): TrainingC
 
   // Build the heads array (multitask). Each head needs a target column; the
   // output name defaults to 'out' (the model's sole/default output key).
+  // A score head (target_kind='score') is the DIFFUSION contract: no target
+  // column — the trainer corrupts the clean point set itself and the head
+  // predicts the noise. It must be the ONLY head, so its entry carries the
+  // score fields while a plain column head compiles exactly as before.
   const heads: Head[] = headNodes.map((n) => {
     const p = paramsOf(n)
+    if (String(p.target_kind ?? 'column') === 'score') {
+      return {
+        output: String(p.output ?? 'out'),
+        target: '',
+        loss: 'MSELoss',
+        weight: num(p, 'weight', 1),
+        target_kind: 'score',
+        task: 'regression',
+      }
+    }
     return {
       output: String(p.output ?? 'out'),
       target: String(p.target ?? ''),
@@ -107,6 +121,22 @@ export function compileTrainingGraph(snapshot: TrainingGraphSnapshot): TrainingC
       label_smoothing: num(p, 'label_smoothing', 0),
     }
   })
+
+  // Diffusion config for score heads (the trainer's noise schedule + branch).
+  let diffusion: TrainingConfig['diffusion'] | undefined = undefined
+  const scoreNodes = headNodes.filter((n) => String(paramsOf(n).target_kind ?? 'column') === 'score')
+  if (scoreNodes.length) {
+    // A score head rewrites the batch itself, so it cannot share the objective
+    // with a second head — fail loudly rather than silently dropping one.
+    if (headNodes.length > 1) issues.push('Ein Score-Head muss der einzige Head sein — Diffusion kann nicht mit weiteren Heads kombiniert werden.')
+    const p = paramsOf(scoreNodes[0])
+    const branch = String(p.diff_branch ?? '')
+    const sigmaMin = num(p, 'sigma_min', 0.05)
+    const sigmaMax = num(p, 'sigma_max', 6.0)
+    if (!branch) issues.push('Score-Head braucht einen diff_branch (Branch mit der sauberen Punktmenge).')
+    if (sigmaMin >= sigmaMax) issues.push('Score-Head braucht sigma_min < sigma_max.')
+    diffusion = { branch, sigma_min: sigmaMin, sigma_max: sigmaMax, n_rep: Math.trunc(num(p, 'n_rep', 4)) }
+  }
 
   const metrics = byType('Metric').map((n) => String(paramsOf(n).kind)).filter(Boolean)
 
@@ -127,6 +157,7 @@ export function compileTrainingGraph(snapshot: TrainingGraphSnapshot): TrainingC
     batch_size: Math.trunc(num(dl, 'batch_size', base.batch_size)),
     val_split: num(sp, 'val_ratio', base.val_split),
     split_strategy: String(sp.strategy ?? base.split_strategy) as SplitStrategy,
+    ...(sp.group_column ? { split_group_column: String(sp.group_column) } : {}),
     seed: Math.trunc(num(lp, 'seed', base.seed)),
     log_every_n_steps: Math.trunc(num(lp, 'log_every_n_steps', base.log_every_n_steps)),
     val_every_n_epochs: Math.max(1, Math.trunc(num(lp, 'val_every_n_epochs', 1))),
@@ -145,6 +176,7 @@ export function compileTrainingGraph(snapshot: TrainingGraphSnapshot): TrainingC
     },
     loss: { kind: (lo.kind as LossKind) ?? base.loss.kind, ...(loss ? { label_smoothing: num(lo, 'label_smoothing', 0) } : {}) },
     ...(multitask ? { heads } : {}),
+    ...(diffusion ? { diffusion } : {}),
     scheduler: schedulerCfg,
     metrics: metrics.length ? metrics : undefined,
     callbacks: callbacks.length ? callbacks : undefined,
@@ -163,9 +195,15 @@ export function compileTrainingGraph(snapshot: TrainingGraphSnapshot): TrainingC
   // Single-task needs the DatasetSource target; multitask gets targets from heads.
   if (dataset && !isManifest && !multitask && !target) issues.push('DatasetSource braucht eine Ziel-Spalte (target).')
   if (model && !modelRelpath) issues.push('ModelSource hat kein Modell gewählt.')
+  // A grouped split without a group column cannot be leakage-safe → block the launch.
+  if (split && String(sp.strategy) === 'grouped' && !String(sp.group_column ?? '')) {
+    issues.push('Grouped Split braucht eine Gruppen-Spalte (group_column).')
+  }
   // Each head needs a target column (the output name defaults to 'out').
+  // Score heads (target_kind === 'score') don't need a target column.
+  const columnHeads = heads.filter((h) => h.target_kind !== 'score')
   if (multitask) {
-    if (heads.some((h) => !h.target)) issues.push('Jeder Head-Knoten braucht eine Ziel-Spalte (target).')
+    if (columnHeads.some((h) => !h.target)) issues.push('Jeder Head-Knoten braucht eine Ziel-Spalte (target).')
     const dupOut = heads.map((h) => h.output).filter((o, i, a) => a.indexOf(o) !== i)
     if (dupOut.length) issues.push(`Doppelter Head-Output „${dupOut[0]}" — Output-Namen müssen eindeutig sein.`)
   }
@@ -214,7 +252,7 @@ export function compileTrainingGraph(snapshot: TrainingGraphSnapshot): TrainingC
   const ok = issues.every((m) => m.includes('Mehrere')) &&
     !!loop && !!dataset && !!model && !!optimizer && !!datasetRelpath && !!modelRelpath &&
     (multitask
-      ? heads.length > 0 && heads.every((h) => !!h.target)
+      ? heads.length > 0 && columnHeads.every((h) => !!h.target)
       : !!loss && (isManifest || !!target))
 
   // Multitask carries targets in training.heads; the single-task `target` slot

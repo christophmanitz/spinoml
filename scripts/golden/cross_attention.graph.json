@@ -1,0 +1,73 @@
+{
+  "kind": "model",
+  "nodes": [
+    {
+      "id": "a_query",
+      "layerType": "Input",
+      "params": {
+        "name": "query",
+        "shape": [2, 5, 16],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "b_context",
+      "layerType": "Input",
+      "params": {
+        "name": "context",
+        "shape": [2, 7, 16],
+        "dtype": "float32",
+        "dataset": "",
+        "features": [],
+        "target": ""
+      }
+    },
+    {
+      "id": "xattn",
+      "layerType": "CrossAttention",
+      "params": {
+        "embed_dim": 16,
+        "num_heads": 4,
+        "dropout": 0.0,
+        "batch_first": true
+      }
+    },
+    {
+      "id": "out",
+      "layerType": "Output",
+      "params": {
+        "name": "attended"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "a_query",
+      "target": "xattn"
+    },
+    {
+      "source": "b_context",
+      "target": "xattn"
+    },
+    {
+      "source": "xattn",
+      "target": "out"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "query",
+      "shape": [2, 5, 16],
+      "dtype": "float32"
+    },
+    {
+      "name": "context",
+      "shape": [2, 7, 16],
+      "dtype": "float32"
+    }
+  ],
+  "expectedOutputShape": [2, 5, 16]
+}

@@ -1297,6 +1297,7 @@ def resolve_heads(train_cfg: dict, ds_cfg: dict):
         heads.append({
             "output": str(h.get("output", "") or ""),
             "target": h.get("target"),
+            "target_kind": str(h.get("target_kind", "column") or "column"),
             "loss_kind": kind,
             "task": LOSS_TASK.get(kind, "classification"),
             "weight": float(h.get("weight", 1.0)),
@@ -1346,6 +1347,33 @@ def encode_target(series, task: str, known_classes: list | None = None):
 
 # ─── Dataset loading ────────────────────────────────────────────────────────
 
+def read_table(path):
+    """The ONE table reader: .parquet / .tsv / .csv → DataFrame."""
+    import pandas as pd
+
+    p = Path(path)
+    suffix = p.suffix.lower()
+    if suffix == ".parquet":
+        return pd.read_parquet(p)
+    if suffix == ".tsv":
+        return pd.read_csv(p, sep="\t")
+    return pd.read_csv(p)
+
+
+def tabular_table_path(cfg: dict):
+    """The table file of a tabular dataset. A prepared dataset DIRECTORY (e.g. a
+    TDC BindingDB export: pairs.csv + sequences.csv + embeddings) resolves to its
+    inner table file."""
+    path = Path(os.path.expanduser(cfg["path"]))
+    if path.is_dir():
+        prefer = ("pairs.csv", "data.csv", "table.csv", "dataset.csv", "train.csv", "test.csv")
+        tables = [c for c in path.iterdir() if c.is_file() and c.suffix.lower() in (".csv", ".tsv", ".parquet")]
+        by_name = {c.name.lower(): c for c in tables}
+        path = next((by_name[n] for n in prefer if n in by_name),
+                    max(tables, key=lambda c: c.stat().st_size) if tables else path)
+    return path
+
+
 def load_tabular(cfg: dict, heads: list[dict], known_classes_by_head: dict | None = None):
     """Returns (X: FloatTensor [N, F], targets, feature_cols) where targets maps
     each head's output name → {y, classes, n_classes}. For external validation,
@@ -1354,22 +1382,7 @@ def load_tabular(cfg: dict, heads: list[dict], known_classes_by_head: dict | Non
     import pandas as pd
     import torch
 
-    path = Path(os.path.expanduser(cfg["path"]))
-    # A prepared dataset DIRECTORY (e.g. a TDC BindingDB export: pairs.csv +
-    # sequences.csv + embeddings) → read its inner table file.
-    if path.is_dir():
-        prefer = ("pairs.csv", "data.csv", "table.csv", "dataset.csv", "train.csv", "test.csv")
-        tables = [c for c in path.iterdir() if c.is_file() and c.suffix.lower() in (".csv", ".tsv", ".parquet")]
-        by_name = {c.name.lower(): c for c in tables}
-        path = next((by_name[n] for n in prefer if n in by_name),
-                    max(tables, key=lambda c: c.stat().st_size) if tables else path)
-    suffix = path.suffix.lower()
-    if suffix == ".parquet":
-        df = pd.read_parquet(path)
-    elif suffix == ".tsv":
-        df = pd.read_csv(path, sep="\t")
-    else:
-        df = pd.read_csv(path)
+    df = read_table(tabular_table_path(cfg))
 
     target_cols = []
     for h in heads:
@@ -1631,23 +1644,30 @@ def _manifest_resolve_file(base, spec, value):
     return cand if cand.exists() else (d / value if (d / value).exists() else cand)
 
 
-def load_manifest_graphs(ds_cfg: dict, heads: list[dict], known_classes_by_head: dict | None = None):
-    """Returns (graphs_list, targets, branches, skipped). graphs_list[i] is the
-    list of per-branch items for kept row i (a PyG Data for graph/molecule
-    branches, a token-id LongTensor for sequence/ESPF branches); targets maps head →
-    {y, classes, n_classes} aligned to graphs_list. A head with no target falls
-    back to the manifest's own target column (single-task manifest). For external
-    validation, `known_classes_by_head` pins each head's class order to the model."""
+def manifest_table(ds_cfg: dict):
+    """A manifest dataset's base dir + JSON descriptor + table DataFrame: the
+    pairing config and the one row per sample that every branch is looked up from."""
     import json
-    import pandas as pd
-    import torch
+
     man = Path(os.path.expanduser(ds_cfg["path"]))
     base = man.resolve().parent
     cfg = json.loads(man.read_text(encoding="utf-8"))
-    tp = base / str(cfg["table"])
-    suffix = tp.suffix.lower()
-    df = (pd.read_parquet(tp) if suffix == ".parquet"
-          else pd.read_csv(tp, sep="\t") if suffix == ".tsv" else pd.read_csv(tp))
+    return base, cfg, read_table(base / str(cfg["table"]))
+
+
+def load_manifest_graphs(ds_cfg: dict, heads: list[dict], known_classes_by_head: dict | None = None):
+    """Returns (graphs_list, targets, branches, skipped, kept_rows). graphs_list[i] is the
+    list of per-branch items for kept row i (a PyG Data for graph/molecule
+    branches, a token-id LongTensor for sequence/ESPF branches); targets maps head →
+    {y, classes, n_classes} aligned to graphs_list. kept_rows are the table row
+    indices behind graphs_list (rows whose branches failed to resolve are skipped),
+    so a per-row column — e.g. a split group — can be read for exactly these rows.
+    A head with no target falls
+    back to the manifest's own target column (single-task manifest). For external
+    validation, `known_classes_by_head` pins each head's class order to the model."""
+    import pandas as pd
+    import torch
+    base, cfg, df = manifest_table(ds_cfg)
     branches = list(cfg["pairs"].keys())
     cache_dir = (base / ".graphcache") if cfg.get("cache", True) else None
     man_tcol = (cfg.get("target") or {}).get("column")
@@ -1741,7 +1761,7 @@ def load_manifest_graphs(ds_cfg: dict, heads: list[dict], known_classes_by_head:
         y, classes, n_classes = encode_target(
             kept_df[col], h["task"], (known_classes_by_head or {}).get(h["output"]))
         targets[h["output"]] = {"y": y, "classes": classes, "n_classes": n_classes}
-    return graphs_list, targets, branches, skipped
+    return graphs_list, targets, branches, skipped, kept_idx
 
 
 class MultiTaskDataset:
@@ -1862,6 +1882,71 @@ def build_scheduler(cfg: dict, optimizer, epochs: int):
     raise ValueError(f"unknown scheduler kind: {kind}")
 
 
+RANKING_METRIC_KINDS = ("auroc", "auprc", "ef")
+
+
+def _positive_scores(out):
+    """Positive-class score of a BINARY head: sigmoid of the single logit, or the
+    positive column of a 2-class softmax. None when the head has >2 classes —
+    the ranking metrics are defined for the binary case only."""
+    import torch
+
+    if out.dim() == 1:
+        return torch.sigmoid(out.float().view(-1))
+    if int(out.shape[-1]) == 2:
+        return torch.softmax(out.float(), dim=-1)[:, 1]
+    return None
+
+
+def _average_ranks(scores):
+    """1-based AVERAGE ranks of `scores` ascending — tied scores share their mean
+    rank, the convention AUROC is defined with (each tie counts half a win)."""
+    import torch
+
+    order = torch.argsort(scores, stable=True)
+    _, counts = torch.unique(scores[order], return_counts=True)
+    end = torch.cumsum(counts, 0).double()      # 1-based index of each group's last element
+    mean_rank = (end - counts.double() + end + 1) / 2.0  # mean of [first, last]
+    ranks = torch.empty(int(scores.numel()), dtype=torch.float64)
+    ranks[order] = torch.repeat_interleave(mean_rank, counts)
+    return ranks
+
+
+def ranking_metrics(scores, tgt) -> tuple[dict, str | None]:
+    """auroc / auprc / ef over the positive-class scores. Pure torch, no sklearn.
+    Returns (values, note): a val split holding a single class has no defined
+    ranking, so the metric is OMITTED with a note — never a NaN in the charts."""
+    import torch
+
+    keep = tgt >= 0                            # -1 = unlabeled row (masked in training)
+    s = scores[keep].double().cpu()
+    t = tgt[keep].long().cpu()
+    n_pos = int((t == 1).sum())
+    n_neg = int((t == 0).sum())
+    if n_pos == 0 or n_neg == 0:
+        return {}, (f"auroc/auprc/ef need both classes in the validation set "
+                    f"(positives={n_pos}, negatives={n_neg})")
+    n = int(s.numel())
+    # AUROC = Mann-Whitney U over average ranks (ties → half a win each).
+    ranks = _average_ranks(s)
+    auroc = (float(ranks[t == 1].sum()) - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg)
+    # Average precision: Σ Δrecall · precision, stepped at each DISTINCT score
+    # threshold so tied scores form one step.
+    order = torch.argsort(s, descending=True)
+    ss, st = s[order], t[order]
+    distinct = torch.ones_like(ss, dtype=torch.bool)
+    distinct[:-1] = ss[:-1] != ss[1:]
+    tp = torch.cumsum(st, 0, dtype=torch.float64)[distinct]
+    fp = torch.cumsum(1 - st, 0, dtype=torch.float64)[distinct]
+    recall = tp / n_pos
+    precision = tp / (tp + fp)
+    auprc = float((precision * (recall - torch.cat([recall.new_zeros(1), recall[:-1]]))).sum())
+    # Enrichment factor over the top 5% of scores: hit rate there vs overall.
+    top_k = max(1, int(round(0.05 * n)))
+    ef = (int(st[:top_k].sum()) / top_k) / (n_pos / n)
+    return {"auroc": auroc, "auprc": auprc, "ef": ef}, None
+
+
 def compute_metrics(task: str, out, y, kinds: list[str]) -> dict:
     """Extra metrics over a full val pass. Pure torch, no sklearn dep."""
     import torch
@@ -1891,6 +1976,22 @@ def compute_metrics(task: str, out, y, kinds: list[str]) -> dict:
             pred = out.argmax(dim=-1)
             n_classes = int(out.shape[-1])
         tgt = y.long().view(-1)
+        # Ranking metrics (auroc/auprc/ef) are threshold-free, so they are computed
+        # once from the positive-class scores — not per predicted class like f1.
+        rank_kinds = [k for k in kinds if k in RANKING_METRIC_KINDS]
+        rank_note = None
+        if rank_kinds:
+            scores = _positive_scores(out)
+            if scores is None:
+                rank_note = (f"auroc/auprc/ef need a binary head (1 logit or 2 classes); "
+                             f"this head has {int(out.shape[-1])} outputs")
+            else:
+                rank_values, rank_note = ranking_metrics(scores, tgt)
+                for k in rank_kinds:
+                    if k in rank_values:
+                        res[k] = rank_values[k]
+        if rank_note:
+            emit("metric.note", kinds=rank_kinds, note=rank_note)
         for k in kinds:
             if k == "accuracy":
                 res["accuracy"] = float((pred == tgt).float().mean())
@@ -2024,6 +2125,85 @@ def to_device(obj, device):
     if hasattr(obj, "to"):
         return obj.to(device)
     return obj
+
+
+# ── diffusion (score-based, epsilon-prediction denoising score matching) ───────
+# A `score` head turns the trainer into a VE-diffusion trainer: the clean point-set
+# branch (training.diffusion.branch) is replaced by a corrupted Batch (pos = x_t,
+# sigma per point, batch per point) and the model predicts the noise. The sampler
+# below runs the reverse process with the SAME call convention. This is the only
+# definition of the sigma range / grid in the whole code base.
+def diff_setup(train_cfg, heads, branches):
+    """(dcfg, branch_index) for a score head, (None, None) otherwise. Loud on misuse."""
+    score = [h for h in heads if h.get("target_kind") == "score"]
+    if not score:
+        return None, None
+    if len(heads) != 1:
+        fail("diffusion", "a score (diffusion) head must be the ONLY head of the run")
+    d = train_cfg.get("diffusion") or {}
+    if branches is None:
+        fail("diffusion", "diffusion training needs a manifest dataset (clean point-set branch + conditioning branch)")
+    if d.get("branch") not in branches:
+        fail("diffusion", f"training.diffusion.branch={d.get('branch')!r} is not a manifest branch {branches}")
+    lo, hi, n_rep = float(d.get("sigma_min", 0.05)), float(d.get("sigma_max", 6.0)), int(d.get("n_rep", 4))
+    if not (0 < lo < hi) or n_rep < 1:
+        fail("diffusion", f"need 0 < sigma_min < sigma_max and n_rep >= 1 (got {lo}, {hi}, {n_rep})")
+    return {"branch": d["branch"], "sigma_min": lo, "sigma_max": hi, "n_rep": n_rep}, branches.index(d["branch"])
+
+
+def diff_noisy(pos, sigma, batch, num_graphs):
+    """Batch-like object the model receives for the point-set branch."""
+    from torch_geometric.data import Batch
+    b = Batch()
+    b.pos, b.sigma, b.batch = pos, sigma, batch
+    b._num_graphs = int(num_graphs)
+    return b
+
+
+def diff_corrupt(clean, dcfg, gen=None):
+    """clean: PyG Batch (pos, batch). → (noisy Batch, eps [P',3], sigma [P']);
+    P' = n_rep * P, one log-uniform sigma per point. Clean positions never leave here."""
+    import math
+    import torch
+    if getattr(clean, "pos", None) is None:
+        raise ValueError("the diffusion branch has no `pos` (point coordinates)")
+    pos = clean.pos.repeat(dcfg["n_rep"], 1)
+    b = clean.batch.repeat(dcfg["n_rep"])
+    lo, hi = math.log(dcfg["sigma_min"]), math.log(dcfg["sigma_max"])
+    u = torch.rand(pos.shape[0], device=pos.device, generator=gen)
+    sigma = torch.exp(lo + u * (hi - lo))
+    eps = torch.randn(pos.shape, device=pos.device, dtype=pos.dtype, generator=gen)
+    return diff_noisy(pos + sigma[:, None] * eps, sigma, b, clean.num_graphs), eps, sigma
+
+
+def diff_reverse(call, anchor_pos, anchor_batch, n_graphs, dcfg, scfg, gen, device):
+    """Reverse VE-SDE (Euler-Maruyama over a geometric sigma grid + final Tweedie step).
+    call(noisy_batch) -> eps_hat [P,3]. Prior: n_particles per graph at random anchor
+    positions + N(0, sigma_max^2). Returns (x [P,3], batch [P], {sigma: x snapshot})."""
+    import math
+    import torch
+    n_p, n_steps = int(scfg["n_particles"]), int(scfg["n_steps"])
+    xs, bs = [], []
+    for g in range(n_graphs):
+        cand = (anchor_batch == g).nonzero(as_tuple=True)[0]
+        pick = cand[torch.randint(len(cand), (n_p,), device=device, generator=gen)]
+        xs.append(anchor_pos[pick]); bs.append(torch.full((n_p,), g, dtype=torch.long, device=device))
+    x, xb = torch.cat(xs), torch.cat(bs)
+    x = x + dcfg["sigma_max"] * torch.randn(x.shape, device=device, generator=gen)
+    sig = torch.exp(torch.linspace(math.log(dcfg["sigma_max"]), math.log(dcfg["sigma_min"]), n_steps, device=device))
+    want = {}
+    for t in scfg.get("traj_sigmas") or []:
+        want.setdefault(int((sig[:-1] - float(t)).abs().argmin()), []).append(float(t))
+    traj = {}
+    for i in range(n_steps - 1):
+        for t in want.get(i, []):
+            traj[t] = x.detach().cpu().clone()
+        s_i, s_n = sig[i], sig[i + 1]
+        eps_hat = call(diff_noisy(x, s_i.expand(x.shape[0]), xb, n_graphs))
+        dvar = s_i ** 2 - s_n ** 2
+        x = x + dvar * (-eps_hat / s_i) + torch.sqrt(dvar) * torch.randn(x.shape, device=device, generator=gen)
+    x = x - sig[-1] * call(diff_noisy(x, sig[-1].expand(x.shape[0]), xb, n_graphs))
+    return x, xb, traj
 
 
 def evaluate(model, loader, heads, head_names, multitask, forward_loss, batch_len, metric_kinds, device):
@@ -2161,9 +2341,9 @@ def main() -> None:
     split_strategy = str(train_cfg.get("split_strategy", "random")).lower()
 
     # Phase 19 — we NEVER silently change a user's split strategy. The trainer
-    # only implements 'random' today; any other strategy frozen into run.json is
+    # implements 'random' and 'grouped'; any other strategy frozen into run.json is
     # an explicit, loud failure instead of a silent random fallback.
-    IMPLEMENTED_SPLIT_STRATEGIES = ("random",)
+    IMPLEMENTED_SPLIT_STRATEGIES = ("random", "grouped")
     if split_strategy not in IMPLEMENTED_SPLIT_STRATEGIES:
         fail("split",
              f"split_strategy={split_strategy!r} is not implemented by the trainer yet "
@@ -2180,7 +2360,7 @@ def main() -> None:
     # ── imports (heavy) ──
     try:
         import torch
-        from torch.utils.data import DataLoader, random_split
+        from torch.utils.data import DataLoader, Subset, random_split
     except Exception as e:  # noqa: BLE001
         fail("import-torch", f"torch import failed: {e}", traceback.format_exc())
 
@@ -2251,12 +2431,13 @@ def main() -> None:
 
     # ── external validation (eval-only): load the SOURCE checkpoint up-front so the
     #    external target is encoded against the model's TRAINED class order. ──
-    eval_only = bool(cfg.get("eval_only"))
+    sample_cfg = cfg.get("sample")   # diffusion sampling run: eval-only form + samples.pt
+    eval_only = bool(cfg.get("eval_only")) or bool(sample_cfg)
     eval_ckpt = None
     known_classes_by_head = None
     if eval_only:
         try:
-            ck = (cfg.get("validate") or {}).get("checkpoint_from")
+            ck = (cfg.get("validate") or sample_cfg or {}).get("checkpoint_from")
             if not ck:
                 fail("validate", "eval_only run has no validate.checkpoint_from")
             cp = Path(os.path.expanduser(str(ck)))
@@ -2295,13 +2476,15 @@ def main() -> None:
 
     # ── dataset ──
     is_graph = False
+    kept_rows = None
     try:
         kind = ds_cfg.get("kind", "tabular")
         if kind == "manifest":
             # Paired graph dataset (e.g. ligand + protein) → a model with one
             # graph input per branch (forward(self, branch0, branch1, …)).
             is_graph = True
-            graphs_list, targets, branches, skipped = load_manifest_graphs(ds_cfg, heads, known_classes_by_head)
+            graphs_list, targets, branches, skipped, kept_rows = load_manifest_graphs(
+                ds_cfg, heads, known_classes_by_head)
             full = MultiTaskDataset(graphs_list, targets)
             emit("dataset.loaded", n_rows=len(graphs_list), branches=branches,
                  fingerprint_id=(f"{fp['alg']}:{fp['hash']}" if isinstance(fp, dict) and fp.get("hash") else None),
@@ -2327,26 +2510,86 @@ def main() -> None:
     if n_train <= 0:
         fail("split", f"not enough rows ({len(full)}) for the chosen val_split={val_split}")
     gen = torch.Generator().manual_seed(seed)
-    if n_val > 0:
+    train_groups: list | None = None
+    val_groups: list | None = None
+    if split_strategy == "grouped":
+        # Leakage-safe split: every row of a group lands in ONE partition, so a
+        # group can never straddle train/val (e.g. one patient's measurements).
+        group_column = str(train_cfg.get("split_group_column", "") or "")
+        try:
+            if kind == "tabular":
+                table = read_table(tabular_table_path(ds_cfg))
+            elif kind == "manifest":
+                _, _, table = manifest_table(ds_cfg)
+            else:
+                raise ValueError(f"grouped split is not supported for dataset kind {kind!r}")
+            if group_column not in table.columns:
+                raise ValueError(f"group column {group_column!r} not in the dataset table "
+                                 f"(columns: {list(table.columns)})")
+            # kept_rows: rows whose branches resolved — sample i of `full` is table
+            # row kept_rows[i], so the groups stay aligned with the loaded data.
+            rows = table[group_column] if kept_rows is None else table[group_column].iloc[kept_rows]
+            group_to_idxs: dict = {}
+            for i, g in enumerate(rows):
+                key = str(g).strip()
+                if not key or key.lower() in ("nan", "none"):
+                    raise ValueError(f"group column {group_column!r} is empty in row {i}")
+                group_to_idxs.setdefault(key, []).append(i)
+            if len(group_to_idxs) < 2:
+                raise ValueError(
+                    f"group column {group_column!r} has only {len(group_to_idxs)} distinct value(s) "
+                    f"({list(group_to_idxs)[:5]}) — a grouped split needs at least 2 groups")
+        except Exception as e:  # noqa: BLE001
+            fail("split",
+                 f"grouped split on column {group_column!r} is not possible: {e} — set the "
+                 f"Split node's group_column to a column whose values identify a group.",
+                 traceback.format_exc())
+        # Shuffle the UNIQUE groups with the run seed, then hand whole groups to
+        # validation until it holds >= val_split of the samples; train gets the rest.
+        shuffled = list(group_to_idxs)
+        _random.Random(seed).shuffle(shuffled)
+        val_groups, val_rows = [], 0
+        for g in shuffled:
+            val_groups.append(g)
+            val_rows += len(group_to_idxs[g])
+            if val_rows >= n_val:
+                break
+        train_groups = [g for g in shuffled if g not in val_groups]
+        train_indices = [i for g in train_groups for i in group_to_idxs[g]]
+        val_indices = [i for g in val_groups for i in group_to_idxs[g]]
+        train_ds = Subset(full, train_indices)
+        val_ds = Subset(full, val_indices) if val_indices else None
+    elif n_val > 0:
         train_ds, val_ds = random_split(full, [n_train, n_val], generator=gen)
     else:
         train_ds, val_ds = full, None
 
     # ── split integrity (Phase 19) — prove no overlap between partition classes ──
-    # random_split is structurally a permutation partition (disjoint), so
-    # overlap is provably 0 today; the check is a fail-closed assertion that
-    # stays live when grouped/stratified/predefined strategies are added later.
+    # random_split is structurally a permutation partition (disjoint), and a
+    # grouped split assigns each whole group to one side, so both are provably
+    # disjoint; the checks below stay live as fail-closed assertions (and the
+    # grouped one also proves no GROUP straddles the partitions).
     train_indices = list(getattr(train_ds, "indices", range(n_train)))
     val_indices = list(getattr(val_ds, "indices", [])) if val_ds is not None else []
     overlaps = sorted(set(train_indices) & set(val_indices))
+    group_overlap = (sorted(set(train_groups) & set(val_groups))
+                     if train_groups is not None else [])
     emit("split.integrity",
          train_size=len(train_indices), val_size=len(val_indices),
          overlap=len(overlaps), overlaps=overlaps[:20],
-         strategy=split_strategy, seed=seed, val_split=val_split)
+         strategy=split_strategy, seed=seed, val_split=val_split,
+         group_column=str(train_cfg.get("split_group_column", "") or "") or None,
+         n_groups_train=len(train_groups) if train_groups is not None else None,
+         n_groups_val=len(val_groups) if val_groups is not None else None,
+         group_overlap=len(group_overlap), group_overlaps=group_overlap[:20])
     if overlaps:
         fail("split",
              f"train/val leakage — {len(overlaps)} sample(s) appear in BOTH partitions "
-             f"(strategy={strategy}, seed={seed}); refusing to train on a leaking split")
+             f"(strategy={split_strategy}, seed={seed}); refusing to train on a leaking split")
+    if group_overlap:
+        fail("split",
+             f"train/val leakage — {len(group_overlap)} group(s) appear in BOTH partitions "
+             f"(strategy={split_strategy}, seed={seed}); refusing to train on a leaking split")
 
     collate = make_collate(is_graph, head_names)
     # DataLoader generator: separate from the model-seed torch.Generator so that
@@ -2361,6 +2604,43 @@ def main() -> None:
     val_loader = DataLoader(val_ds, batch_size=batch_size, num_workers=num_workers,
                             collate_fn=collate, generator=_dl_generator,
                             worker_init_fn=_seed_worker if num_workers > 0 else None) if val_ds is not None else None
+
+    dcfg, dbi = diff_setup(train_cfg, heads, branches if is_graph else None)
+    diff_acc = {"sum": [0.0] * 4, "n": [0] * 4}   # val DSM error per log-sigma bin
+
+    def diff_inputs(xb, gen=None):
+        """xb with the clean point-set branch swapped for its corrupted Batch."""
+        noisy, eps, sigma = diff_corrupt(xb[dbi], dcfg, gen)
+        return xb[:dbi] + (noisy,) + xb[dbi + 1:], eps, sigma
+
+    def diff_bins():
+        import math
+        lo, hi = dcfg["sigma_min"], dcfg["sigma_max"]
+        e = [lo * (hi / lo) ** (i / 4) for i in range(5)]
+        return {f"dsm_err/s{e[i]:.2g}-{e[i + 1]:.2g}": round(diff_acc["sum"][i] / diff_acc["n"][i], 6)
+                for i in range(4) if diff_acc["n"][i]}
+
+    def diff_forward_loss(xb, yb):
+        import math
+        h = heads[0]
+        gen = None
+        if not model.training:   # deterministic validation noise
+            gen = torch.Generator(device=xb[dbi].pos.device).manual_seed(1234)
+        xb2, eps, sigma = diff_inputs(xb, gen)
+        outs = resolve_outputs(model(*xb2), heads)
+        err = ((outs[h["output"]] - eps) ** 2).sum(-1)
+        l = err.mean()
+        if not model.training:
+            lo, hi = dcfg["sigma_min"], dcfg["sigma_max"]
+            bi = (4 * torch.log(sigma / lo) / math.log(hi / lo)).long().clamp(0, 3)
+            for i in range(4):
+                m = bi == i
+                diff_acc["sum"][i] += float(err[m].sum().item())
+                diff_acc["n"][i] += int(m.sum().item())
+        nb = xb2[dbi].num_graphs
+        row = torch.zeros(nb, device=err.device).index_add_(0, xb2[dbi].batch, err)
+        row = row / torch.bincount(xb2[dbi].batch, minlength=nb).clamp(min=1)
+        return {h["output"]: (row, l, torch.ones(nb, dtype=torch.bool, device=err.device))}, l * h["weight"]
 
     # ── model + optimizer ──
     try:
@@ -2381,6 +2661,8 @@ def main() -> None:
             xb0, _ = next(iter(train_loader))
             xb0 = to_device(xb0, device)
             with torch.no_grad():
+                if dcfg is not None:
+                    xb0 = diff_inputs(xb0)[0]
                 model(*xb0) if is_graph else model(xb0)
             model.to(device)  # re-pin lazily-materialized params onto the device
         except StopIteration:
@@ -2453,6 +2735,8 @@ def main() -> None:
         head's loss is computed ONLY over rows that have a target for it
         (masked / partial-label multitask), so e.g. an affinity head trains on
         binders while decoys (empty target) are skipped."""
+        if dcfg is not None:
+            return diff_forward_loss(xb, yb)
         out = model(*xb) if is_graph else model(xb)
         outs = resolve_outputs(out, heads)
         total = None
@@ -2488,7 +2772,7 @@ def main() -> None:
                       if k in msd and hasattr(v, "shape") and tuple(v.shape) == tuple(msd[k].shape)}
             model.load_state_dict(compat, strict=False)
             n_missing = len(msd) - len(compat)
-            emit("checkpoint.loaded", source=str((cfg.get("validate") or {}).get("checkpoint_from")),
+            emit("checkpoint.loaded", source=str((cfg.get("validate") or sample_cfg or {}).get("checkpoint_from")),
                  loaded=len(compat), missing=n_missing)
             if n_missing:
                 emit("validation.warning",
@@ -2497,8 +2781,11 @@ def main() -> None:
             eval_loader = DataLoader(full, batch_size=batch_size, num_workers=num_workers, collate_fn=collate,
                                    generator=_dl_generator,
                                    worker_init_fn=_seed_worker if num_workers > 0 else None)
+            diff_acc.update(sum=[0.0] * 4, n=[0] * 4)
             val_loss, val_acc, extra, val_cat = evaluate(
                 model, eval_loader, heads, head_names, multitask, forward_loss, batch_len, metric_kinds, device)
+            if dcfg is not None:
+                val_cat, extra = None, {**(extra or {}), **diff_bins()}
             # Phase 25 — external validation on a NaN/inf signal must not be
             # reported as success either.
             require_finite("val loss", val_loss, "eval-only")
@@ -2506,6 +2793,29 @@ def main() -> None:
                 require_finite("val accuracy", val_acc, "eval-only")
             for mn, mv in (extra or {}).items():
                 require_finite(f"val metric {mn}", mv, "eval-only")
+            sample_info = None
+            if sample_cfg:
+                if dcfg is None:
+                    fail("sample", "a sampling run needs a score (diffusion) head in the model's training config")
+                if sample_cfg.get("anchor_branch") not in branches:
+                    fail("sample", f"sample.anchor_branch={sample_cfg.get('anchor_branch')!r} is not a manifest branch {branches}")
+                ai = branches.index(sample_cfg["anchor_branch"])
+                n_rows = max(1, min(int(sample_cfg.get("n_rows", 4)), len(full)))
+                sxb, _ = collate([full[i] for i in range(n_rows)])
+                sxb = to_device(sxb, device)
+                gen = torch.Generator(device=device).manual_seed(int(sample_cfg.get("seed", 0)))
+                out_name = heads[0]["output"]
+                with torch.no_grad():
+                    sx, sb, traj = diff_reverse(
+                        lambda nb: resolve_outputs(model(*(sxb[:dbi] + (nb,) + sxb[dbi + 1:])), heads)[out_name],
+                        sxb[ai].pos, sxb[ai].batch, n_rows, dcfg, sample_cfg, gen, device)
+                torch.save({"pos": sx.cpu(), "batch": sb.cpu(), "row_idx": torch.arange(n_rows),
+                            "cond_pos": sxb[ai].pos.cpu(), "cond_batch": sxb[ai].batch.cpu()}, RUN_DIR / "samples.pt")
+                for t, xt in traj.items():
+                    torch.save({"pos": xt, "batch": sb.cpu()}, RUN_DIR / f"trajectory_{t:g}.pt")
+                sample_info = {"n_rows": n_rows, "n_points": int(sx.shape[0]), "n_steps": int(sample_cfg.get("n_steps", 100))}
+                require_finite("sample positions", float(sx.abs().max().item()), "sample")
+                emit("sample.done", **sample_info)
             emit("epoch.end", epoch=0, train_loss=0.0,
                  val_loss=round(val_loss, 6), val_acc=None if val_acc is None else round(val_acc, 6),
                  metrics=extra or None,
@@ -2519,6 +2829,7 @@ def main() -> None:
                 "status": "done", "eval_only": True, "total_seconds": round(total, 2),
                 "best_val_loss": round(val_loss, 6), "n_rows": len(full),
                 "n_params": int(n_params), "metrics": extra or None,
+                **({"sample": sample_info} if sample_info else {}),
             }, indent=2))
             # Phase 73 — integrity gate (eval-only form: no checkpoint required).
             integ = _verify_run_integrity(eval_only=True)
@@ -2665,8 +2976,12 @@ def main() -> None:
             # skipped epoch val_loss stays None — handled like the no-val-split case.
             do_val = (epoch + 1) % val_every == 0 or epoch == end_epoch - 1
             if val_loader is not None and do_val:
+                diff_acc.update(sum=[0.0] * 4, n=[0] * 4)
                 val_loss, val_acc, extra, val_cat = evaluate(
                     model, val_loader, heads, head_names, multitask, forward_loss, batch_len, metric_kinds, device)
+                if dcfg is not None:
+                    val_cat = None   # per-row DSM error vs a dummy target: no eval diagram
+                    extra = {**(extra or {}), **diff_bins()}
                 # Phase 25 — a NaN/inf VAL metric makes the monitored curve (and
                 # anything derived from it: early stop, best-val, checkpointing)
                 # garbage. Fail loudly instead of reporting success on a broken
@@ -2767,6 +3082,9 @@ def main() -> None:
         "device": device.type,
         "gpu": gpu_name,
         "env": env_summary,
+        # the last validation pass' metrics (accuracy/auroc/… per head), the same
+        # payload the eval-only run writes.
+        "metrics": extra or None,
     }, indent=2))
     integ = _verify_run_integrity(eval_only=False)
     emit("run.integrity", ok=integ["ok"], missing=integ["missing"],

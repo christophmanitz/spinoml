@@ -30,6 +30,14 @@ export type Head = {
   loss: LossKind
   weight: number
   label_smoothing?: number
+  /** Diffusion (VE, epsilon-prediction): 'score' = this head trains on
+   *  denoising score matching against the clean point set of
+   *  TrainingConfig.diffusion.branch, not on a target column. It must be the
+   *  only head; `target`/`loss` are ignored. */
+  target_kind?: 'column' | 'score'
+  /** Task label the trainer routes on (derived from the loss for column heads;
+   *  always 'regression' for a score head). */
+  task?: string
 }
 
 export type SplitStrategy = 'random' | 'stratified' | 'grouped' | 'time-based' | 'predefined'
@@ -46,6 +54,10 @@ export type TrainingConfig = {
    *  AND the trainer fails loudly rather than silently falling back to random
    *  — we never silently change a user's chosen strategy. */
   split_strategy: SplitStrategy
+  /** Column whose values identify a group (Split node's group_column). Required
+   *  by split_strategy='grouped': whole groups — e.g. every row of one patient —
+   *  land in ONE partition, so no group leaks across train/val. */
+  split_group_column?: string
   log_every_n_steps: number
   /** DataLoader knobs (from the DataLoader node; sensible defaults otherwise). */
   shuffle?: boolean
@@ -62,6 +74,9 @@ export type TrainingConfig = {
    *  `loss` above is then only the single-task fallback. */
   heads?: Head[]
   scheduler: { kind: SchedulerKind } & Record<string, unknown>
+  /** Diffusion (score head): the clean point-set branch + noise schedule the
+   *  trainer applies. Present iff a Head has target_kind='score'. */
+  diffusion?: { branch: string; sigma_min: number; sigma_max: number; n_rep: number }
   /** Phase 14: extra metrics computed each val pass (accuracy/f1/mse/…). */
   metrics?: string[]
   /** Phase 14: early-stopping / grad-clip / AMP, emitted by the training graph. */
